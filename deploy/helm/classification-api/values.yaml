@@ -1,0 +1,260 @@
+########################################################################################################################
+# GLOBAL
+########################################################################################################################
+
+## @section Global parameters
+global:
+
+  ## @param global.annotations Define global annotations added to every pod
+  annotations: {}
+
+  cluster:
+
+    cert:
+      ## @param global.cluster.cert.annotations Set custom global cert annotations on the ingress
+      annotations: {}
+
+    ## @param global.cluster.domain Set global domain for the cluster
+    domain: cluster.local
+
+    ingress:
+      ## @param global.cluster.ingress.ingressClassName Set global ingress class name
+      ingressClassName: "nginx"
+
+    pdb:
+      ## @param global.cluster.pdb.enabled Enable PodDisruptionBudget
+      enabled: false
+
+  ## @param global.debug Enable global debugging
+  debug: false
+
+  image:
+    ## @param global.image.pullPolicy Set global image pullPolicy
+    pullPolicy: IfNotPresent
+    ## @param global.image.pullSecrets Set global image pullSecrets
+    pullSecrets: []
+    ## @param global.image.registry Set global image container registry
+    registry: docker.edu-sharing.com
+    ## @param global.image.repository Set global image container repository (path under the registry)
+    repository: projects/wlo/classification-api
+
+  metrics:
+    servicemonitor:
+      ## @param global.metrics.servicemonitor.enabled Enable a Prometheus ServiceMonitor (scrapes the public GET /metrics)
+      enabled: false
+
+  ## @param global.security Set global custom pod security context parameters (merged into podSecurityContext)
+  security: {}
+
+########################################################################################################################
+# LOCAL
+########################################################################################################################
+
+## @section Local parameters
+## @param nameOverride Override the chart name used for resource names
+nameOverride: ""
+## @param fullnameOverride Fully override the generated resource name
+fullnameOverride: ""
+
+image:
+  ## @param image.name Override image repository (defaults to global.image.registry/global.image.repository)
+  name: ""
+  ## @param image.tag Set image tag (defaults to .Chart.AppVersion)
+  tag: ""
+
+########################################################################################################################
+
+## @param replicaCount Amount of replicas. MUST stay 1 — training job, model LRU cache and rate limiter are process-local, and the model store lives on one PVC (single-worker design).
+replicaCount: 1
+
+########################################################################################################################
+
+service:
+  ## @param service.type Set service type
+  type: ClusterIP
+  ## @param service.port Set service port (cluster-internal)
+  port: 8000
+
+########################################################################################################################
+
+ingress:
+
+  ## @param ingress.enabled Enable ingress
+  enabled: true
+
+  annotations:
+    ## @param ingress.annotations.nginx.ingress.kubernetes.io/proxy-body-size Max request body size — must cover config.limits.maxUploadMb (dataset/model uploads)
+    nginx.ingress.kubernetes.io/proxy-body-size: "200m"
+    ## @param ingress.annotations.nginx.ingress.kubernetes.io/proxy-read-timeout Set proxy-read-timeout on nginx ingress
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+    ## @param ingress.annotations.nginx.ingress.kubernetes.io/proxy-send-timeout Set proxy-send-timeout on nginx ingress
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
+
+  ## @param ingress.hosts Set ingress hosts
+  hosts:
+  - classify.127.0.0.1.nip.io
+
+  ## @param ingress.paths Set paths served from the host
+  paths:
+  - /
+
+  ## @param ingress.tls Set TLS for ingress
+  #  - secretName: classification-api-tls
+  #    hosts:
+  #    - classify.example.de
+  tls: []
+
+########################################################################################################################
+
+## @section Application configuration (env prefix APIV3_, see .env.example / README)
+config:
+
+  auth:
+    ## @param config.auth.enabled Enable API-key authentication (disable only for cluster-internal use)
+    enabled: true
+    ## @param config.auth.adminKey Admin API key — train/manage endpoints (REQUIRED when auth is enabled; stored in the chart secret)
+    adminKey: ""
+    ## @param config.auth.readonlyKey Readonly API key — predict/status endpoints (REQUIRED when auth is enabled; stored in the chart secret)
+    readonlyKey: ""
+
+  app:
+    ## @param config.app.corsOrigins Comma-separated list of allowed browser origins (empty = no cross-origin access)
+    corsOrigins: ""
+    ## @param config.app.logLevel Log level (DEBUG | INFO | WARNING | ERROR)
+    logLevel: "INFO"
+
+  compute:
+    ## @param config.compute.nJobs CPU cores for training. -1 = all cores (bounded by resources.limits.cpu); -2 leaves one core free
+    nJobs: -1
+    ## @param config.compute.solver Linear-head solver — newton-cg keeps float32 and releases the GIL (see README)
+    solver: "newton-cg"
+    ## @param config.compute.parallelBackend joblib backend — threading shares ONE sparse matrix across cores
+    parallelBackend: "threading"
+    ## @param config.compute.tfidfMaxWordFeatures Global cap for word n-gram features (RAM lever)
+    tfidfMaxWordFeatures: 80000
+    ## @param config.compute.tfidfMaxCharFeatures Global cap for char n-gram features (RAM lever)
+    tfidfMaxCharFeatures: 120000
+
+  limits:
+    ## @param config.limits.maxUploadMb Upload cap in MB for datasets/model bundles — keep ingress proxy-body-size in sync
+    maxUploadMb: 200
+    ## @param config.limits.maxModelsInMemory Trained models kept resident (LRU eviction beyond this)
+    maxModelsInMemory: 2
+    ## @param config.limits.rateLimitEnabled Enable the in-process rate limiter (keys on client IP — see README for proxy note)
+    rateLimitEnabled: true
+
+  ## @param config.extraEnv Extra plain environment variables (map) injected into the container
+  extraEnv: {}
+
+########################################################################################################################
+
+## @param debug Enable debugging for this release (overrides global.debug)
+debug: false
+
+########################################################################################################################
+
+persistence:
+  ## @param persistence.enabled Enable persistent storage for /data (datasets + trained model bundles + share links)
+  enabled: true
+  ## @param persistence.mountPath Mount path for the data volume
+  mountPath: /data
+  ## @param persistence.storageClassName StorageClass for the data PVC (empty → cluster default)
+  storageClassName: ""
+  ## @param persistence.accessModes Access modes for the data PVC
+  accessModes: [ "ReadWriteOnce" ]
+  ## @param persistence.size Storage request for the data PVC (large datasets ~100s of MB + model bundles ~250 MB each)
+  size: 5Gi
+
+########################################################################################################################
+
+## @param nodeAffinity Set node affinity
+nodeAffinity: {}
+
+## @param tolerations Set tolerations
+tolerations: []
+
+## @param podAnnotations Set custom pod annotations
+podAnnotations: {}
+
+podSecurityContext:
+  ## @param podSecurityContext.fsGroup Set fs group for volume access (matches the image's appuser, uid/gid 1000)
+  fsGroup: 1000
+  ## @param podSecurityContext.fsGroupChangePolicy Set change policy for fs group
+  fsGroupChangePolicy: OnRootMismatch
+  ## @param podSecurityContext.seccompProfile Apply the runtime's default syscall filter
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  ## @param securityContext.allowPrivilegeEscalation Allow privilege escalation
+  allowPrivilegeEscalation: false
+  ## @param securityContext.readOnlyRootFilesystem Mount the root filesystem read-only
+  ## (safe: all writable paths — datasets, models, share_links.json — point into the PVC mount)
+  readOnlyRootFilesystem: true
+  capabilities:
+    ## @param securityContext.capabilities.drop Set drop capabilities
+    drop:
+    - ALL
+  ## @param securityContext.runAsNonRoot Require running as non-root
+  runAsNonRoot: true
+  ## @param securityContext.runAsUser User id to run as (the image's "appuser" is uid 1000)
+  runAsUser: 1000
+
+########################################################################################################################
+
+## @param terminationGracePeriod Grace period for termination in seconds (a running training is cancelled cooperatively)
+terminationGracePeriod: 60
+
+startupProbe:
+  ## @param startupProbe.failureThreshold Failure threshold for startupProbe
+  failureThreshold: 30
+  ## @param startupProbe.initialDelaySeconds Initial delay seconds for startupProbe
+  initialDelaySeconds: 5
+  ## @param startupProbe.periodSeconds Period seconds for startupProbe
+  periodSeconds: 5
+  ## @param startupProbe.successThreshold Success threshold for startupProbe
+  successThreshold: 1
+  ## @param startupProbe.timeoutSeconds Timeout seconds for startupProbe
+  timeoutSeconds: 5
+
+livenessProbe:
+  ## @param livenessProbe.failureThreshold Failure threshold for livenessProbe
+  failureThreshold: 3
+  ## @param livenessProbe.initialDelaySeconds Initial delay seconds for livenessProbe
+  initialDelaySeconds: 0
+  ## @param livenessProbe.periodSeconds Period seconds for livenessProbe
+  periodSeconds: 30
+  ## @param livenessProbe.timeoutSeconds Timeout seconds for livenessProbe
+  timeoutSeconds: 5
+
+readinessProbe:
+  ## @param readinessProbe.failureThreshold Failure threshold for readinessProbe
+  failureThreshold: 3
+  ## @param readinessProbe.initialDelaySeconds Initial delay seconds for readinessProbe
+  initialDelaySeconds: 0
+  ## @param readinessProbe.periodSeconds Period seconds for readinessProbe
+  periodSeconds: 10
+  ## @param readinessProbe.successThreshold Set threshold for success on readiness probe
+  successThreshold: 1
+  ## @param readinessProbe.timeoutSeconds Timeout seconds for readinessProbe
+  timeoutSeconds: 5
+
+########################################################################################################################
+
+resources:
+
+  # Training uses all granted cores on one shared sparse matrix (float32) —
+  # sized for the documented target of up to ~600k-row datasets on 8 GB.
+  # For predict-only or small-data deployments, 1 CPU / 2Gi limits suffice.
+  limits:
+    ## @param resources.limits.cpu Set CPU limit on resources (training parallelism is bounded by this)
+    cpu: 4000m
+    ## @param resources.limits.memory Set memory limit on resources
+    memory: 8Gi
+  requests:
+    ## @param resources.requests.cpu Set CPU for requests on resources
+    cpu: 500m
+    ## @param resources.requests.memory Set memory for requests on resources
+    memory: 1Gi
+
+########################################################################################################################

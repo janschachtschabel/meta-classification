@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "classification-api.fullname" . }}-env
+  labels: {{ include "classification-api.labels" . | nindent 4 }}
+data:
+  # ---- Auth / app ----
+  APIV3_AUTH_ENABLED: {{ .Values.config.auth.enabled | quote }}
+  APIV3_CORS_ALLOW_ORIGINS: {{ .Values.config.app.corsOrigins | quote }}
+  APIV3_LOG_LEVEL: {{ .Values.config.app.logLevel | quote }}
+
+  # ---- Persistent state (datasets + trained model bundles + share links) ----
+  APIV3_DATA_DIR: {{ printf "%s/datasets" .Values.persistence.mountPath | quote }}
+  APIV3_MODELS_DIR: {{ printf "%s/models" .Values.persistence.mountPath | quote }}
+  APIV3_SHARE_LINKS_FILE: {{ printf "%s/share_links.json" .Values.persistence.mountPath | quote }}
+
+  # ---- Compute (see README "Resources & tuning") ----
+  APIV3_N_JOBS: {{ .Values.config.compute.nJobs | quote }}
+  APIV3_SOLVER: {{ .Values.config.compute.solver | quote }}
+  APIV3_PARALLEL_BACKEND: {{ .Values.config.compute.parallelBackend | quote }}
+  APIV3_TFIDF_MAX_WORD_FEATURES: {{ .Values.config.compute.tfidfMaxWordFeatures | quote }}
+  APIV3_TFIDF_MAX_CHAR_FEATURES: {{ .Values.config.compute.tfidfMaxCharFeatures | quote }}
+
+  # ---- Limits ----
+  APIV3_MAX_UPLOAD_MB: {{ .Values.config.limits.maxUploadMb | quote }}
+  APIV3_MAX_MODELS_IN_MEMORY: {{ .Values.config.limits.maxModelsInMemory | quote }}
+  APIV3_RATE_LIMIT_ENABLED: {{ .Values.config.limits.rateLimitEnabled | quote }}
+  {{- range $key, $value := .Values.config.extraEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

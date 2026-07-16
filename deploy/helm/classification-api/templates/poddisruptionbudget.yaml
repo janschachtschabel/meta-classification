@@ -1,0 +1,14 @@
+{{- if .Values.global.cluster.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "classification-api.fullname" . }}
+  labels: {{ include "classification-api.labels" . | nindent 4 }}
+spec:
+  # Single replica: minAvailable:1 would forbid all voluntary disruptions and
+  # hang `kubectl drain`. maxUnavailable:1 lets a node drain evict the pod (it
+  # reschedules onto the same PVC) instead of blocking node maintenance.
+  maxUnavailable: 1
+  selector:
+    matchLabels: {{ include "classification-api.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,18 @@
+# Keep the build context small: the Dockerfile only COPYs app/, config.yaml
+# and requirements* — everything else is dead weight (data/ + models/ alone
+# are several hundred MB) or does not belong in an image.
+data/
+models/
+tests/
+deploy/
+.github/
+.git/
+.env
+share_links.json
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/

@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "classification-api.fullname" . }}
+  labels: {{ include "classification-api.labels" . | nindent 4 }}
+spec:
+  # Process-local state (training job, model cache, rate limiter) + one PVC
+  # for the model store → exactly one replica (single-worker design).
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{ include "classification-api.selectorLabels" . | nindent 6 }}
+  serviceName: {{ include "classification-api.fullname" . }}-headless
+  template:
+    metadata:
+      labels: {{ include "classification-api.labels" . | nindent 8 }}
+      annotations:
+        checksum/configmap-env: {{ include (print .Template.BasePath "/configmap-env.yaml") . | sha256sum | trunc 63 }}
+        checksum/secret-env: {{ include (print .Template.BasePath "/secret-env.yaml") . | sha256sum | trunc 63 }}
+        {{- if not .Values.global.metrics.servicemonitor.enabled }}
+        prometheus.io/scrape: "false"
+        {{- end }}
+        {{- with merge .Values.podAnnotations .Values.global.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # The app never calls the Kubernetes API — do not mount a token for it.
+      automountServiceAccountToken: false
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with merge .Values.podSecurityContext .Values.global.security }}
+      securityContext: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeAffinity }}
+      affinity:
+        nodeAffinity: {{ toYaml . | nindent 10 }}
+      {{- end }}
+      {{- with .Values.terminationGracePeriod }}
+      terminationGracePeriodSeconds: {{ . }}
+      {{- end }}
+      containers:
+      - name: {{ include "classification-api.name" . }}
+        image: {{ include "classification-api.image" . }}
+        imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "classification-api.fullname" . }}-env
+        - secretRef:
+            name: {{ include "classification-api.fullname" . }}-env
+        ports:
+        - name: http
+          containerPort: 8000
+        {{- with .Values.startupProbe }}
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          failureThreshold: {{ .failureThreshold }}
+          initialDelaySeconds: {{ .initialDelaySeconds }}
+          periodSeconds: {{ .periodSeconds }}
+          successThreshold: {{ .successThreshold }}
+          timeoutSeconds: {{ .timeoutSeconds }}
+        {{- end }}
+        {{- with .Values.livenessProbe }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          failureThreshold: {{ .failureThreshold }}
+          initialDelaySeconds: {{ .initialDelaySeconds }}
+          periodSeconds: {{ .periodSeconds }}
+          timeoutSeconds: {{ .timeoutSeconds }}
+        {{- end }}
+        {{- with .Values.readinessProbe }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          failureThreshold: {{ .failureThreshold }}
+          initialDelaySeconds: {{ .initialDelaySeconds }}
+          periodSeconds: {{ .periodSeconds }}
+          successThreshold: {{ .successThreshold }}
+          timeoutSeconds: {{ .timeoutSeconds }}
+        {{- end }}
+        volumeMounts:
+        - name: data
+          mountPath: {{ .Values.persistence.mountPath }}
+        # readOnlyRootFilesystem makes / read-only; Starlette spools multipart
+        # uploads > 1 MB to /tmp, so it MUST be a writable volume or every real
+        # dataset/model upload fails.
+        - name: tmp
+          mountPath: /tmp
+        {{- with .Values.resources }}
+        resources: {{ toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.securityContext }}
+        securityContext: {{ toYaml . | nindent 10 }}
+        {{- end }}
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      {{- if not .Values.persistence.enabled }}
+      - name: data
+        emptyDir: {}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels: {{ include "classification-api.selectorLabels" . | nindent 8 }}
+    spec:
+      accessModes: {{ toYaml .Values.persistence.accessModes | nindent 6 }}
+      {{- if .Values.persistence.storageClassName }}
+      storageClassName: {{ .Values.persistence.storageClassName | quote }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.persistence.size }}
+  {{- end }}
