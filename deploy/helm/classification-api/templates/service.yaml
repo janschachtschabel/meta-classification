@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "classification-api.fullname" . }}
+  labels: {{ include "classification-api.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {{ include "classification-api.selectorLabels" . | nindent 4 }}
+  ports:
+  - name: http
+    port: {{ .Values.service.port }}
+    targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "classification-api.fullname" . }}-headless
+  labels: {{ include "classification-api.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {{ include "classification-api.selectorLabels" . | nindent 4 }}
+  ports:
+  - name: http
+    port: {{ .Values.service.port }}

@@ -1,0 +1,8 @@
+# Pinned dev/CI tooling — runtime deps live in requirements.txt / *.lock.
+# Exact versions the quality gates (ruff/mypy/pytest) last ran with, so CI
+# results are reproducible instead of drifting with each tool release.
+pytest==8.3.5
+httpx==0.28.1
+ruff==0.12.9
+mypy==1.16.1
+types-PyYAML==6.0.12.20250516

@@ -1,0 +1,14 @@
+{{- /* Scrapes the public GET /metrics (Prometheus text format; no auth needed). */ -}}
+{{- if .Values.global.metrics.servicemonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "classification-api.fullname" . }}
+  labels: {{ include "classification-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{ include "classification-api.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+{{- end }}

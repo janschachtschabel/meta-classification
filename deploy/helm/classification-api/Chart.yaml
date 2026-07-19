@@ -1,0 +1,12 @@
+apiVersion: v2
+
+name: edu_sharing-projects-wlo-classification-api
+description: MetaClassify — torch-free, CPU-only metadata text-classification API (TF-IDF + LogisticRegression, FastAPI)
+
+type: application
+
+# Chart version (SemVer of the packaging itself).
+version: 0.1.0
+# Version of the shipped application — matches the image tag.
+appVersion: "latest"
+kubeVersion: ">=1.23.0-0"

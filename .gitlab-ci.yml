@@ -1,0 +1,211 @@
+# =============================================================================
+# GitLab CI/CD — MetaClassify (production deployment)
+# =============================================================================
+# Active pipeline configuration for the company GitLab repo (standard path in
+# the repo root). Does not touch the GitHub workflows (.github/workflows/) —
+# both platforms run in parallel (GitHub → ghcr.io, GitLab → self-hosted).
+#
+# CREDENTIALS / COMPANY-SPECIFIC — do NOT put them here; create them in GitLab
+# under  Settings → CI/CD → Variables  as (masked + protected) variables:
+#   DOCKER_REGISTRY   e.g. docker.edu-sharing.com   (registry host)
+#   DOCKER_USERNAME   CI user / deploy-token user
+#   DOCKER_PASSWORD   CI token / password           (masked + protected)
+#   DIND_IMAGE        e.g. docker:27-dind
+#   DIND_HOST         e.g. tcp://docker:2376
+#   DIND_DRIVER       e.g. overlay2
+#   DIND_TLS_CERTDIR  e.g. /certs
+#
+# Image path: DOCKER_IMAGE_PATH below — override as a CI/CD variable if needed.
+#
+# The Docker build (stage "build") only runs when DOCKER_REGISTRY is set —
+# while the variables are missing the pipeline stays green (lint/test only).
+# =============================================================================
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  # Image path inside the registry (without the registry host). Full pull path
+  # is "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH" →
+  #   docker.edu-sharing.com/projects/wlo/classification-api
+  # Fixed path instead of $CI_PROJECT_PATH so the GitLab group hierarchy does
+  # not leak into the image repo. Override as a CI/CD variable if needed.
+  DOCKER_IMAGE_PATH: "projects/wlo/classification-api"
+
+  # --- Do NOT set the following here; use CI/CD variables (see header) ---
+  # DOCKER_REGISTRY / DOCKER_USERNAME / DOCKER_PASSWORD
+  # DIND_IMAGE / DIND_HOST / DIND_DRIVER / DIND_TLS_CERTDIR
+  #
+  # --- Helm chart push (stage "deploy") ---
+  # HELM_REGISTRY     upload URL of the chart repo
+  # HELM_USERNAME     chart-repo user / deploy-token user
+  # HELM_PASSWORD     chart-repo token / password  (masked + protected)
+
+# -----------------------------------------------------------------------------
+# Lint (ruff) — configuration lives in pyproject.toml
+# -----------------------------------------------------------------------------
+ruff check:
+  stage: lint
+  interruptible: true
+  image:
+    # Keep in sync with requirements-dev.txt (the version the code is developed against).
+    name: ghcr.io/astral-sh/ruff:0.12.9-alpine
+  before_script:
+    - cd "$CI_PROJECT_DIR"
+    - ruff --version
+  script:
+    - ruff check --output-format=gitlab app/ tests/ scripts/ > "$CI_PROJECT_DIR/code-quality-report.json"
+  artifacts:
+    reports:
+      codequality: code-quality-report.json
+
+# -----------------------------------------------------------------------------
+# Helm chart lint — validates templates/values on every pipeline (the package/
+# push job below only runs on tags with a configured registry).
+# -----------------------------------------------------------------------------
+helm lint:
+  stage: lint
+  interruptible: true
+  image:
+    # Pinned like every other image in this repo (digest-pinned base, SHA-pinned
+    # actions): `latest` could drift or break the release path without any
+    # repo change. Keep in sync manually on helm upgrades.
+    name: alpine/helm:3.16.4
+    entrypoint: [""]
+  script:
+    - helm lint deploy/helm/classification-api
+
+# -----------------------------------------------------------------------------
+# Types (mypy) — same gate as CLAUDE.md ("Types: python -m mypy app ...")
+# -----------------------------------------------------------------------------
+mypy:
+  stage: lint
+  interruptible: true
+  image: python:3.11-slim-bookworm
+  before_script:
+    - cd "$CI_PROJECT_DIR"
+    - python -m pip install --upgrade pip
+    # Same fully-hashed transitive tree the Docker image ships.
+    - pip install --require-hashes -r requirements-hashes.lock
+    - pip install -r requirements-dev.txt
+  script:
+    - python -m mypy app --config-file pyproject.toml
+
+# -----------------------------------------------------------------------------
+# Tests (pytest) — the actual regression safety net. Runs BEFORE the Docker
+# build (own stage) so a test failure stops the build.
+# -----------------------------------------------------------------------------
+pytest:
+  stage: test
+  interruptible: true
+  image: python:3.11-slim-bookworm
+  before_script:
+    - cd "$CI_PROJECT_DIR"
+    - python -m pip install --upgrade pip
+    # Same fully-hashed transitive tree the Docker image ships.
+    - pip install --require-hashes -r requirements-hashes.lock
+    - pip install -r requirements-dev.txt
+  script:
+    - python -m pytest tests -q
+
+# -----------------------------------------------------------------------------
+# Build Docker image + push to (self-hosted) registry — main + develop
+# Tag = branch slug (e.g. "main", "develop")
+# -----------------------------------------------------------------------------
+build and push (branches):
+  stage: build
+  image: $DIND_IMAGE
+  variables:
+    DOCKER_HOST: "$DIND_HOST"
+    DOCKER_DRIVER: "$DIND_DRIVER"
+    DOCKER_TLS_CERTDIR: "$DIND_TLS_CERTDIR"
+  services:
+    - name: "$DIND_IMAGE"
+      alias: docker
+      entrypoint: [ "env", "-u", "DOCKER_HOST" ]
+      command: [ "dockerd-entrypoint.sh" ]
+  before_script:
+    - docker --version
+  script:
+    # --password-stdin keeps the secret out of the process list on shared runners.
+    - echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+    - docker buildx build --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_SLUG" .
+    - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_SLUG"
+  rules:
+    # Only runs when the registry variable is set. While the CI/CD variables
+    # (DOCKER_REGISTRY etc.) are missing the job is skipped — the pipeline
+    # stays green (instead of failing at login).
+    - if: "$CI_COMMIT_BRANCH == 'main' && $DOCKER_REGISTRY"
+    - if: "$CI_COMMIT_BRANCH == 'develop' && $DOCKER_REGISTRY"
+
+# -----------------------------------------------------------------------------
+# Build + push Docker image on tag creation (e.g. v1.2.0)
+# Tag = exact git tag name
+# -----------------------------------------------------------------------------
+build and push (tags):
+  stage: build
+  image: $DIND_IMAGE
+  variables:
+    DOCKER_HOST: "$DIND_HOST"
+    DOCKER_DRIVER: "$DIND_DRIVER"
+    DOCKER_TLS_CERTDIR: "$DIND_TLS_CERTDIR"
+  services:
+    - name: "$DIND_IMAGE"
+      alias: docker
+      entrypoint: [ "env", "-u", "DOCKER_HOST" ]
+      command: [ "dockerd-entrypoint.sh" ]
+  before_script:
+    - docker --version
+  script:
+    # --password-stdin keeps the secret out of the process list on shared runners.
+    - echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+    - docker buildx build --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME" .
+    - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME"
+  rules:
+    # Only on tag AND configured registry (see above).
+    - if: "$CI_COMMIT_TAG && $DOCKER_REGISTRY"
+
+# -----------------------------------------------------------------------------
+# Package Helm chart + push to the chart repo
+# Chart/app version = git tag (on tags) or 0.0.0-<branch-slug> (on branches)
+# -----------------------------------------------------------------------------
+.helm_base:
+  stage: deploy
+  image:
+    # Pinned like every other image in this repo (digest-pinned base, SHA-pinned
+    # actions): `latest` could drift or break the release path without any
+    # repo change. Keep in sync manually on helm upgrades.
+    name: alpine/helm:3.16.4
+    entrypoint: [""]
+  before_script:
+    - helm version
+  script:
+    - helm package deploy/helm/classification-api
+        --version "$CHART_VERSION"
+        --app-version "$APP_VERSION"
+    - >
+      curl --fail --silent --show-error
+      -u "$HELM_USERNAME:$HELM_PASSWORD"
+      --upload-file edu_sharing-projects-wlo-classification-api-${CHART_VERSION}.tgz
+      $HELM_REGISTRY
+
+build and push helm chart:
+  extends: .helm_base
+  variables:
+    CHART_VERSION: "0.0.0-$CI_COMMIT_REF_SLUG"
+    APP_VERSION: "$CI_COMMIT_REF_SLUG"
+  rules:
+    # Tag → chart/app version = exact tag name. Only with a configured chart
+    # repo (HELM_REGISTRY) — otherwise skipped, pipeline stays green.
+    - if: "$CI_COMMIT_TAG && $HELM_REGISTRY"
+      variables:
+        CHART_VERSION: "$CI_COMMIT_REF_NAME"
+        APP_VERSION: "$CI_COMMIT_REF_NAME"
+    # Branch charts mirror the docker jobs: main/develop only — feature branches
+    # would clutter the chart repo with 0.0.0-<slug> charts whose appVersion
+    # image tags were never built.
+    - if: "$CI_COMMIT_BRANCH == 'main' && $HELM_REGISTRY"
+    - if: "$CI_COMMIT_BRANCH == 'develop' && $HELM_REGISTRY"

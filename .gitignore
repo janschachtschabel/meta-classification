@@ -1,0 +1,29 @@
+# Secrets & runtime state
+.env
+share_links.json
+
+# Generated artifacts (uploaded datasets, trained bundles, runtime caches)
+models/
+cache/
+data/*.csv
+# Keep the data/ dir present but empty in the repo (the app also creates it).
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Test/coverage & packaging artifacts
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Accidental artifact from a bad --models-dir path on Windows (safe to delete)
+models;C/

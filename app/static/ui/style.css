@@ -1,0 +1,232 @@
+/* MetaClassify admin UI — token-driven, self-contained (system fonts). */
+
+:root {
+  /* spacing scale */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
+  --radius: 8px;
+  /* light theme — all pairings meet WCAG AA on their backgrounds */
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --text: #1a2330;          /* 13.9:1 on surface */
+  --muted: #5a6675;         /* 5.6:1 on surface */
+  --border: #c3ccd6;        /* >3:1 vs surface for field borders */
+  --accent: #0f5cad;        /* 6.0:1 on surface — buttons/links */
+  --accent-text: #ffffff;   /* 6.0:1 on accent */
+  --danger: #b3261e;        /* 6.6:1 on surface */
+  --danger-text: #ffffff;   /* 6.6:1 on danger */
+  --ok: #1e6b3a;            /* 5.9:1 on surface */
+  --warn: #8a5300;          /* 6.3:1 on surface */
+  --focus: #0f5cad;
+  --bar-bg: #dde3ea;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c;
+    --surface: #1c232d;
+    --text: #e8edf3;        /* 13.0:1 on surface */
+    --muted: #9fabb9;       /* 5.6:1 on surface */
+    --border: #46525f;
+    --accent: #7db3e8;      /* 6.5:1 on surface */
+    --accent-text: #0f1720; /* 7.4:1 on accent */
+    --danger: #f2887f;
+    --danger-text: #2b1210; /* 8.5:1 on danger — white was ~2.4:1 in dark mode */
+    --ok: #7fce9c;
+    --warn: #e8b566;
+    --focus: #7db3e8;
+    --bar-bg: #2c3540;
+  }
+}
+
+* { box-sizing: border-box; }
+/* Author display rules (grid/flex/inline-flex) would otherwise override the UA's
+   [hidden] behaviour — this keeps the hidden attribute authoritative everywhere. */
+[hidden] { display: none !important; }
+html { height: 100%; }
+body {
+  margin: 0; min-height: 100%;
+  background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* focus is always visible, never removed */
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+
+.skip-link {
+  position: absolute; left: -9999px; top: 0; z-index: 10;
+  background: var(--surface); color: var(--text); padding: var(--s-2) var(--s-4);
+}
+.skip-link:focus { left: var(--s-2); }
+
+/* Screen-reader-only: for live announcements without visual duplication. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ---- layout ---- */
+.topbar {
+  display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap;
+  padding: var(--s-3) var(--s-5); background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; margin-right: auto; }
+.topbar nav { display: flex; gap: var(--s-1); flex-wrap: wrap; }
+main { max-width: 880px; margin: 0 auto; padding: var(--s-5) var(--s-4) var(--s-6); }
+
+h1 { font-size: 1.4rem; margin: 0 0 var(--s-2); }
+h2 { font-size: 1.2rem; margin: var(--s-2) 0 var(--s-4); }
+h3 { font-size: 1rem;   margin: 0 0 var(--s-3); }
+.muted { color: var(--muted); font-weight: 400; font-size: 0.9em; }
+
+/* ---- components ---- */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--s-4) var(--s-4);
+  margin-bottom: var(--s-4);
+}
+.row { display: flex; gap: var(--s-4); flex-wrap: wrap; }
+.row > div { flex: 1 1 240px; min-width: 0; }
+
+label { display: block; font-weight: 600; margin: var(--s-3) 0 var(--s-1); }
+label.check { display: flex; gap: var(--s-2); align-items: center; font-weight: 400; }
+input, select, textarea, button {
+  font: inherit; color: inherit;
+}
+input:not([type="checkbox"]):not([type="file"]), select, textarea {
+  width: 100%; padding: var(--s-2) var(--s-3);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+fieldset { border: 1px solid var(--border); border-radius: var(--radius); margin: var(--s-3) 0; }
+legend { font-weight: 600; padding: 0 var(--s-2); }
+
+/* ---- pill multi-select (text columns) ---- */
+.pillbox {
+  display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center;
+  padding: var(--s-2); margin: var(--s-2);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.pillbox input {
+  flex: 1 1 220px; min-width: 140px;
+  border: 0; background: transparent; padding: var(--s-1) var(--s-2);
+}
+#textcol-pills, #labelcol-pills { display: contents; }
+.pill {
+  display: inline-flex; align-items: center; gap: var(--s-1);
+  background: var(--accent); color: var(--accent-text);
+  border-radius: 999px; padding: 2px var(--s-2) 2px var(--s-3); font-size: 0.9em;
+}
+.pill-x {
+  background: transparent; border: 0; color: inherit; cursor: pointer;
+  min-height: 24px; min-width: 24px; margin: 0; padding: 0;
+  font-size: 1.1em; line-height: 1; font-weight: 700;
+}
+
+button {
+  min-height: 40px; padding: var(--s-2) var(--s-4);
+  background: var(--accent); color: var(--accent-text);
+  border: 0; border-radius: var(--radius); cursor: pointer; font-weight: 600;
+  margin-top: var(--s-3);
+}
+button[disabled] { opacity: 0.55; cursor: progress; }
+button.ghost, button.tab {
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+  font-weight: 500; margin-top: 0;
+}
+button.small { min-height: 32px; padding: var(--s-1) var(--s-3); margin: 0; }
+button.danger { background: var(--danger); color: var(--danger-text); }
+button.tab[aria-selected="true"] {
+  border-color: var(--accent); color: var(--accent); font-weight: 700;
+  /* colour is not the only signal: weight + underline too */
+  text-decoration: underline; text-underline-offset: 4px;
+}
+
+.error { color: var(--danger); font-weight: 600; }
+.error::before { content: "⚠ "; }         /* icon + colour + text, not colour alone */
+.ok { color: var(--ok); font-weight: 600; }
+.warn { color: var(--warn); font-weight: 600; }
+.warn::before { content: "⏳ "; }
+
+/* ---- tables & result chips ---- */
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--border); }
+th { font-size: 0.85em; color: var(--muted); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; }
+
+.pred { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-1) 0; }
+.pred .name { flex: 0 0 11em; overflow-wrap: anywhere; }
+.pred .bar { flex: 1; height: 10px; background: var(--bar-bg); border-radius: 5px; overflow: hidden; }
+.pred .bar span { display: block; height: 100%; background: var(--accent); }
+.pred .val { flex: 0 0 9.5em; font-variant-numeric: tabular-nums; font-size: 0.9em; }
+/* ranking mode: forced entries below their tuned threshold (dim + text, not colour alone) */
+.pred.below-t { opacity: 0.6; }
+.pred.below-t .bar span { background: var(--muted); }
+
+/* ---- training progress ---- */
+.progress { height: 14px; background: var(--bar-bg); border-radius: 7px; overflow: hidden; margin: var(--s-2) 0; }
+.progress span { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
+.train-status dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--s-1) var(--s-4); margin: 0; }
+.train-status dt { color: var(--muted); }
+.train-status dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ---- login: one slim row pinned to the top edge ---- */
+.login-bar {
+  display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;
+  padding: var(--s-2) var(--s-5); background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.login-bar h1 { font-size: 1rem; margin: 0 var(--s-3) 0 0; }
+.login-bar label { margin: 0; font-weight: 600; }
+.login-bar input { width: auto; flex: 0 1 320px; min-width: 160px; }
+.login-bar button { margin-top: 0; min-height: 36px; }
+.login-bar .error { margin: 0; flex-basis: 100%; }
+.login-hint { margin: var(--s-2) var(--s-5); }
+
+/* ---- plain-language help accordions ---- */
+details.help { margin: var(--s-2) 0 var(--s-4); }
+details.help summary {
+  cursor: pointer; font-weight: 600; color: var(--accent);
+  padding: var(--s-1) 0; width: fit-content;
+}
+details.help[open] summary { margin-bottom: var(--s-1); }
+details.help p, details.help ul { margin: var(--s-1) 0; max-width: 72ch; }
+details.help li { margin-bottom: var(--s-1); }
+
+/* ---- share-link box + table action groups ---- */
+.share-row { display: flex; gap: var(--s-2); flex-wrap: wrap; align-items: center; margin-top: var(--s-2); }
+.share-row input { flex: 1 1 320px; min-width: 200px; font-size: 0.85em; }
+td.actions { white-space: nowrap; }
+td.actions .small { margin-right: var(--s-1); }
+
+/* ---- global training chip (topbar, visible on every tab) ---- */
+button.chip {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 999px;
+  margin: 0; min-height: 32px; padding: var(--s-1) var(--s-3);
+  font-weight: 500; font-size: 0.9em;
+  display: inline-flex; align-items: center; gap: var(--s-2);
+}
+.chip .mini-bar {
+  width: 64px; height: 6px; border-radius: 3px; background: var(--bar-bg);
+  overflow: hidden; display: inline-block;
+}
+.chip .mini-bar span { display: block; height: 100%; background: var(--accent); }
+.chip.done   { border-color: var(--ok); }
+.chip.failed { border-color: var(--danger); }
+
+/* ---- toast ---- */
+#toast {
+  position: fixed; bottom: var(--s-5); left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg);
+  padding: var(--s-2) var(--s-4); border-radius: var(--radius); max-width: 90vw;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress span { transition: none; }
+}
+@media (max-width: 480px) {
+  .topbar { padding: var(--s-2) var(--s-3); }
+  main { padding: var(--s-3); }
+  .pred { flex-wrap: wrap; }
+  .pred .name { flex-basis: 100%; }
+}

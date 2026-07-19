@@ -1,0 +1,50 @@
+# Local test setup. For production, pull the image from GHCR / the registry
+# and put a proper reverse proxy in front (TLS; see README "Security &
+# operations" for the rate-limit note behind proxies).
+#
+# Quick start:
+#   cp .env.example .env       # set APIV3_API_KEY_ADMIN / APIV3_API_KEY_READONLY
+#   docker compose up -d
+#   open http://localhost:8000/docs
+#
+# Logs:    docker compose logs -f
+# Stop:    docker compose down
+# Reset:   docker compose down -v   # WARNING: deletes datasets + trained models
+
+services:
+  classification-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: classification-api:local
+    container_name: classification-api
+    restart: unless-stopped
+    ports:
+      # Bind to localhost only — nginx/caddy should sit in front.
+      - "127.0.0.1:8000:8000"
+    environment:
+      # ---- Auth (required unless APIV3_AUTH_ENABLED=false) ----
+      APIV3_AUTH_ENABLED: ${APIV3_AUTH_ENABLED:-true}
+      APIV3_API_KEY_ADMIN: ${APIV3_API_KEY_ADMIN:?APIV3_API_KEY_ADMIN missing — create .env from .env.example}
+      APIV3_API_KEY_READONLY: ${APIV3_API_KEY_READONLY:?APIV3_API_KEY_READONLY missing — create .env from .env.example}
+
+      # ---- App ----
+      APIV3_CORS_ALLOW_ORIGINS: ${APIV3_CORS_ALLOW_ORIGINS:-}
+      APIV3_LOG_LEVEL: ${APIV3_LOG_LEVEL:-INFO}
+
+      # ---- Compute (see README "Resources & tuning") ----
+      # -2 = leave one core free so the host stays responsive during training.
+      APIV3_N_JOBS: ${APIV3_N_JOBS:--2}
+
+      # ---- Data (persistent volume) ----
+      APIV3_DATA_DIR: /data/datasets
+      APIV3_MODELS_DIR: /data/models
+      APIV3_SHARE_LINKS_FILE: /data/share_links.json
+    volumes:
+      # Persistent state: uploaded CSV datasets + trained model bundles.
+      - classification-data:/data
+    # No healthcheck block: the image already defines one (GET /health).
+
+volumes:
+  classification-data:
+    driver: local

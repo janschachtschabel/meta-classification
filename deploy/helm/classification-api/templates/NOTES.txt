@@ -1,0 +1,27 @@
+{{ .Chart.Name }} {{ .Chart.Version }} (app {{ default .Chart.AppVersion .Values.image.tag }}) deployed.
+
+Image: {{ include "classification-api.image" . }}
+
+{{- if .Values.ingress.enabled }}
+
+URL(s):
+{{- range .Values.ingress.hosts }}
+{{- $scheme := "http" }}
+{{- if $.Values.ingress.tls }}{{ $scheme = "https" }}{{ end }}
+  {{ $scheme }}://{{ . }}{{ index $.Values.ingress.paths 0 }}  (Swagger UI: /docs)
+{{- end }}
+{{- else }}
+
+No ingress enabled. Reach the app via port-forward:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "classification-api.fullname" . }} 8000:{{ .Values.service.port }}
+  open http://localhost:8000/docs
+{{- end }}
+
+Health check: GET /health
+Auth: X-API-Key header (admin = train/manage, readonly = predict/status).
+{{- if and .Values.config.auth.enabled (not .Values.config.auth.adminKey) }}
+
+WARNING: config.auth.adminKey / config.auth.readonlyKey were not set — the
+release will fail to render. Provide the API keys, e.g.:
+  --set config.auth.adminKey=... --set config.auth.readonlyKey=...
+{{- end }}

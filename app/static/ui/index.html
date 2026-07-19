@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MetaClassify — Admin</title>
+<link rel="stylesheet" href="style.css">
+<!-- Self-contained on purpose: no CDN fonts/scripts (GDPR: no third-party IP leak). -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<div id="app">
+  <!-- ======= Login: slim bar at the top edge (shown until a key is verified) ======= -->
+  <section id="view-login" hidden>
+    <form id="login-form" class="login-bar" novalidate>
+      <h1 class="brand">MetaClassify</h1>
+      <label for="api-key">API key</label>
+      <input id="api-key" name="api-key" type="password" autocomplete="off"
+             required aria-describedby="login-error login-hint">
+      <button type="submit" id="login-btn">Sign in</button>
+      <p id="login-error" class="error" role="alert" hidden></p>
+    </form>
+    <p id="login-hint" class="muted login-hint">Enter an API key to manage datasets,
+       training and models. Readonly keys can classify; management actions need the admin key.</p>
+  </section>
+
+  <!-- ======= App shell ======= -->
+  <div id="view-app" hidden>
+    <header class="topbar">
+      <span class="brand">MetaClassify <span class="muted">admin</span></span>
+      <nav aria-label="Sections" role="tablist">
+        <button class="tab" data-tab="query"    id="tab-btn-query"    role="tab" aria-controls="tab-query"    aria-selected="true"  tabindex="0">Query</button>
+        <button class="tab" data-tab="training" id="tab-btn-training" role="tab" aria-controls="tab-training" aria-selected="false" tabindex="-1">Training</button>
+        <button class="tab" data-tab="models"   id="tab-btn-models"   role="tab" aria-controls="tab-models"   aria-selected="false" tabindex="-1">Models</button>
+        <button class="tab" data-tab="datasets" id="tab-btn-datasets" role="tab" aria-controls="tab-datasets" aria-selected="false" tabindex="-1">Datasets</button>
+      </nav>
+      <button id="train-chip" class="chip" hidden
+              title="Training status — click for details"></button>
+      <span id="auth-off-badge" class="muted" hidden>auth disabled — full access</span>
+      <button id="logout-btn" class="ghost" title="Forget the API key in this tab">Sign out</button>
+    </header>
+
+    <main id="main">
+      <!-- ---- Query ---- -->
+      <section id="tab-query" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-query" tabindex="0">
+        <h2>Test queries</h2>
+        <form id="query-form" class="card">
+          <label for="query-text">Text to classify</label>
+          <textarea id="query-text" rows="3" required
+                    placeholder="e.g. Der Satz des Pythagoras im rechtwinkligen Dreieck"></textarea>
+          <div class="row">
+            <div>
+              <label for="query-models">Models (Ctrl-click for several)</label>
+              <select id="query-models" multiple size="4" required></select>
+            </div>
+            <div class="opts">
+              <label for="query-topk">Top-k
+                <span class="muted">(blank = model decides via its tuned thresholds ·
+                N = show the N most probable, entries below their threshold appear dimmed)</span></label>
+              <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
+              <label class="check"><input id="query-diff" type="checkbox" checked>
+                Show baseline diff <span class="muted">(text signal vs. base rate)</span></label>
+            </div>
+          </div>
+          <button type="submit" id="query-btn">Classify</button>
+        </form>
+        <details class="help">
+          <summary>What do the results mean?</summary>
+          <p>The model reads your text and estimates for <em>every</em> label how well it fits —
+             a number between 0 and 1 (the <strong>confidence</strong>, shown as bar + number).</p>
+          <ul>
+            <li><strong>Top-k empty:</strong> you only get labels the model actually stands
+                behind — everything above its learned decision line. One label can be the
+                honest answer; several labels are fine too (e.g. a text about both physics
+                and electronics).</li>
+            <li><strong>Top-k = N:</strong> you always see the N most likely labels, even weak
+                ones. Dimmed entries marked <em>below threshold</em> are guesses the model
+                would <em>not</em> claim on its own.</li>
+            <li><strong>diff:</strong> how much of the confidence comes from <em>your text</em>
+                rather than from the label simply being common. Near zero = the model is
+                guessing, not reading.</li>
+            <li>First query after a server start can take ~30&nbsp;seconds — the model is being
+                loaded from disk. After that, answers come in milliseconds.</li>
+          </ul>
+        </details>
+        <div id="query-status" aria-live="polite"></div>
+        <div id="query-results"></div>
+      </section>
+
+      <!-- ---- Training ---- -->
+      <section id="tab-training" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-training" tabindex="0" hidden>
+        <h2>Training</h2>
+        <div class="card" id="train-status-card">
+          <h3>Status</h3>
+          <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
+               NOT be a live region — SRs would re-announce it continuously. Phase
+               transitions are announced via the dedicated SR-only element below. -->
+          <div id="train-status" class="train-status">
+            <p class="muted">Loading status …</p>
+          </div>
+          <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
+          <p id="train-queue" class="muted" aria-live="polite" hidden></p>
+        </div>
+        <form id="train-form" class="card">
+          <h3>Start a training run <span class="muted">(admin)</span></h3>
+          <div class="row">
+            <div>
+              <label for="train-dataset">Dataset</label>
+              <select id="train-dataset" required></select>
+            </div>
+            <div>
+              <label for="train-name">Model name</label>
+              <!-- No client-side pattern: the char class safe_name enforces is not
+                   expressible as a v-flag-valid pattern; the server's crafted 400
+                   (name rules) is the single source of truth. -->
+              <input id="train-name" required placeholder="e.g. subjects_v1">
+            </div>
+          </div>
+          <fieldset>
+            <legend>Text columns</legend>
+            <div class="pillbox">
+              <span id="textcol-pills"></span>
+              <input id="textcol-input" type="text" list="textcol-options" disabled
+                     aria-label="Add text column" aria-describedby="textcol-help"
+                     placeholder="Select a dataset first.">
+              <datalist id="textcol-options"></datalist>
+            </div>
+            <p id="textcol-help" class="muted">Type to filter the columns and pick a suggestion —
+               Enter adds it as a pill, Backspace removes the last one.</p>
+          </fieldset>
+          <fieldset>
+            <legend>Label fields <span class="muted">(one model per field)</span></legend>
+            <div class="pillbox">
+              <span id="labelcol-pills"></span>
+              <input id="labelcol-input" type="text" list="labelcol-options" disabled
+                     aria-label="Add label field" aria-describedby="train-names-preview"
+                     placeholder="Select a dataset first.">
+              <datalist id="labelcol-options"></datalist>
+            </div>
+            <p id="train-names-preview" class="muted" aria-live="polite"></p>
+          </fieldset>
+          <div class="row">
+            <div>
+              <label for="train-profile">Profile</label>
+              <select id="train-profile"></select>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="train-filter">Label filter <span class="muted">(substring, optional)</span></label>
+              <input id="train-filter" placeholder="e.g. vocabs/discipline/">
+            </div>
+            <div>
+              <label for="train-cv">Evaluation</label>
+              <select id="train-cv">
+                <option value="">Config default</option>
+                <option value="0">Train/val/test split</option>
+                <option value="5">5-fold cross-validation</option>
+                <option value="10">10-fold cross-validation</option>
+              </select>
+            </div>
+          </div>
+          <p id="train-error" class="error" role="alert" hidden></p>
+          <button type="submit" id="train-btn">Start training</button>
+        </form>
+        <details class="help">
+          <summary>How does training work?</summary>
+          <p>The system learns from the examples in your CSV: it reads the text columns and
+             learns which label values belong to which kind of text. Afterwards it can label
+             new texts on its own.</p>
+          <ul>
+            <li><strong>Text columns:</strong> what the system reads — title, description and
+                keywords together usually work best.</li>
+            <li><strong>Label fields:</strong> the column(s) holding the correct answers.
+                Several fields = one separate model per field, trained one after another.</li>
+            <li><strong>Profile:</strong> <em>fast</em> = quick low-quality test ·
+                <em>auto</em> = recommended · <em>thorough</em> = best quality, slowest.</li>
+            <li><strong>Evaluation:</strong> how quality is measured honestly. The
+                <em>split</em> keeps part of the data aside as an unseen exam.
+                <em>Cross-validation</em> lets every row be both study material and exam —
+                better for smaller datasets, takes several times longer.</li>
+            <li><strong>Label filter:</strong> keep only labels containing this text — e.g.
+                restrict training to one vocabulary.</li>
+            <li>A running training slows nothing down for others: it is limited to ~60% of
+                the machine and can be stopped at any time.</li>
+          </ul>
+        </details>
+      </section>
+
+      <!-- ---- Models ---- -->
+      <section id="tab-models" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-models" tabindex="0" hidden>
+        <h2>Models</h2>
+        <form id="import-form" class="card">
+          <h3>Import model <span class="muted">(exported ZIP, admin)</span></h3>
+          <div class="row">
+            <div>
+              <label for="import-file">Model ZIP</label>
+              <input id="import-file" type="file" accept=".zip" required>
+            </div>
+            <div>
+              <label for="import-name">New name <span class="muted">(optional)</span></label>
+              <input id="import-name" placeholder="defaults to the file name">
+            </div>
+          </div>
+          <p id="import-error" class="error" role="alert" hidden></p>
+          <button type="submit" id="import-btn">Import</button>
+        </form>
+        <details class="help">
+          <summary>How to read the scores</summary>
+          <p><strong>F1</strong> (0–1) says how well the model's answers matched the correct
+             answers on data it never learned from — 1.0 would be perfect, ~0.8 is very
+             usable in practice. <strong>micro</strong> is the overall hit rate (frequent
+             labels count more); <strong>macro</strong> treats rare labels as equally
+             important and is therefore usually lower. <strong>Share link</strong> creates a
+             download link that works without an API key and expires after 24&nbsp;hours;
+             <strong>Download</strong>/<strong>Import</strong> move a model between servers
+             as a ZIP file.</p>
+        </details>
+        <div id="models-share" aria-live="polite"></div>
+        <div id="models-list" aria-live="polite"><p class="muted">Loading …</p></div>
+      </section>
+
+      <!-- ---- Datasets ---- -->
+      <section id="tab-datasets" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-datasets" tabindex="0" hidden>
+        <h2>Datasets</h2>
+        <form id="upload-form" class="card">
+          <h3>Upload CSV <span class="muted">(admin)</span></h3>
+          <label for="upload-file">CSV file</label>
+          <input id="upload-file" type="file" accept=".csv" required>
+          <p id="upload-error" class="error" role="alert" hidden></p>
+          <button type="submit" id="upload-btn">Upload</button>
+        </form>
+        <details class="help">
+          <summary>What belongs in the CSV?</summary>
+          <p>One row per item. Text columns (title, description, …) plus at least one column
+             with the correct labels — several labels in one cell are separated by commas.
+             Semicolon-separated, UTF-8. Duplicate texts are removed automatically before
+             training, so the row count used for training can be lower than the file's.</p>
+        </details>
+        <div id="datasets-share" aria-live="polite"></div>
+        <div id="datasets-list" aria-live="polite"><p class="muted">Loading …</p></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+
+<script src="api.js"></script>
+<script src="pills.js"></script>
+<script src="manage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

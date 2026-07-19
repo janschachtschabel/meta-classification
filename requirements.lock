@@ -1,0 +1,20 @@
+# Pinned DIRECT dependencies the test suite runs against (constraints file).
+# Dev install: pip install -r requirements.txt -c requirements.lock
+# Docker/CI install from requirements-hashes.lock (full transitive tree + sha256),
+# which is compiled FROM this file:
+#   uv pip compile requirements.txt --constraint requirements.lock --generate-hashes \
+#      --python-version 3.11 --universal --output-file requirements-hashes.lock
+# Update: bump here, re-run ruff/mypy/pytest, then recompile the hashes file.
+fastapi==0.135.1
+uvicorn==0.42.0
+pydantic==2.11.10
+pydantic-settings==2.10.1
+python-multipart==0.0.32
+slowapi==0.1.9
+scikit-learn==1.6.1
+joblib==1.5.3
+numpy==2.2.6
+scipy==1.13.1
+pandas==2.3.3
+skops==0.14.0
+pyyaml==6.0.2

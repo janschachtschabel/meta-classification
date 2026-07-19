@@ -1,0 +1,9 @@
+# Line endings: all text files are stored AND checked out as LF on every
+# platform (eol=lf overrides native checkout) — one consistent tree, clean
+# diffs, and tools like ruff/pytest see identical bytes on Windows and Linux.
+* text=auto eol=lf
+
+# Lockfiles and vendored assets are text too; keep them LF-normalized.
+*.lock text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
