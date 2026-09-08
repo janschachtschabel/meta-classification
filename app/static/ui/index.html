@@ -61,6 +61,8 @@
               <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
               <label class="check"><input id="query-diff" type="checkbox" checked>
                 Show baseline diff <span class="muted">(text signal vs. base rate)</span></label>
+              <label class="check"><input id="query-f1" type="checkbox" checked>
+                Show label F1 <span class="muted">(how reliable this label is at all)</span></label>
             </div>
           </div>
           <button type="submit" id="query-btn">Classify</button>
@@ -93,9 +95,13 @@
         <h2>Training</h2>
         <div class="card" id="train-status-card">
           <h3>Status</h3>
-          <div id="train-status" aria-live="polite" class="train-status">
+          <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
+               NOT be a live region — SRs would re-announce it continuously. Phase
+               transitions are announced via the dedicated SR-only element below. -->
+          <div id="train-status" class="train-status">
             <p class="muted">Loading status …</p>
           </div>
+          <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
           <p id="train-queue" class="muted" aria-live="polite" hidden></p>
         </div>
         <form id="train-form" class="card">
@@ -107,7 +113,10 @@
             </div>
             <div>
               <label for="train-name">Model name</label>
-              <input id="train-name" required pattern="[^/\\.].*" placeholder="e.g. subjects_v1">
+              <!-- No client-side pattern: the char class safe_name enforces is not
+                   expressible as a v-flag-valid pattern; the server's crafted 400
+                   (name rules) is the single source of truth. -->
+              <input id="train-name" required placeholder="e.g. subjects_v1">
             </div>
           </div>
           <fieldset>
@@ -115,18 +124,34 @@
             <div class="pillbox">
               <span id="textcol-pills"></span>
               <input id="textcol-input" type="text" list="textcol-options" disabled
-                     aria-describedby="textcol-help" placeholder="Select a dataset first.">
+                     aria-label="Add text column" aria-describedby="textcol-help"
+                     placeholder="Select a dataset first.">
               <datalist id="textcol-options"></datalist>
             </div>
             <p id="textcol-help" class="muted">Type to filter the columns and pick a suggestion —
                Enter adds it as a pill, Backspace removes the last one.</p>
+            <div id="textcol-weights" hidden>
+              <p class="muted" id="textcol-weights-help">
+                <strong>Field weight</strong> — how often a field is repeated in the training
+                text. A title or a keyword list carries far more signal per word than a long
+                description, but the description supplies more words and drowns it out;
+                repeating a field gives it that weight back. <strong>1 = unchanged</strong>
+                (the default). Repetition is damped logarithmically, so 2 is worth about
+                1.7×, not 2×.
+                <br><strong>Note:</strong> a model trained this way expects input built the same
+                way — assemble the text you later send to <code>/predict</code> with the same
+                repetitions, otherwise its tuned thresholds sit on a different distribution.
+              </p>
+              <div id="textcol-weights-fields" class="weights"></div>
+            </div>
           </fieldset>
           <fieldset>
             <legend>Label fields <span class="muted">(one model per field)</span></legend>
             <div class="pillbox">
               <span id="labelcol-pills"></span>
               <input id="labelcol-input" type="text" list="labelcol-options" disabled
-                     aria-describedby="train-names-preview" placeholder="Select a dataset first.">
+                     aria-label="Add label field" aria-describedby="train-names-preview"
+                     placeholder="Select a dataset first.">
               <datalist id="labelcol-options"></datalist>
             </div>
             <p id="train-names-preview" class="muted" aria-live="polite"></p>
@@ -145,13 +170,44 @@
             <div>
               <label for="train-cv">Evaluation</label>
               <select id="train-cv">
-                <option value="">Config default</option>
+                <option value="">Profile default</option>
                 <option value="0">Train/val/test split</option>
+                <option value="3">3-fold cross-validation</option>
                 <option value="5">5-fold cross-validation</option>
                 <option value="10">10-fold cross-validation</option>
               </select>
             </div>
+            <div>
+              <label for="train-minsamples">Min. samples per label
+                <span class="muted">(rarer labels are dropped)</span></label>
+              <input id="train-minsamples" type="number" min="1" step="1" value="20"
+                     aria-describedby="train-minsamples-help">
+              <p id="train-minsamples-help" class="muted">Lower this for small datasets —
+                 if no label reaches it, training stops with "not enough data".</p>
+            </div>
           </div>
+          <details>
+            <summary>Vocabulary caps <span class="muted">(advanced — RAM vs. quality)</span></summary>
+            <p class="muted" id="train-caps-help">
+              How many word / character n-grams the TF-IDF vocabulary may keep. Leave
+              blank for the profile's value. A model whose <code>n_features</code> equals
+              the sum of its caps had its vocabulary <strong>truncated</strong> — raising
+              the caps can recover signal, at a proportional cost in RAM, bundle size and
+              cold-load time. Character n-grams are ignored by word-only profiles.
+            </p>
+            <div class="row">
+              <div>
+                <label for="train-maxword">Max. word features</label>
+                <input id="train-maxword" type="number" min="1000" max="2000000" step="1000"
+                       placeholder="profile default" aria-describedby="train-caps-help">
+              </div>
+              <div>
+                <label for="train-maxchar">Max. character features</label>
+                <input id="train-maxchar" type="number" min="1000" max="2000000" step="1000"
+                       placeholder="profile default" aria-describedby="train-caps-help">
+              </div>
+            </div>
+          </details>
           <p id="train-error" class="error" role="alert" hidden></p>
           <button type="submit" id="train-btn">Start training</button>
         </form>
@@ -165,12 +221,15 @@
                 keywords together usually work best.</li>
             <li><strong>Label fields:</strong> the column(s) holding the correct answers.
                 Several fields = one separate model per field, trained one after another.</li>
-            <li><strong>Profile:</strong> <em>fast</em> = quick low-quality test ·
-                <em>auto</em> = recommended · <em>thorough</em> = best quality, slowest.</li>
+            <li><strong>Profile:</strong> <em>fast</em> = quick test, not for deployment ·
+                <em>auto</em> = recommended · <em>best</em> = most accurate evaluation,
+                about 1.9&times; the time of <em>auto</em>.</li>
             <li><strong>Evaluation:</strong> how quality is measured honestly. The
-                <em>split</em> keeps part of the data aside as an unseen exam.
-                <em>Cross-validation</em> lets every row be both study material and exam —
-                better for smaller datasets, takes several times longer.</li>
+                <em>split</em> keeps part of the data aside as an unseen exam — which
+                means the delivered model never gets to learn from that part.
+                <em>Cross-validation</em> lets every row be both study material and exam,
+                so the delivered model is trained on 100% of your data; it costs several
+                times the compute. More folds = the exam models see more data.</li>
             <li><strong>Label filter:</strong> keep only labels containing this text — e.g.
                 restrict training to one vocabulary.</li>
             <li>A running training slows nothing down for others: it is limited to ~60% of
@@ -217,8 +276,8 @@
         <h2>Datasets</h2>
         <form id="upload-form" class="card">
           <h3>Upload CSV <span class="muted">(admin)</span></h3>
-          <label for="upload-file">CSV file</label>
-          <input id="upload-file" type="file" accept=".csv" required>
+          <label for="upload-file">CSV file <span class="muted">(.csv or .csv.gz)</span></label>
+          <input id="upload-file" type="file" accept=".csv,.csv.gz,.gz" required>
           <p id="upload-error" class="error" role="alert" hidden></p>
           <button type="submit" id="upload-btn">Upload</button>
         </form>

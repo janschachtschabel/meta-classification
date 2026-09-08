@@ -124,7 +124,10 @@ config:
     logLevel: "INFO"
 
   compute:
-    ## @param config.compute.nJobs CPU cores for training. -1 = all cores (bounded by resources.limits.cpu); -2 leaves one core free
+    ## @param config.compute.nJobs CPU cores for training. -1 = all cores available to the POD:
+    ## the app reads the cgroup CPU quota (resources.limits.cpu) and the affinity mask itself, so
+    ## -1 follows a resized limit automatically. APIV3_CPU_MAX_PERCENT (default 60) then keeps part
+    ## of that quota free so /predict stays responsive while a training runs.
     nJobs: -1
     ## @param config.compute.solver Linear-head solver — newton-cg keeps float32 and releases the GIL (see README)
     solver: "newton-cg"
@@ -247,7 +250,8 @@ resources:
   # sized for the documented target of up to ~600k-row datasets on 8 GB.
   # For predict-only or small-data deployments, 1 CPU / 2Gi limits suffice.
   limits:
-    ## @param resources.limits.cpu Set CPU limit on resources (training parallelism is bounded by this)
+    ## @param resources.limits.cpu Set CPU limit on resources — the app detects this CFS quota at
+    ## runtime and sizes training threads from it (see config.compute.nJobs)
     cpu: 4000m
     ## @param resources.limits.memory Set memory limit on resources
     memory: 8Gi

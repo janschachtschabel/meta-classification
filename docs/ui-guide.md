@@ -40,13 +40,19 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
      Modell**; die Namen werden automatisch abgeleitet (`meinname_taxonid`, …)
      und die Trainings laufen nacheinander — **Tab offen lassen**, bis alle
      gestartet sind.
-3. **Profile:** `auto` ist die Empfehlung. `fast` nur zum schnellen Ausprobieren,
-   `thorough` für das letzte Quäntchen Qualität (dauert am längsten).
-4. **Evaluation:** Wie ehrlich die Qualität gemessen wird.
-   - *Train/val/test split* (Standard): ein Teil der Daten wird als „unbekannte
-     Prüfung" beiseitegelegt.
+3. **Profile:** Drei Stufen, aufsteigend nach Rechenzeit — `auto` ist die
+   Empfehlung. `fast` nur zum schnellen Ausprobieren (nicht für ein Modell, das
+   in Betrieb geht), `best` für die genaueste Bewertung (~1,9× so lange wie
+   `auto`; der Unterschied sind allein 5 statt 3 Bewertungsdurchläufe).
+4. **Evaluation:** Wie ehrlich die Qualität gemessen wird. Jedes Profil bringt
+   seine passende Einstellung schon mit — „Profile default" belässt es dabei.
+   - *Train/val/test split*: ein Teil der Daten wird als „unbekannte Prüfung"
+     beiseitegelegt. Der Preis: **dieser Teil fließt nie ins Training ein**, das
+     ausgelieferte Modell lernt nur aus 85 % der Zeilen.
    - *Cross-validation*: jede Zeile ist abwechselnd Lernstoff **und** Prüfung —
-     gut bei kleineren Datensätzen, dauert aber ein Mehrfaches.
+     das ausgelieferte Modell wird auf **100 %** der Daten trainiert, und
+     bewertet wird über alle Zeilen statt über eine Stichprobe. Kostet ein
+     Mehrfaches an Rechenzeit; mehr Folds = die Prüfungsmodelle sehen mehr Daten.
 5. **Start training** → der Fortschrittsbalken (auch oben als kleine Anzeige auf
    jedem Tab sichtbar) zeigt Phase, Prozent und Restzeit. Ein Training auf
    ~30.000 Zeilen dauert je nach Einstellung wenige Minuten bis ~1 Stunde; der

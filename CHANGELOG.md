@@ -2,6 +2,472 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — prediction reliability, measured tuning, sizing to 600k (2026-07-25)
+
+Test-first; 170 tests green, ruff/mypy clean.
+
+### Fixed — the bundle save was quadratic in the vocabulary size (**format 2, breaking**)
+- Writing `vectorizer.skops` for a 200 000-term vocabulary took **45–85 minutes** and
+  148 MB — longer than training the model it was saving. Profiled: skops walks a dict
+  entry by entry and is **super-quadratic in the entry count** (4k terms → 0.7 s,
+  16k → 8.3 s, 64k → 296 s; exponent rising from 1.8 to 2.6). The 48 MB float head, one
+  single array, wrote in a second — so it was never about size.
+- The vocabularies now travel as a plain `vocabulary.json` member and the estimators go
+  into skops without them. Measured at the real 200 000 terms:
+
+  | | before | after |
+  |---|---:|---:|
+  | Save | 45–85 min | **0.3 s** |
+  | Load | 29.1 s | **0.2 s** |
+  | Vectorizer data | 148 MB | **3.0 MB** |
+
+  Also fixes the slow first request after a model switch (a 29 s cold load becomes
+  0.2 s), and shrinks every model export/import accordingly.
+- Validated at load like any other bundle content: `vocabulary.json` arrives inside
+  importable archives, so a wrong length (which would silently build a feature matrix
+  of the wrong width) or duplicate terms are rejected with `UnsafeModelError`.
+- **Breaking: `FORMAT_VERSION` 1 → 2. Existing bundles must be retrained** — a format-1
+  bundle now fails to load with an explicit message rather than a misleading 404.
+
+### Added — datasets may be gzipped (`.csv.gz`)
+
+- Upload, listing, inspection, download and training all accept `.csv.gz` alongside `.csv`.
+  Motivation: the WLO full exports are **126–195 MB compressed against ~1.4 GB plain**, and
+  pandas reads the compressed form natively — so only the surrounding API stood in the way.
+- Reading already worked; three places did not. `GET /datasets` globbed `*.csv`, which never
+  matches `*.csv.gz`; the upload demanded a `.csv` suffix; and the download announced
+  `text/csv` for gzip bytes, which lets a browser silently decompress and save something that
+  no longer opens under its `.gz` name.
+
+### Fixed — `count_rows` was off by up to 5x on real data
+
+- It counted physical lines, so every newline inside a quoted description started a new
+  "row". 🟢 Measured: `data_300k.csv` reported **1,343,683 rows for 340,630 records (3.94x)**
+  and the combined WLO export **2,141,123 for 426,724 (5.02x)**. Documented as a harmless
+  approximation, but at that factor it is simply a wrong number in every dataset listing.
+- Now tracks quote parity per line — one cheap pass, exact for well-formed CSV (an escaped
+  `""` contributes two quotes and leaves the parity untouched). A full `csv.reader` pass
+  would also be exact but parses every field for a number nobody trains on.
+- Independent of the gzip work: plain CSVs were equally affected. Gzip merely made it
+  spectacular, since counting newlines in COMPRESSED bytes is meaningless (1,030,307 for the
+  same 426,724 records).
+
+### Changed — `best` is now `auto` + more folds, nothing else (and CV10 is out)
+
+Both of `best`'s former distinctions were measured and only one survived.
+
+- **The `C` grid loses its wide reach.** `best` searched `[0.5, 2, 8, 32, 128]` on my
+  hypothesis that four consecutive runs selecting the grid *maximum* (16 → 32 → 128) meant
+  the optimum lay beyond it. 🟢 `scripts/benchmark_c_range.py` (new; holdout split, one fit
+  per candidate, zero convergence warnings) refutes it on **both** targets — macro F1 peaks
+  at `C=32` and then declines:
+
+  | C | 8 | **32** | 128 | 512 | 2048 |
+  |---|---:|---:|---:|---:|---:|
+  | school (156k rows, 59 labels) | 0.7504 | **0.7531** | 0.7511 | 0.7493 | 0.7479 |
+  | university (30k rows, 118 labels) | 0.7803 | **0.7814** | 0.7812 | 0.7785 | 0.7785 |
+
+  Micro F1 declines monotonically too (school 0.8603 → 0.8517) while fit time rises ~50 %.
+  The repeated edge picks were **ties on a flat plateau**: at a fixed 5-fold CV, `C=32` and
+  `C=128` scored 0.8135 vs 0.8130. `best` now shares `auto`'s `[2, 8, 32]`, and
+  `test_no_c_grid_reaches_past_the_measured_useful_range` stops the range being re-widened.
+- **The fold count is the real lever, and 5 is the knee.** 🟢 Isolated on the university
+  target at a fixed `C=32`: 3 folds → 0.7992, **5 folds → 0.8135 (+0.0143)**, 10 folds →
+  0.8166 (**+0.0031 for double the run time**, 16.7 vs 9.1 min). So the +0.0138 previously
+  credited to the wider `C` grid was the fold count all along. **No shipped profile uses
+  `cv_folds: 10`** — still available per request, but not worth 2× for three thousandths.
+- Net: `best` drops from 21 to **13 head fits — 38 % cheaper at slightly better quality**
+  (0.8135 vs 0.8130). At 156k rows ~1.2 h instead of ~2.0 h.
+- Two of my own tests asserted the refuted design (`best` must probe past both optima; the
+  candidate count must strictly increase along the ladder). They were **replaced by the
+  measurement**, not relaxed to pass: the new pair pins the upper bound at 32 and forbids a
+  costlier rung from searching more coarsely than a cheaper one.
+
+### Fixed — a namespace was being trained as a class
+
+- A label value ending in `/` names a *container*, not a concept. 🟢 Measured on
+  `data_300k.csv`: the bare vocabulary root `…/vocabs/discipline/` was attached to **522
+  rows** and trained as an ordinary class scoring **F1 0.4096**, so it diluted macro F1 and
+  `/predict` could answer with a label that carries no meaning. The higher-education root
+  did the same on 290 rows (F1 0.6888).
+- `min_samples_per_label` structurally cannot catch this — 522 rows clears any sane
+  threshold — so `data.split_labels` now drops container values, and a row left with no
+  label is dropped like any other unlabelled row. Deliberately narrow: a genuine broader
+  concept has an id (`…/discipline/120`) and is kept, because the label hierarchy is real
+  signal (the higher-education vocabulary averages 2.25 levels per row). The 11 other
+  malformed URIs in that file (label *text* where the concept id belongs, e.g.
+  `…/discipline/Physik`) were already caught by `min_samples_per_label` at 2–10 rows.
+- **Added `scripts/prune_bundle_labels.py`** — removes the class from an already-trained
+  bundle, again **without retraining**. In multilabel mode `predict_proba` stacks one column
+  per entry in `estimators_`, so dropping an entry drops its column; the script *proves*
+  this by comparing probabilities for the kept labels before and after and refusing to write
+  if anything moved. `f1_macro` is recomputed exactly (it is the unweighted mean of the
+  per-label scores); `f1_micro` / `precision_macro` / `recall_macro` cannot be derived
+  without the original predictions, so they are moved to `metrics_before_pruning` rather
+  than left looking current. Applied: `faecher_300k_auto` 60 → 59 classes
+  (macro 0.7310 → **0.7365**), `hochschulfaecher_300k_auto` 119 → 118 (0.7982 → **0.7992**).
+- **Import stays covered.** Training can no longer produce such a class, but `POST
+  /models/import` installs a bundle carrying its own `classes`, so an older bundle would
+  reintroduce it. A loader cannot repair it — the class list is positionally tied to the
+  head's estimators, and dropping one without the other would shift every probability onto
+  the wrong label — so `model_io` logs a warning naming the offending labels and the repair
+  command instead of failing an otherwise usable bundle.
+
+### Fixed — display names were silently attributed to the WRONG label
+
+- A label column and its `_DISPLAYNAME` twin are both separated by `label_separator`,
+  but only URIs are guaranteed free of that character. A name containing a comma
+  (`"Rechts-, Wirtschafts- und Sozialwissenschaften"`) split into two entries, so the
+  positional `zip` shifted every later name onto the wrong URI — and `setdefault` then
+  froze that wrong name permanently.
+- 🟢 Measured on `data_300k.csv` (340 630 rows): **6.09 % of rows misaligned**, and in the
+  trained bundles **34 of 119** higher-education labels (28.6 %) and 2 of 60 school labels
+  carried the name of a *different* subject. Before the fix, one prediction on an
+  engineering text displayed **"Physik" three times** — for Physik/Astronomie, for
+  Ingenieurwesen allgemein, and for Physik.
+- `data._pair_names` now pairs names only when the counts provably line up. When they do
+  not, `_rejoin_split_names` reconstructs the split using the URI count as the arity
+  constraint plus German orthography (a lowercase start continues, `"Rechts-"` is half a
+  compound, an unclosed `(` must close). 🟢 That recovers 29.6 % of damaged rows and
+  agreed with independently-clean rows **75/75 times**. Rows that still do not reconcile
+  contribute **nothing** — a missing name falls back to the URI, which is honest, whereas
+  a wrong subject name is not.
+- **Added `scripts/fetch_vocab_labels.py`** — the complete source. A comma-corrupted
+  export cannot be fully repaired from itself (data-derived names cover only 59 % of
+  labels, 70 % with reconstruction), so this downloads the SKOS vocabularies once and
+  writes `data/label_names.json`. Training reads that sidecar if present and lets it
+  override CSV-derived names. Build-time only: `app/` still never fetches a URL.
+  🟢 Cross-check against the 191 labels known from both sources: **identical, 0 conflicts**;
+  coverage of the labels in use rose to **100 %**.
+- **Added `scripts/patch_bundle_labels.py`** — repairs an existing bundle in place, since
+  `uri_to_label` is presentation-only JSON in `config.json`. **No retraining needed**;
+  it asserts `classes`, thresholds and both skops members stay untouched, and keeps a
+  `config.json.bak`. Applied to `faecher_300k_auto` (2 names) and
+  `hochschulfaecher_300k_auto` (34), with confidences verified bit-identical afterwards.
+- Surfaced two data defects worth fixing upstream, not worked around here: 522 rows are
+  tagged with the bare vocabulary URI `…/vocabs/discipline/` (no concept — it trained as a
+  junk label scoring F1 0.410), and 11 more put the label *text* where the concept id
+  belongs (`…/discipline/Physik`). The real fix is the export: quoting the fields, or a
+  separator that cannot occur inside a name.
+
+### Optimization summary — what was measured and what it bought
+
+Every line below is a measurement on `data_30k_ai.csv` (48 subject labels, identical
+rows/split/threshold procedure), not an expectation. Scripts in `scripts/benchmark_*.py`.
+
+| Change | Quality | Cost |
+|--------|---------|------|
+| **Field weights** title+keyword 2× (now the default) | **+0.0145 macro** | none (nnz unchanged) |
+| **char n-grams (3,5) → (5,5)** | **+0.0024 macro** (0.7084 vs 0.7060) | **−62 % matrix**, 3× faster fits |
+| **C grid 8 → 3 candidates** | **±0.0000** (identical pick) | **−62 % compute** |
+| **Label matrix int64 → int8** | none | **−87 % target RAM** (1.34 GB → 168 MB @600k×300) |
+| `fast`: drop the 50 k word cap | **+0.0123 macro** | negligible |
+| Vocabulary caps 80k/120k → doubled | −0.0005 (nothing) | +88 % head RAM — **not adopted** |
+| Word-only instead of word+char | −0.0072 clean, but **3.6× worse under typos** | −90 % matrix — **not adopted** |
+| Linear SVM head | tie within noise | needs calibration: 6× RAM, 9× latency — **not adopted** |
+| LogReg ⊕ SVM ensemble | *worse* than the better member | 2× everything — **not adopted** |
+| Static embeddings ⊕ TF-IDF | −0.0014 to −0.0076 | 2.2× fit time + a dependency — **not adopted** |
+
+Net effect on the default path: **`auto` at 100k rows went from ~132 min to ~19 min**
+with slightly better quality, and the profile restructure below cut it by another ~46 %
+(7 head fits instead of 13). 🟢 Anchor measurement: `auto` over **156 373 rows × 60
+labels in 40.2 min**, bundle save 3 s — which puts 600k rows at ~2.6 h, not the ~1 h an
+earlier doubly-derived estimate claimed (see README sizing).
+
+### Changed — the profile set is a cost ladder: `fast` < `auto` < `best` (**breaking**)
+- `Profile` gained `cv_folds`, so a profile carries its own evaluation mode. Resolution
+  is most-specific-first: **request > profile > config** (`split.cv_folds` in
+  `config.yaml` is now only a fallback for custom profiles that omit it).
+- **Removed `large` and `thorough`.** `optimize_parameters: "large"` / `"thorough"` now
+  returns `400`. They made the set incoherent: `large` was *cheaper* than `auto` despite
+  the heavier name, and `thorough`'s 10-candidate grid bought a measured **+0.0004**
+  macro F1 — the C curve is flat, so paying 3.3× for grid width was never a real rung.
+  Custom profiles in `config.yaml` remain freely definable for anyone who wants either.
+
+  | Profile | Char n-grams | `C` grid | Evaluation | Head fits¹ | Deploys on |
+  |---|:---:|---|---|---:|---|
+  | `fast` | no | `[2, 32]` | holdout | 2.4 | 85 % of rows |
+  | `auto` | (5,5) | `[2, 8, 32]` | 3-fold CV | 7 | **100 %** |
+  | `best` | (5,5) | `[0.5, 2, 8, 32, 128]` | 5-fold CV | 21 | **100 %** |
+
+  ¹ `(folds − 1) × |C_grid| + 1`, in units of the full dataset.
+- **`auto` is now ~46 % cheaper than before** (7 head fits instead of 13) and still meets
+  the goal that drove the redesign: the deployed model trains on 100 % of the rows and
+  every row is scored out-of-fold. Fold count does not change *whether* the evaluation is
+  honest, only how much data the evaluation models see (67 % at k=3 vs 80 % at k=5) —
+  i.e. fewer folds bias the reported score slightly **pessimistic**.
+- **The `C` grid is now part of the gradation too**, along the axis that turned out to
+  matter. Two qualities of a grid are independent: *resolution* (candidate count inside
+  the span) and *span* (how far out it reaches). Resolution is measured to be cheap —
+  3 candidates at 4× steps select the same `C` at identical F1 as 8 candidates at 2×
+  steps — so `best` spends its extra candidates on **span** instead: `[0.5, … , 128]`
+  turns both known optima into *interior* points. That answers a question neither
+  cheaper rung can: both targets currently pick a grid *endpoint*, which by this
+  project's own rule means "the search ran out of candidates", not "it found an
+  optimum". Pinned by `test_c_grids_step_up_along_the_ladder`.
+- **Fixed a latent defect this surfaced:** `fast`'s grid was `[4, 16]`, which brackets
+  *neither* known optimum (subject picks 32, educational level picked 2) — it would have
+  shipped a model regularized at the wrong end while looking like a normal run. Every
+  shipped grid now spans `2 … 32` at minimum, pinned by
+  `test_every_profile_brackets_both_known_optima`.
+- `GET /train/profiles` reports each profile's `cv_folds`; the UI's evaluation dropdown
+  says "Profile default" and gained a 3-fold option.
+- Docs corrected in the same pass: the README sizing section still described the removed
+  `large` profile and rested on the superseded `(3,5)` character n-grams (725 nnz/doc);
+  it now uses the `(5,5)` basis and labels derived figures as derived.
+
+## [Unreleased] — prediction reliability, wider C search, field weights (2026-07-25)
+
+Four changes from a review of where recognition quality is actually lost.
+Test-first; 163 tests green, ruff/mypy clean.
+
+### Decided — the head stays `LogisticRegression`
+- A one-off benchmark compared `LinearSVC` (raw and calibrated) and a LogReg⊕SVM
+  ensemble against the deployed head on `data_30k_ai.csv`. Quality was a tie within
+  split noise, and once the probabilities the API is built on (`confidence`,
+  `baseline_diff`, threshold grid, `/predict/multi`) are restored via
+  `CalibratedClassifierCV`, LogReg wins on **speed, memory and probabilities** at once.
+  The ensemble landed *between* its members because the two heads correlate at 0.9855.
+  **Question closed; the benchmark code was removed rather than carried as dead
+  exploration code.** The reasoning and all numbers survive in
+  `docs/model-approach-comparison.md`.
+
+### Added — `scripts/benchmark_label_scaling.py`
+- Answers what changes for a wide vocab (`ccm:curriculum`, 478 labels available):
+  48 vs 300 labels on identical texts/features/split. Everything is **linear** in the
+  label count (fit ×5.79, coefficients ×6.25, threshold tuning ×5.65 for 6.25× labels),
+  so a wide vocab is a budgeting question, not an architectural one. A 300-label head
+  is 229 MB of float32 coefficients plus ~148 MB of vectorizer per model — worth
+  planning the container limit around.
+- 🟢 **The finding that matters:** at 300 labels micro F1 halves (0.6254 → 0.3191) and
+  drops below macro. Recall barely moves (0.617 → 0.581) while **precision collapses**
+  (0.634 → 0.220) because the model asserts **4.22 labels per row against a true 1.60**.
+  Per-label F1-optimal thresholds buy recall with false positives on rare labels; macro
+  dilutes that 1/300, micro pools it. This is the thresholding regime, not the
+  classifier. Mitigations use what the API already has — `top_k` ranking mode,
+  `include_label_f1`, and a higher `min_samples_per_label` for wide vocabs.
+
+### Added — `label_f1` on predictions
+- All predict endpoints can attach `label_f1` per prediction
+  (`include_label_f1=true`; always on in `/predict/explain`): the label's F1 from
+  the training evaluation. Confidence says how sure the model is *here*,
+  `label_f1` how much that is worth — `0.95` on a label that only scores `0.68`
+  overall deserves a human look. The value was already parsed on every model load
+  and thrown away (`registry.get`); it is now carried on `ClassifierModel`.
+  **Works with existing bundles — no retraining needed.** `null` for labels a
+  bundle has no score for. The admin UI shows it next to the baseline diff.
+- Malformed `per_label_f1` in an imported bundle's `metrics.json` (non-mapping,
+  non-numeric, NaN) is dropped instead of reaching the model — it is reporting
+  data arriving over a trust boundary.
+
+### Added — `large` profile + a measured sizing envelope (up to 600 k rows)
+- New `large` profile: word n-grams with a **full** 200 k vocabulary, 2 `C` candidates.
+  🟢 Measured (`scripts/benchmark_row_scaling.py`, `benchmark_feature_caps.py`):
+  memory and vectorization scale with **exponent 1.00** in the row count, so at 600 k
+  rows `auto` needs a **3.2 GB** feature matrix and **24 min per head fit**, while
+  word-only stays at ~340 MB and under a minute — for **−0.0072 macro F1**.
+  The driver is non-zeros per document: **725 with character n-grams, 70 without**.
+- `fast` is deliberately NOT the answer for big data: it is word-only *and* caps the
+  vocabulary at 50 k *and* drops per-label thresholds, and the cap alone triples the
+  quality loss (−0.0195 vs −0.0072). README gained a sizing table.
+- **Fixed a scaling defect:** `prepare_targets` returned the dense 0/1 target matrix as
+  `int64` — 8 bytes per bit. Now `int8`: 1.34 GB → 168 MB at 600 k rows × 300 labels.
+- Known limit, documented rather than redesigned: k-fold CV holds one
+  `rows × labels` float32 buffer **per C candidate** (0.9 GB at 600 k × 48 × 8), so a
+  holdout split plus the 2-candidate `large` grid is the configuration for that size.
+
+### Added — per-target over-assertion in the metrics
+- Every bundle's `metrics` now carries `predicted_labels_per_row` next to
+  `true_labels_per_row`. F1 hides over-assertion, and how badly a model over-asserts
+  depends on the **training target**, not the dataset: the same rows yield ~1.1 asserted
+  labels for a 48-label subject vocab and ~4.2 for a 300-label curriculum vocab. Reading
+  one target's number off another's was exactly the mistake this makes impossible.
+
+### Changed — `text_column_weights` is now a config default (title + keywords 2×)
+- `config.yaml` gains `preprocessing.text_column_weights`, shipped as title +
+  keywords at 2× — the measured optimum. It applies when a `/train` request omits the
+  field and is **narrowed to the columns that request trains on**, so a global default
+  cannot break a CSV with different column names. A request mapping overrides it;
+  `{}` trains unweighted. `GET /train/profiles` now reports
+  `default_text_column_weights` and `default_min_samples_per_label`, and the admin UI
+  pre-fills its per-column multiplier inputs from them.
+- The bundle records the **effective** weights (what was applied), not what the request
+  contained — a request that inherited the default is still self-describing.
+
+### Added — `max_word_features` / `max_char_features` per training request
+- The vocabulary caps were reachable only via env vars or a profile, i.e. not per run.
+  They are now request fields (most specific wins: request → profile → settings),
+  bounded at 2 000 000 because they are the main RAM lever. Both effective values are
+  recorded in the bundle metadata, which is what makes `tfidf.n_features` interpretable:
+  if it equals their sum, the vocabulary was **truncated**. On `data_30k_ai.csv` it does
+  (80 000 word + 120 000 char, both saturated). Exposed in the admin UI behind an
+  "advanced" disclosure.
+- 🟢 **Measured** (`scripts/benchmark_feature_caps.py`): the caps really are binding —
+  the natural vocabulary is 134 835 word + 255 268 char — but the discarded tail carries
+  **nothing**. Doubling the caps exhausts the word vocabulary entirely and still lands at
+  **−0.0005 macro F1**, while the head grows 36.6 → 68.6 MB and fit time nearly doubles.
+  `max_features` keeps the most frequent terms and `min_df=2` already drops hapaxes, so
+  what is cut is noise. The shipped 80 k / 120 k stays. The useful direction is *down*:
+  40 k / 60 k costs only −0.0052 macro and **halves the head**, which matters for a wide
+  vocab on a small host (a 300-label head is 229 MB at 200 k features, ~115 MB at 100 k).
+
+### Added — `text_column_weights` in the train request
+- Repeats a text column when the training text is assembled
+  (`{"properties.cclom:title": 2}`), so short dense fields are not drowned out by
+  a long description. Values `1…10`; keys must be among `text_columns` (a typo is
+  a `422`, not a silent no-op). Recorded in the bundle metadata. The admin UI
+  generates one multiplier input per selected text column.
+- **Training-time only.** `/predict` takes one opaque string and cannot re-apply
+  the weights, so a model trained with weights expects input assembled the same
+  way; otherwise its tuned thresholds sit on a slightly different distribution.
+- 🟢 **Measured** (`scripts/benchmark_field_weights.py`, identical rows/split/C grid
+  per variant): `{title: 2, keyword: 2}` gives **+0.0145 macro F1 / +0.0052 micro**
+  over unweighted — the largest single quality gain measured on this data, at
+  **no cost** in matrix size, RAM or fit time (a repeat raises term counts, it does
+  not add new terms). Two non-obvious results: boosting **keywords alone** already
+  yields the whole macro gain, while boosting the **title alone lands 0.0049 BELOW
+  baseline**; and 3× is worse than 2×, so the multiplier should not be pushed up.
+
+### Changed — wider C grid, and the grid is now recorded
+- `auto` searches `[0.25 … 32]` (was `[0.5 … 16]`), `thorough` `[0.1 … 64]`.
+  Motivation: `faecher_ai_cv5` selected `16.0`, the old grid's **maximum** — a
+  pick at the edge means the search ran out of candidates. Costs ~33 % more fits
+  in `auto`; the selection only keeps an extreme `C` when it scores better.
+- 🟢 **Measured outcome, so nobody assumes this bought quality:** on
+  `data_30k_ai.csv` the validation curve is *flat* above the old boundary —
+  `C=16` scored 0.7271 macro F1, `C=32` scored 0.7275 (**+0.0004**). The widening
+  buys certainty that the optimum is inside the grid, not accuracy. Widening
+  further is not worth the fits.
+- Bundle metadata gains `c_grid`, so `best_C` stays interpretable after the fact.
+
+### Changed — `min_samples_per_label` defaults to 20 (was auto-scaled)
+- The request field now declares `20` instead of silently scaling to dataset size,
+  because dropping labels is a decision worth seeing. `null` still asks for the
+  heuristic (2 / 5 / 20 / 35). The admin UI exposes the field.
+- **Behaviour change for small datasets:** a dataset whose labels have fewer than
+  20 rows now aborts unless the caller lowers the value. The abort message names
+  the gap ("of 3 labels the most frequent one has only 12 tagged rows, below
+  min_samples_per_label=20") instead of just restating the rule, and surfaces as
+  `status=error` on `/train/status`.
+
+## [Unreleased] — deferred re-audit items resolved (2026-07-16, late evening)
+
+Closes the four items the same-day re-audit deliberately deferred
+(B9/B10/C3/D10 in `docs/audits/2026-07-16-reaudit.md`). All test-first;
+152 tests green (96% line coverage), ruff/mypy clean.
+
+### Changed — metrics measure the serving decision rule (B9)
+- For **multiclass/binary** models, C-selection and all reported metrics now
+  measure the **argmax** rule serving actually applies (`ClassifierModel.predict`
+  returns the single best label and ignores thresholds for single-label tasks).
+  Previously they measured a thresholded rule serving never used, so reported
+  F1/precision/recall could diverge from live behaviour in both directions.
+  Threshold tuning is skipped for these models (neutral `0.5`/`{}` in the
+  bundle instead of tuned dead values). Multilabel models are unchanged.
+- **Reported numbers shift for single-label models**: retraining the same data
+  can now yield different (honest) metrics. Bundles are self-describing via a
+  new `decision_rule` key in `metrics` (`"argmax"` or `"thresholds"`); bundles
+  trained before this change lack the key (= old thresholded numbers).
+
+### Fixed — rows orphaned by the unlearnable-label drop (B10)
+- The classic-split path drops label columns without train positives; rows
+  whose ONLY labels were dropped stayed as all-zero targets — guaranteed misses
+  in the metrics (fatal under argmax) that also diluted `avg_labels`. Such rows
+  are now removed (split indices remapped) and `avg_labels` is computed AFTER
+  the drop, so it describes the label space actually trained.
+
+### Changed — **breaking**: `POST /datasets/{name}/validate` contract (C3)
+- The endpoint now takes ONE JSON object like `/datasets/analyze`
+  (`{"text_columns": [...], "label_column": "...", "csv_separator": ";",
+  "label_separator": ","}`). The former mixed contract (raw JSON array body +
+  query parameters) is gone; the separator's single-char guard moved into the
+  schema. Update callers accordingly (the bundled admin UI never used this
+  endpoint).
+
+### Fixed — container-aware CPU budget (D10 code half)
+- `effective_n_jobs()` now derives "all cores" from what the process may
+  actually use: `os.cpu_count()` bounded by the Linux scheduler affinity mask
+  and the cgroup CPU quota (v2 `cpu.max`, v1 `cfs_quota_us`; fractional quotas
+  floor, never below 1). In a 4-CPU-limited pod on a 64-core node, `-1` now
+  means 4 instead of ~38 throttled threads. The Helm default returns to
+  `nJobs: -1` (it follows a resized `resources.limits.cpu` automatically), and
+  `APIV3_CPU_MAX_PERCENT` finally means what it documents inside containers:
+  training keeps ~40% of the POD's quota free for serving.
+
+## [Unreleased] — re-audit fixes (2026-07-16, evening)
+
+Acting on the same-day re-audit (`docs/audits/2026-07-16-reaudit.md`; four
+fresh-eyes readers + scanners). 134 tests green (95% line coverage), ruff/mypy
+clean; all fixes test-first where logic.
+
+### Fixed (correctness)
+- **Per-label threshold degeneracy**: a label with zero positives in the val
+  split got the grid MINIMUM (0.05) instead of the global-threshold fallback —
+  rare labels then fired on much of the traffic. Zero-positive labels now keep
+  the global threshold.
+- **Registry cache/delete race**: a cold `get()` could re-insert a concurrently
+  deleted model into the LRU cache (a same-name re-import then served the OLD
+  weights). The miss path AND `delete()` now change disk + cache atomically
+  under the disk lock.
+- **Zombie-thread state pollution**: after `POST /train/stop?hard=true`, the
+  abandoned thread's progress updates mutated the reset state (`/metrics` showed
+  `training_running 0` with progress creeping). Progress updates now carry the
+  same generation guard as completion.
+- **Two-trainings window closed**: the runner thread is registered in the same
+  lock block as the state transition (a hard-stop + start in the microsecond gap
+  could previously pass the overlap guard).
+- **Import-vs-zombie-save guard**: model import refuses a name that a still-live
+  training thread is writing — also after a hard stop reset the status to idle.
+- `/train/status` now populates the documented `error` field on failures.
+- `validate` counts "rows without labels" from the raw label column (the loader
+  drops such rows, so the documented warning could never fire before).
+- Corrupt `config.json` / wrong-shaped bundle content → 422/400 instead of 500.
+
+### Security / API
+- **Single-char separator guard on ALL inputs** (`/train`, `/datasets/analyze`,
+  `validate` — previously only `GET /datasets/{name}`): pandas parses a
+  multi-char separator as a regex (ReDoS; in `/train` it could hang the training
+  thread outside any stop checkpoint).
+- `validate` maps malformed-CSV errors to a crafted 400 like its siblings
+  (was a sanitized 500) and documents its array-body + query-param contract.
+- Swagger `/docs` no longer persists the API key in localStorage
+  (`persistAuthorization` removed — the admin UI's sessionStorage-only posture
+  now holds for both entry points).
+- Unknown-profile 400 detail no longer arrives wrapped in stray quotes.
+
+### Frontend
+- Share box: inline `onfocus` handler (blocked by the UI's own CSP) replaced
+  with an addEventListener — plus a test pinning "no inline handlers" at source
+  level. Bundle-controlled `metrics.json` values are now escaped and coerced
+  before rendering (stored-HTML-injection / table-crash path via model import).
+- Dark mode: destructive buttons use a `--danger-text` token (was white on
+  light salmon, ≈2.4:1). Pill inputs got accessible names; the training status
+  card is no longer a live region (a dedicated SR-only element announces phase
+  TRANSITIONS instead of re-reading the card every 2.5s). Label-field pills
+  join the pillbox flex layout; dead `pattern` attribute removed; the status
+  poll is re-entrancy-guarded and the client queue also advances past an
+  externally caused `idle`.
+
+### Performance
+- Admin model routes (`delete`, `export`, `import`, share download) and the
+  dataset-import write run via `asyncio.to_thread` — a multi-second zip/skops/
+  rmtree no longer freezes `/health` and predicts on the single worker.
+
+### Tests / Deps / CI
+- Suite is hermetic against ambient `APIV3_*` env vars and a local `.env`;
+  fresh-app fixtures also reset the registry singleton; module temp dir is
+  reclaimed at exit; warmup corrupt-bundle branch, `/train`+`/train/stop`
+  response key sets and all `/docs` runtime dependencies are now pinned by tests.
+- **`joblib` declared as a direct dependency** (13 pins; it was imported
+  directly but rode along transitively — invisible to the lock-parity gate).
+  `types-PyYAML` added to the pyproject dev extra; ruff/mypy targets bumped to
+  py311 (matching the floor); `scripts/` joined the lint gate.
+- `.dockerignore` cache patterns made recursive (`**/__pycache__`); GitLab CI:
+  helm image pinned (was `latest`), `docker login` via `--password-stdin`,
+  branch chart pushes restricted to main/develop like the image jobs.
+- Helm `values.yaml`: `nJobs` default now matches `resources.limits.cpu` (the
+  app derives "-1 = all cores" from the NODE, not the CFS quota — documented).
+
 ## [Unreleased] — audit remediation (2026-07-16)
 
 Acting on the whole-codebase audit (`docs/audits/2026-07-16-audit.md`). All
@@ -25,8 +491,10 @@ banner). 118 tests green, ruff/mypy clean.
 - **CORS**: a wildcard origin no longer combines with credentials (guarded).
 - **Rate limiting**: `--proxy-headers` in the image so limits key on the real
   client IP behind a proxy (audit T3); `DELETE` model/dataset are now throttled
-  and the previously-dead `rate_limit_default` is wired; `separator` is capped to
-  one character (ReDoS); the 429 body now uses the shared `{"detail": ...}` envelope.
+  and the previously-dead `rate_limit_default` is wired; `separator` was capped to
+  one character on `GET /datasets/{name}` (ReDoS — the evening re-audit extended
+  this guard to every separator input); the 429 body now uses the shared
+  `{"detail": ...}` envelope.
 
 ### Fixed
 - **Hard-stop no longer allows two concurrent trainings** (audit T2): a new

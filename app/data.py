@@ -7,6 +7,7 @@ inspection/statistics for the API live in ``dataset_stats`` (which consumes this
 
 from __future__ import annotations
 
+import gzip
 import html
 import re
 from collections.abc import Callable
@@ -72,11 +73,37 @@ def _clean_in_chunks(series: pd.Series, on_progress: Callable[[str], None] | Non
     return pd.concat(parts)
 
 
+def is_container_label(label: str) -> bool:
+    """Does this value name a NAMESPACE rather than a concept?
+
+    A trailing ``/`` means "members of", not "a member" — in URIs as in paths. Such a value
+    is a tagging accident, never a class worth learning: measured on ``data_300k.csv``, the
+    bare vocabulary root ``…/vocabs/discipline/`` was attached to 522 rows and trained as
+    an ordinary label scoring F1 0.4096, diluting macro F1 and letting ``/predict`` answer
+    with a label that carries no meaning.
+
+    ``min_samples_per_label`` cannot catch this — 522 rows clears any sane threshold — so
+    the guard has to be structural. It is deliberately narrow: a genuine broader concept
+    has an id (``…/discipline/120``) and is kept, because the label hierarchy is real
+    signal (the higher-education vocabulary averages 2.25 levels per row).
+    """
+    return label.endswith("/")
+
+
 def split_labels(value: object, separator: str = ",") -> list[str]:
-    """Split a multilabel cell into a list of trimmed, non-empty labels."""
+    """Split a multilabel cell into a list of trimmed, non-empty, learnable labels.
+
+    Container values are dropped here rather than downstream so that every consumer —
+    training, dataset statistics, validation — sees the same label set. A row left with no
+    label is then dropped by the caller, exactly as for ``label_filter``.
+    """
     if value is None or value == "" or (isinstance(value, float) and pd.isna(value)):
         return []
-    return [part.strip() for part in str(value).split(separator) if part.strip()]
+    return [
+        part.strip()
+        for part in str(value).split(separator)
+        if part.strip() and not is_container_label(part.strip())
+    ]
 
 
 # path -> (mtime_ns, size, rows). Bounded: cleared beyond 256 entries (the data
@@ -84,11 +111,29 @@ def split_labels(value: object, separator: str = ",") -> list[str]:
 _ROW_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
 
 
+def is_gzipped(path: str | Path) -> bool:
+    """Does this dataset path denote a gzip-compressed CSV?
+
+    Keyed off the name, exactly like pandas' own ``compression="infer"``, so what the reader
+    and the row counter consider compressed can never disagree.
+    """
+    return str(path).lower().endswith(".gz")
+
+
 def count_rows(path: str | Path) -> int:
     """Data rows (excluding the header) of a CSV.
 
-    Cached by (mtime, size) so repeated dataset listings/info calls do not
-    re-read unchanged multi-MB files line by line on every request.
+    A line break inside a quoted field does not start a record, and on this data that is the
+    difference between a number and a wrong number: counting physical lines reported
+    1,343,683 rows for the 340,630 records of ``data_300k.csv`` (3.94x) and 2,141,123 for the
+    426,724 of the combined WLO export (5.02x), because descriptions are full of newlines.
+
+    Quote PARITY per line is enough to track this and stays a single cheap pass — an escaped
+    ``""`` contributes two quotes and so leaves the parity untouched. A full ``csv.reader``
+    pass would also be exact but parses every field for a number nobody trains on.
+
+    Gzip is decompressed first; counting newlines in the COMPRESSED bytes is meaningless.
+    Cached by (mtime, size) so repeated listings do not re-read multi-MB files.
     """
     path = Path(path)
     stat = path.stat()
@@ -96,8 +141,16 @@ def count_rows(path: str | Path) -> int:
     hit = _ROW_COUNT_CACHE.get(key)
     if hit is not None and hit[0] == stat.st_mtime_ns and hit[1] == stat.st_size:
         return hit[2]
-    with open(path, encoding="utf-8", errors="ignore") as handle:
-        rows = max(0, sum(1 for _ in handle) - 1)
+    opener = gzip.open if is_gzipped(path) else open
+    rows = 0
+    inside_quotes = False
+    with opener(path, "rt", encoding="utf-8", errors="ignore", newline="") as handle:
+        for line in handle:
+            if line.count('"') % 2:
+                inside_quotes = not inside_quotes
+            if not inside_quotes:
+                rows += 1
+    rows = max(0, rows - 1)  # header
     if len(_ROW_COUNT_CACHE) > 256:
         _ROW_COUNT_CACHE.clear()
     _ROW_COUNT_CACHE[key] = (stat.st_mtime_ns, stat.st_size, rows)
@@ -113,6 +166,50 @@ class LoadedData:
     uri_to_label: dict[str, str]
 
 
+def _rejoin_split_names(fragments: list[str]) -> list[str]:
+    """Undo a split caused by a separator character INSIDE a display name.
+
+    Label URIs and their display names arrive as two lists sharing one separator, but
+    only URIs are guaranteed free of it. German orthography then says which fragment is
+    a continuation rather than a new name: a lowercase start, a preceding compound half
+    ("Rechts-"), or an unclosed parenthesis.
+
+    Measured on ``data_300k.csv``: this reconstructs 29.6% of the damaged rows, and where
+    the result could be cross-checked against rows that were never damaged it agreed
+    75/75 times — i.e. precise but not complete, which is why ``_pair_names`` still
+    refuses to guess when it does not reconcile.
+    """
+    merged: list[str] = []
+    for fragment in fragments:
+        continues = bool(merged) and (
+            fragment[:1].islower()
+            or merged[-1].endswith("-")
+            or merged[-1].count("(") > merged[-1].count(")")
+        )
+        if continues:
+            merged[-1] = f"{merged[-1]}, {fragment}"
+        else:
+            merged.append(fragment)
+    return merged
+
+
+def _pair_names(uris: list[str], names: list[str]) -> list[tuple[str, str]]:
+    """Pair URIs with display names, but ONLY when the two provably line up.
+
+    The URI count is authoritative. A positional zip of unequal lists silently shifts
+    every later name onto the wrong URI — on ``data_300k.csv`` that gave 34 of 119
+    higher-education labels the name of a *different* subject, which reads as a
+    confident statement rather than as missing data. So when the counts cannot be
+    reconciled, this contributes nothing and callers fall back to the URI.
+    """
+    if len(uris) == len(names):
+        return list(zip(uris, names, strict=True))
+    repaired = _rejoin_split_names(names)
+    if len(repaired) == len(uris):
+        return list(zip(uris, repaired, strict=True))
+    return []
+
+
 def load_dataset(
     path: str | Path,
     text_columns: list[str],
@@ -124,12 +221,21 @@ def load_dataset(
     min_text_length: int = 5,
     drop_duplicates: bool = True,
     label_filter: str | None = None,
+    text_column_weights: dict[str, int] | None = None,
+    label_names: dict[str, str] | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> LoadedData:
     """Load a CSV and return cleaned texts + label lists.
 
     Only the needed columns are read (low RAM). A ``<label>_DISPLAYNAME`` column
     (if present) is used to build a URI->human-readable-label mapping.
+
+    ``text_column_weights`` maps a column to how often its text is repeated in the
+    combined training text (default 1). Repetition is what a TF-IDF backend
+    understands as "this field matters more": a title drowning in a long
+    description gets its term frequency back. ``sublinear_tf`` damps it
+    logarithmically, so a weight of 2 is worth ~1.7x, not 2x. Weights for columns
+    the CSV does not have are ignored, exactly like the columns themselves.
     """
     path = Path(path)
     header = read_csv(path, sep=separator, nrows=0)
@@ -154,8 +260,10 @@ def load_dataset(
     emit("Reading CSV file …")
     df = read_csv(path, sep=separator, usecols=usecols, dtype=str, low_memory=False)
 
-    combined = df[text_cols[0]].fillna("")
-    for col in text_cols[1:]:
+    weights = text_column_weights or {}
+    weighted_cols = [col for col in text_cols for _ in range(max(1, int(weights.get(col, 1))))]
+    combined = df[weighted_cols[0]].fillna("")
+    for col in weighted_cols[1:]:
         combined = combined + " " + df[col].fillna("")
     texts = _clean_in_chunks(combined, on_progress)
 
@@ -163,10 +271,19 @@ def load_dataset(
     uri_to_label: dict[str, str] = {}
     if has_dn:
         for uri_cell, name_cell in zip(label_series.fillna(""), df[dn_col].fillna(""), strict=False):
-            uris = split_labels(uri_cell, label_separator)
-            names = split_labels(name_cell, label_separator)
-            for uri, name in zip(uris, names, strict=False):
+            for uri, name in _pair_names(
+                split_labels(uri_cell, label_separator),
+                split_labels(name_cell, label_separator),
+            ):
                 uri_to_label.setdefault(uri, name)
+    if label_names:
+        # An external vocabulary is authoritative: it overrides CSV-derived names and
+        # fills the ones no row could attribute. Narrowed to labels this dataset uses,
+        # so a full vocabulary file does not bloat every bundle.
+        used = {uri for cell in label_series.fillna("") for uri in split_labels(cell, label_separator)}
+        uri_to_label.update(
+            {uri: name for uri, name in label_names.items() if uri in used and name}
+        )
 
     label_lists = [split_labels(cell, label_separator) for cell in label_series]
     if label_filter:
@@ -217,9 +334,13 @@ def prepare_targets(
 
     Returns ``(Y, classes, row_keep_mask)``. Apply ``row_keep_mask`` to the
     texts to keep them aligned with ``Y``.
+
+    The matrix is int8: it is dense (rows x labels) and holds only 0/1, so sklearn's
+    default int64 would spend 8 bytes per bit — 1.34 GB at 600k rows x 300 labels
+    versus 168 MB. sklearn's metrics and the OneVsRest fit accept int8 unchanged.
     """
     mlb = MultiLabelBinarizer(sparse_output=False)
-    matrix = mlb.fit_transform(label_lists)
+    matrix = mlb.fit_transform(label_lists).astype(np.int8, copy=False)
     col_keep = matrix.sum(axis=0) >= min_samples
     matrix = matrix[:, col_keep]
     classes = [c for c, keep in zip(mlb.classes_, col_keep, strict=False) if keep]

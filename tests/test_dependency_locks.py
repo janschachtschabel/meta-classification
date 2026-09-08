@@ -23,7 +23,7 @@ def _pins(filename: str) -> dict[str, str]:
 def test_hashes_lock_matches_direct_pins():
     direct = _pins("requirements.lock")
     hashed = _pins("requirements-hashes.lock")
-    assert len(direct) == 12, f"expected the 12 direct pins, parsed {sorted(direct)}"
+    assert len(direct) == 13, f"expected the 13 direct pins, parsed {sorted(direct)}"
     stale = {name: (version, hashed.get(name))
              for name, version in direct.items() if hashed.get(name) != version}
     assert not stale, (

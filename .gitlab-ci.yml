@@ -57,7 +57,7 @@ ruff check:
     - cd "$CI_PROJECT_DIR"
     - ruff --version
   script:
-    - ruff check --output-format=gitlab app/ tests/ > "$CI_PROJECT_DIR/code-quality-report.json"
+    - ruff check --output-format=gitlab app/ tests/ scripts/ > "$CI_PROJECT_DIR/code-quality-report.json"
   artifacts:
     reports:
       codequality: code-quality-report.json
@@ -70,7 +70,10 @@ helm lint:
   stage: lint
   interruptible: true
   image:
-    name: alpine/helm:latest
+    # Pinned like every other image in this repo (digest-pinned base, SHA-pinned
+    # actions): `latest` could drift or break the release path without any
+    # repo change. Keep in sync manually on helm upgrades.
+    name: alpine/helm:3.16.4
     entrypoint: [""]
   script:
     - helm lint deploy/helm/classification-api
@@ -127,7 +130,8 @@ build and push (branches):
   before_script:
     - docker --version
   script:
-    - docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    # --password-stdin keeps the secret out of the process list on shared runners.
+    - echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
     - docker buildx build --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_SLUG" .
     - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_SLUG"
   rules:
@@ -156,7 +160,8 @@ build and push (tags):
   before_script:
     - docker --version
   script:
-    - docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    # --password-stdin keeps the secret out of the process list on shared runners.
+    - echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
     - docker buildx build --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME" .
     - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME"
   rules:
@@ -170,7 +175,10 @@ build and push (tags):
 .helm_base:
   stage: deploy
   image:
-    name: alpine/helm:latest
+    # Pinned like every other image in this repo (digest-pinned base, SHA-pinned
+    # actions): `latest` could drift or break the release path without any
+    # repo change. Keep in sync manually on helm upgrades.
+    name: alpine/helm:3.16.4
     entrypoint: [""]
   before_script:
     - helm version
@@ -196,4 +204,8 @@ build and push helm chart:
       variables:
         CHART_VERSION: "$CI_COMMIT_REF_NAME"
         APP_VERSION: "$CI_COMMIT_REF_NAME"
-    - if: "$CI_COMMIT_BRANCH && $HELM_REGISTRY"
+    # Branch charts mirror the docker jobs: main/develop only — feature branches
+    # would clutter the chart repo with 0.0.0-<slug> charts whose appVersion
+    # image tags were never built.
+    - if: "$CI_COMMIT_BRANCH == 'main' && $HELM_REGISTRY"
+    - if: "$CI_COMMIT_BRANCH == 'develop' && $HELM_REGISTRY"

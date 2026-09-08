@@ -14,12 +14,13 @@ async function shareResource(kind, name, boxSel) {
         <strong>Share link for "${esc(name)}"</strong>
         <p class="muted">No API key needed to download; expires ${esc(new Date(r.expires_at).toLocaleString())}.</p>
         <div class="share-row">
-          <input type="text" readonly value="${esc(url)}" aria-label="Share URL"
-                 onfocus="this.select()">
+          <input type="text" readonly value="${esc(url)}" aria-label="Share URL">
           <button type="button" class="small" data-copy="${esc(url)}">Copy</button>
           <button type="button" class="small ghost" data-close>Close</button>
         </div>
       </div>`;
+    // No inline handlers: the UI's CSP has no 'unsafe-inline' for scripts.
+    box.querySelector("input[readonly]").addEventListener("focus", (ev) => ev.target.select());
     box.querySelector("[data-copy]").addEventListener("click", async (ev) => {
       await navigator.clipboard.writeText(ev.target.dataset.copy);
       toast("Link copied.");
@@ -29,6 +30,14 @@ async function shareResource(kind, name, boxSel) {
 }
 
 /* ---------- models ---------- */
+
+/* metrics.json content is bundle-controlled (imports accept arbitrary JSON
+   there) — coerce before formatting so a crafted value can neither inject
+   markup (esc at the call site) nor crash the table render (toFixed on a
+   non-number throws). */
+function fmtScore(value) {
+  return Number.isFinite(value) ? value.toFixed(3) : "–";
+}
 
 async function loadModels() {
   const el = $("#models-list");
@@ -42,9 +51,9 @@ async function loadModels() {
       <th class="num">F1 micro</th><th>Evaluation</th><th>Actions</th></tr></thead><tbody>` +
       infos.map((m) => `<tr>
         <td>${esc(m.name)}</td><td>${esc(m.task_type)}</td>
-        <td class="num">${m.metadata.n_labels ?? "–"}</td>
-        <td class="num">${m.metadata.metrics ? m.metadata.metrics.f1_macro.toFixed(3) : "–"}</td>
-        <td class="num">${m.metadata.metrics ? m.metadata.metrics.f1_micro.toFixed(3) : "–"}</td>
+        <td class="num">${esc(m.metadata.n_labels ?? "–")}</td>
+        <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_macro))}</td>
+        <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_micro))}</td>
         <td>${esc(m.metadata.evaluation || "–")}</td>
         <td class="actions">
           <button class="small" data-export="${esc(m.name)}">Download</button>

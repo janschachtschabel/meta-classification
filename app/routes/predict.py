@@ -41,6 +41,8 @@ def _pred_dict(p: Prediction) -> dict:
     d = {"uri": p.uri, "label": p.label, "confidence": round(p.confidence, 4)}
     if p.baseline_diff is not None:  # only present when requested (or in /predict/explain)
         d["baseline_diff"] = round(p.baseline_diff, 4)
+    if p.label_f1 is not None:  # only when requested AND the bundle scored this label
+        d["label_f1"] = round(p.label_f1, 4)
     if p.above_threshold is not None:  # ranking mode: keep forced entries honest
         d["above_threshold"] = p.above_threshold
     return d
@@ -66,6 +68,7 @@ def _build_response(model: ClassifierModel, body: PredictRequest, top_k: int | N
     predictions = model.predict(
         body.texts, top_k=top_k, threshold=body.threshold, label_filter=body.label_filter,
         include_baseline_diff=body.include_baseline_diff,
+        include_label_f1=body.include_label_f1,
     )
     results = [
         {"text": _truncate(text), "predictions": [_pred_dict(p) for p in row]}
@@ -89,6 +92,7 @@ def _build_multi_response(models: dict[str, ClassifierModel], body: MultiPredict
         name: model.predict(
             body.texts, top_k=body.top_k, threshold=body.threshold, label_filter=body.label_filter,
             include_baseline_diff=body.include_baseline_diff,
+            include_label_f1=body.include_label_f1,
         )
         for name, model in models.items()
     }
@@ -136,8 +140,10 @@ async def predict(request: Request, body: PredictRequest, _: str = Depends(requi
     multiclass via argmax; `N` = **ranking**: exactly the N most probable labels regardless
     of thresholds, each flagged with `above_threshold`; `0` = ranking of the typical label
     count), `label_filter` (only labels containing the substring), `include_baseline_diff`
-    (adds confidence minus the model's empty-text prediction per label). The response
-    includes `applied_settings` with the values actually applied. **Auth:** readonly.
+    (adds confidence minus the model's empty-text prediction per label), `include_label_f1`
+    (adds each label's F1 from the training evaluation — how much a high confidence on
+    THIS label is worth). The response includes `applied_settings` with the values
+    actually applied. **Auth:** readonly.
     """
     return await _predict(body)
 
@@ -162,8 +168,8 @@ async def predict_multi(
     **Evaluation stays per model:** every bundle carries its own metrics and tuned
     thresholds, and this endpoint applies each model's own thresholds — it only
     orchestrates, nothing is re-evaluated jointly. Options (`top_k`, `threshold`,
-    `label_filter`, `include_baseline_diff`) apply to all listed models; `top_k=0`
-    resolves per model from its average label count. **Auth:** readonly.
+    `label_filter`, `include_baseline_diff`, `include_label_f1`) apply to all listed
+    models; `top_k=0` resolves per model from its average label count. **Auth:** readonly.
     """
     return await asyncio.to_thread(_load_and_build_multi, body)
 
@@ -175,10 +181,11 @@ async def predict_explain(
 ) -> dict:
     """Classify a text and explain the result.
 
-    In addition to the predictions: `all_scores` (confidence for **all** labels) and
-    `word_importance` — the most influential words per predicted label, determined by
-    leave-one-out (confidence drop when a word is removed). More expensive than
-    `/predict`. **Auth:** readonly.
+    In addition to the predictions: `all_scores` (confidence for **all** labels, each
+    with `baseline_diff` and `label_f1`) and `word_importance` — the most influential
+    words per predicted label, determined by leave-one-out (confidence drop when a word
+    is removed). Both reliability signals are always included here, no flag needed.
+    More expensive than `/predict`. **Auth:** readonly.
     """
     def load_and_explain() -> dict:
         return explain_prediction(_load(body.model_name), body.text, body.top_n_words)

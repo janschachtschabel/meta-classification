@@ -16,8 +16,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY app/ /app/app/
 COPY config.yaml /app/
 
-RUN mkdir -p /app/data /app/models \
-    && useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN mkdir -p /app/data /app/models /data/datasets /data/models \
+    && useradd -m -u 1000 appuser && chown -R appuser:appuser /app /data
 USER appuser
 
 # Threads/resources: 1 BLAS thread per worker (joblib parallelises across labels,

@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .errors import TrainingInputError
 
@@ -55,6 +55,10 @@ class TrainingJob:
         # Bumped on start and on hard reset: a finishing zombie thread whose
         # generation is stale must not overwrite the current state.
         self._generation = 0
+        # Model name of the most recently started run — read via
+        # active_model_name() while the runner thread is alive (hard stop resets
+        # the STATUS, but the abandoned thread keeps writing this bundle).
+        self._last_model_name: str | None = None
 
     def snapshot(self) -> dict:
         """Return a copy of the state, adding elapsed/ETA while running."""
@@ -81,6 +85,17 @@ class TrainingJob:
             self._heartbeat_ts = time.monotonic()
             self._apply(fields)
 
+    def _update_if_current(self, generation: int, **fields: object) -> None:
+        """Progress update from the runner thread — dropped after a hard stop (or
+        a newer start) bumped the generation, so an abandoned zombie thread can
+        no longer mutate the reset state (/metrics would show running=0 with
+        progress creeping otherwise)."""
+        with self._lock:
+            if self._generation != generation:
+                return
+            self._heartbeat_ts = time.monotonic()
+            self._apply(fields)
+
     def _apply(self, fields: dict) -> None:
         """Write state fields; the caller must hold ``self._lock``."""
         # Entering a new phase clears stale sub-step detail.
@@ -99,8 +114,41 @@ class TrainingJob:
     def should_stop(self) -> bool:
         return self._stop.is_set()
 
+    def active_model_name(self) -> str | None:
+        """Name of the model a still-live runner thread is working on — also after
+        a hard stop reset the STATUS to idle (the abandoned thread keeps writing
+        its bundle). The import guard keys on this, not on the lying status."""
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return self._last_model_name
+            return None
+
     def start(self, target: Callable, *args: object, model_name: str) -> None:
         """Launch ``target(*args, on_progress=..., should_stop=...)`` in a thread."""
+
+        def runner() -> None:
+            try:
+                results = target(*args, on_progress=on_progress, should_stop=self.should_stop)
+                if self.should_stop():
+                    self._finish(generation, status="stopped", message="Training stopped.",
+                                 eta_seconds=0)
+                else:
+                    self._finish(generation, status="completed", progress=100, phase="done",
+                                 results=results, eta_seconds=0)
+            except TrainingInputError as exc:
+                # Crafted, user-facing message (wrong column, too few rows, ...):
+                # showing it is the point — hiding it would mask the user's own typo.
+                logger.warning("Training job %r rejected: %s", model_name, exc)
+                self._finish(generation, status="error", phase="error",
+                             message=str(exc), error=str(exc))
+            except Exception:  # noqa: BLE001 - report any failure as job error
+                # Log the full traceback server-side; never leak exception text
+                # (which can carry paths/data internals) to the readonly status.
+                logger.exception("Training job %r failed", model_name)
+                sanitized = "Training failed; see server logs for details."
+                self._finish(generation, status="error", phase="error",
+                             message=sanitized, error=sanitized)
+
         with self._lock:
             # Refuse while a previous thread is still executing — including one
             # abandoned by stop(hard=True), whose deploy fit / skops save keep
@@ -119,7 +167,7 @@ class TrainingJob:
                 status="running",
                 phase="starting",
                 model_name=model_name,
-                started_at=datetime.now(timezone.utc).isoformat(),
+                started_at=datetime.now(UTC).isoformat(),
             )
             self._start_ts = time.monotonic()
             # A run that hangs before its first progress update must still show
@@ -127,31 +175,17 @@ class TrainingJob:
             self._heartbeat_ts = self._start_ts
             self._generation += 1
             generation = self._generation
-
-        def runner() -> None:
-            try:
-                results = target(*args, on_progress=self.update, should_stop=self.should_stop)
-                if self.should_stop():
-                    self._finish(generation, status="stopped", message="Training stopped.",
-                                 eta_seconds=0)
-                else:
-                    self._finish(generation, status="completed", progress=100, phase="done",
-                                 results=results, eta_seconds=0)
-            except TrainingInputError as exc:
-                # Crafted, user-facing message (wrong column, too few rows, ...):
-                # showing it is the point — hiding it would mask the user's own typo.
-                logger.warning("Training job %r rejected: %s", model_name, exc)
-                self._finish(generation, status="error", phase="error", message=str(exc))
-            except Exception:  # noqa: BLE001 - report any failure as job error
-                # Log the full traceback server-side; never leak exception text
-                # (which can carry paths/data internals) to the readonly status.
-                logger.exception("Training job %r failed", model_name)
-                self._finish(generation, status="error", phase="error",
-                             message="Training failed; see server logs for details.")
-
-        thread = threading.Thread(target=runner, daemon=True)
-        with self._lock:
+            self._last_model_name = model_name
+            # Register the thread INSIDE the same lock block as the state
+            # transition: a hard stop + new start in the gap between two separate
+            # blocks could otherwise pass the liveness guard and run two
+            # trainings at once. Only thread.start() happens outside.
+            thread = threading.Thread(target=runner, daemon=True)
             self._thread = thread
+
+        def on_progress(**fields: object) -> None:
+            self._update_if_current(generation, **fields)
+
         thread.start()
 
     def stop(self, *, hard: bool = False) -> None:

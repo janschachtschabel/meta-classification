@@ -127,6 +127,7 @@ async function onQuery(ev) {
   const body = {
     texts: [$("#query-text").value],
     include_baseline_diff: $("#query-diff").checked,
+    include_label_f1: $("#query-f1").checked,
   };
   const topk = $("#query-topk").value;
   if (topk !== "") body.top_k = Number(topk);
@@ -148,6 +149,9 @@ async function onQuery(ev) {
           <span class="bar"><span style="width:${Math.round(p.confidence * 100)}%"></span></span>
           <span class="val">${p.confidence.toFixed(3)}${p.baseline_diff !== undefined
             ? ` <span class="muted">diff ${p.baseline_diff >= 0 ? "+" : ""}${p.baseline_diff.toFixed(3)}</span>` : ""}${
+            // != null covers both: absent when not asked for, null when the bundle
+            // carries no score for this label (older or partially scored models).
+            p.label_f1 != null ? ` <span class="muted">F1 ${p.label_f1.toFixed(3)}</span>` : ""}${
             p.above_threshold === false ? ` <span class="muted">· below threshold</span>` : ""}</span>
         </div>`).join("")
         : `<p class="muted">No label above the model's threshold.</p>`}</div>`).join("");
@@ -158,13 +162,20 @@ async function onQuery(ev) {
 /* ---------- training ---------- */
 
 let pollTimer = null;
+let pollInFlight = false;
 
 async function pollTick() {
+  // setInterval does not await async ticks: a slow /train POST inside
+  // advanceQueue would overlap the next tick and double-shift the queue
+  // (server 409 -> whole queue dropped). One tick at a time.
+  if (pollInFlight) return;
+  pollInFlight = true;
   try {
     const s = await Api.get("/train/status");
     renderTrainStatus(s);
     await advanceQueue(s.status);  // start the next queued training when idle
   } catch { /* transient poll failure: keep the last rendered state */ }
+  finally { pollInFlight = false; }
 }
 
 // Registered ONCE for the page lifetime (guarded by pollTimer): browsers
@@ -181,8 +192,27 @@ function startStatusPolling() {
 }
 function stopStatusPolling() { clearInterval(pollTimer); pollTimer = null; }
 
+let lastAnnouncedState = "";
+
+/* Announce only STATE TRANSITIONS to screen readers: the status card itself
+   re-renders every 2.5s (elapsed/ETA tick up), so making it a live region would
+   re-announce the whole card for the entire duration of a training. */
+function announceTrainState(s) {
+  const key = `${s.status}|${s.phase}|${s.model_name}`;
+  if (key === lastAnnouncedState) return;
+  lastAnnouncedState = key;
+  const el = $("#train-announce");
+  if (!el) return;
+  if (s.status === "running") el.textContent = `Training ${s.model_name || ""}: ${s.phase || "starting"}.`;
+  else if (s.status === "completed") el.textContent = `Training ${s.model_name || ""} completed.`;
+  else if (s.status === "error") el.textContent = `Training failed: ${s.message || "see status"}.`;
+  else if (s.status === "stopped") el.textContent = "Training stopped.";
+  else el.textContent = "";
+}
+
 function renderTrainStatus(s) {
   renderTrainChip(s);
+  announceTrainState(s);
   const el = $("#train-status");
   const rows = [["Status", s.status], ["Phase", s.phase || "–"], ["Detail", s.phase_detail || "–"],
                 ["Model", s.model_name || "–"], ["Elapsed", s.elapsed_seconds != null ? `${s.elapsed_seconds}s` : "–"],
@@ -242,7 +272,40 @@ async function loadTrainingTab() {
       datasets.map((d) => `<option>${esc(d.name)}</option>`).join("");
     $("#train-profile").innerHTML = profiles.profiles.map((p) =>
       `<option value="${esc(p.name)}" ${p.name === profiles.default_profile ? "selected" : ""}>${esc(p.name)} — ${esc(p.description)}</option>`).join("");
+    // Pre-fill the field weights with the server's configured default instead of a
+    // hard-coded guess, so the form shows what a request would actually do.
+    defaultColWeights = profiles.default_text_column_weights || {};
   } catch (err) { showError($("#train-error"), err); }
+}
+
+/* Field weights: one multiplier input per SELECTED text column, rebuilt whenever the
+   pill selection changes. Values already typed survive the rebuild — removing one
+   column must not silently reset the others. A column the user has not touched shows
+   the server's configured default (title/keywords at 2x), so the form and the API
+   agree on what happens. */
+let defaultColWeights = {};
+
+function textColumnWeights() {
+  const out = {};
+  document.querySelectorAll("#textcol-weights-fields [data-weight]").forEach((el) => {
+    const n = Number(el.value);
+    if (Number.isFinite(n) && n > 1) out[el.dataset.weight] = n;  // 1 = default, omit
+  });
+  return out;
+}
+
+function renderTextColWeights(cols) {
+  const box = $("#textcol-weights");
+  const fields = $("#textcol-weights-fields");
+  const previous = textColumnWeights();
+  box.hidden = !cols.length;
+  fields.innerHTML = cols.map((c, i) => `
+    <label for="weight-${i}">
+      <span class="col-name">${esc(c)}</span>
+      <input id="weight-${i}" type="number" min="1" max="10" step="1"
+             value="${previous[c] || defaultColWeights[c] || 1}" data-weight="${esc(c)}"
+             aria-describedby="textcol-weights-help">
+    </label>`).join("");
 }
 
 const textColPicker = createPillPicker({
@@ -250,6 +313,7 @@ const textColPicker = createPillPicker({
   input: document.querySelector("#textcol-input"),
   datalist: document.querySelector("#textcol-options"),
   emptyHint: "Select a dataset first.",
+  onChange: (cols) => renderTextColWeights(cols),
 });
 const labelPicker = createPillPicker({
   pills: document.querySelector("#labelcol-pills"),
@@ -302,7 +366,9 @@ function renderQueueLine() {
 
 async function advanceQueue(status) {
   if (!trainQueue.length) return;
-  if (!["completed", "error", "stopped"].includes(status)) return;
+  // "idle" too: a hard stop from another client (or a server restart) resets the
+  // status straight to idle — without it the queue line would sit stale forever.
+  if (!["completed", "error", "stopped", "idle"].includes(status)) return;
   const body = trainQueue.shift();
   renderQueueLine();
   try {
@@ -330,6 +396,19 @@ async function onTrainStart(ev) {
     label_filter: $("#train-filter").value.trim() || null,
   };
   if ($("#train-cv").value !== "") shared.cv_folds = Number($("#train-cv").value);
+  // Empty field = omit, so the request default (20) applies rather than a silent 0.
+  const minSamples = $("#train-minsamples").value.trim();
+  if (minSamples !== "") shared.min_samples_per_label = Number(minSamples);
+  // ALWAYS send it once columns are picked: omitting the field means "apply the
+  // config default", which would silently override a user who set every field to 1.
+  // The form is what the user sees, so the form has to be authoritative.
+  if (textCols.length) shared.text_column_weights = textColumnWeights();
+  // Blank = omit, so the profile's cap applies rather than a coerced 0.
+  for (const [id, field] of [["#train-maxword", "max_word_features"],
+                             ["#train-maxchar", "max_char_features"]]) {
+    const raw = $(id).value.trim();
+    if (raw !== "") shared[field] = Number(raw);
+  }
   const bodies = plan.map((p) => ({ ...shared, model_name: p.name, label_column: p.label_column }));
   btn.disabled = true;
   try {

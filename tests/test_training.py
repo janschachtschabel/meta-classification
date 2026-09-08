@@ -5,6 +5,7 @@ Exercises the full pipeline (load -> prepare -> split -> bake-off -> threshold
 round-trip with the secure skops format.
 """
 
+import time
 from pathlib import Path
 
 from app.profiles import Profile, TrainingConfig
@@ -79,6 +80,24 @@ def test_train_predict_and_secure_roundtrip(tmp_path):
     assert copy_pred[0] and copy_pred[0][0].uri == "uri:hist"
 
 
+def test_multiclass_training_reports_serving_rule_metrics(tmp_path):
+    """tiny.csv is a multiclass set: serving decides via argmax and never reads
+    thresholds, so the persisted bundle must carry argmax metrics
+    (decision_rule) and neutral thresholds instead of tuned dead values."""
+    settings = _settings(tmp_path)
+    config = _config()
+    result = run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    assert result["task_type"] == "multiclass"
+    assert result["metrics"]["decision_rule"] == "argmax"
+
+    model = _registry(settings).get("tiny_model")
+    assert model.per_label_thresholds == {}
+    assert model.global_threshold == 0.5
+
+
 def test_warmup_preloads_configured_models(tmp_path, monkeypatch):
     """APIV3_WARMUP_MODELS preloads the named models into the LRU cache on
     startup (so the first /predict pays no cold skops-load) and warms their first
@@ -109,6 +128,37 @@ def test_warmup_preloads_configured_models(tmp_path, monkeypatch):
             assert reg.in_memory_count() == 1  # only the real model is resident
             model = reg.get("tiny_model")
             assert model._baseline is not None  # baseline_proba() ran -> first predict is warm
+    finally:
+        get_settings.cache_clear()
+        get_registry.cache_clear()
+
+
+def test_warmup_skips_corrupt_bundle_without_failing_startup(tmp_path, monkeypatch):
+    """The warmup catches ANY load failure (not just missing names): one corrupt
+    bundle on disk must never turn every pod start into a CrashLoopBackOff."""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.registry import get_registry
+    from app.settings import get_settings
+
+    models = tmp_path / "models"
+    broken = models / "corrupt"
+    broken.mkdir(parents=True)
+    (broken / "config.json").write_text("{ not json", encoding="utf-8")
+    (broken / "head.skops").write_bytes(b"junk")
+    (broken / "vectorizer.skops").write_bytes(b"junk")
+
+    monkeypatch.setenv("APIV3_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("APIV3_MODELS_DIR", str(models))
+    monkeypatch.setenv("APIV3_AUTH_ENABLED", "false")
+    monkeypatch.setenv("APIV3_WARMUP_MODELS", "corrupt")
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    try:
+        with TestClient(create_app()) as client:  # lifespan runs the warmup
+            assert client.get("/health").status_code == 200
+            assert get_registry().in_memory_count() == 0  # skipped, not cached
     finally:
         get_settings.cache_clear()
         get_registry.cache_clear()
@@ -309,6 +359,131 @@ def test_sweep_stale_tmp_does_not_overcount_failed_removals(tmp_path, monkeypatc
 
     assert removed == 0  # nothing actually removed -> count 0, not 1
     assert stale.exists()  # the dir is indeed still present
+
+
+def test_get_cannot_reinsert_a_concurrently_deleted_model(tmp_path, monkeypatch):
+    """Registry invariant: a delete must never lose to a concurrent cold get()'s
+    cache insert. Regression: get() loaded under the disk lock but inserted after
+    releasing it, so delete X -> re-import X served the OLD deleted weights."""
+    import threading
+
+    from app import registry as reg_mod
+
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(_request(), settings, config, config.get("fast"), _registry(settings),
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+    reg = reg_mod.Registry(settings.models_dir, settings.max_models_in_memory)
+
+    read_started = threading.Event()
+    resume_read = threading.Event()
+    real_read = reg_mod._read_bundle
+
+    def blocking_read(directory):
+        read_started.set()
+        resume_read.wait(5)
+        return real_read(directory)
+
+    monkeypatch.setattr(reg_mod, "_read_bundle", blocking_read)
+
+    getter = threading.Thread(target=lambda: reg.get("tiny_model"), daemon=True)
+    getter.start()
+    assert read_started.wait(3), "cold get() did not start reading"
+
+    deleted = threading.Event()
+
+    def do_delete() -> None:
+        reg.delete("tiny_model")
+        deleted.set()
+
+    deleter = threading.Thread(target=do_delete, daemon=True)
+    deleter.start()
+    resume_read.set()
+    getter.join(5)
+    assert deleted.wait(5), "delete did not complete"
+
+    assert reg.in_memory_count() == 0, (
+        "the deleted model was re-inserted into the LRU cache by the concurrent get()"
+    )
+
+
+def test_zombie_thread_progress_cannot_mutate_reset_state():
+    """After stop(hard=True) the abandoned thread's on_progress updates must be
+    dropped: /metrics otherwise reports training_running=0 with progress creeping."""
+    import threading
+
+    from app.jobs import TrainingJob
+
+    job = TrainingJob()
+    entered = threading.Event()
+    resume = threading.Event()
+
+    def target(on_progress, should_stop):
+        entered.set()
+        resume.wait(5)
+        on_progress(progress=55, message="zombie says hi")  # after the hard reset
+        return {}
+
+    job.start(target, model_name="m1")
+    assert entered.wait(3)
+    job.stop(hard=True)  # status -> idle, generation bumped
+    resume.set()
+    for _ in range(100):
+        if not (job._thread and job._thread.is_alive()):
+            break
+        time.sleep(0.02)
+
+    snap = job.snapshot()
+    assert snap["status"] == "idle"
+    assert snap["progress"] == 0, "zombie progress leaked into the reset state"
+    assert snap["message"] != "zombie says hi"
+
+
+def test_failed_training_populates_error_field():
+    """/train/status documents an `error` field; failures must populate it (it was
+    a documented-but-always-null key)."""
+    from app.errors import TrainingInputError
+    from app.jobs import TrainingJob
+
+    job = TrainingJob()
+
+    def target(on_progress, should_stop):
+        raise TrainingInputError("Column 'nope' not found.")
+
+    job.start(target, model_name="m2")
+    deadline = time.time() + 3
+    while time.time() < deadline and job.snapshot()["status"] == "running":
+        time.sleep(0.02)
+
+    snap = job.snapshot()
+    assert snap["status"] == "error"
+    assert snap["error"] == "Column 'nope' not found."
+
+
+def test_active_model_name_survives_hard_stop_while_thread_lives():
+    """The import guard needs the truth 'a thread is still writing model X' — job
+    STATUS lies after a hard stop (idle), so active_model_name() must key on
+    thread liveness instead."""
+    import threading
+
+    from app.jobs import TrainingJob
+
+    job = TrainingJob()
+    entered = threading.Event()
+    resume = threading.Event()
+
+    def target(on_progress, should_stop):
+        entered.set()
+        resume.wait(5)
+        return {}
+
+    job.start(target, model_name="m3")
+    assert entered.wait(3)
+    job.stop(hard=True)  # status idle, but the thread still runs
+    assert job.active_model_name() == "m3"
+    resume.set()
+    job._thread.join(3)
+    assert job.active_model_name() is None
 
 
 def test_training_job_cooperative_stop_sets_stopped_status():
@@ -540,6 +715,87 @@ def test_prepare_rejects_too_few_rows_after_dropping_rare_labels(tmp_path):
     assert "after dropping" in str(exc.value)
 
 
+def test_drop_unlearnable_removes_orphaned_rows_and_remaps_split():
+    """Dropping a label column without train positives can orphan rows whose ONLY
+    label that was (all-zero targets). Those rows must go too — kept, they score
+    guaranteed misses in the metrics and dilute avg_labels — and the split
+    indices must be remapped onto the surviving rows."""
+    import numpy as np
+
+    from app.prepare import _drop_unlearnable
+
+    texts = np.array([f"text {i}" for i in range(6)], dtype=object)
+    y = np.array([
+        [1, 0], [1, 0], [1, 0],  # rows 0-2 (train): only label "a" has positives here
+        [0, 1],                  # row 3 (val): label "b" exists ONLY outside train
+        [1, 0], [0, 1],          # rows 4 (val) / 5 (test)
+    ])
+    splits = (np.array([0, 1, 2]), np.array([3, 4]), np.array([5]))
+
+    texts2, y2, classes2, (tr2, va2, te2) = _drop_unlearnable(texts, y, ["a", "b"], splits)
+
+    assert classes2 == ["a"]
+    assert list(texts2) == ["text 0", "text 1", "text 2", "text 4"]
+    assert y2.shape == (4, 1)
+    assert (y2.sum(axis=1) > 0).all(), "orphaned all-zero rows must be dropped"
+    assert tr2.tolist() == [0, 1, 2]
+    assert va2.tolist() == [3]  # old row 4 -> new position 3
+    assert te2.tolist() == []   # old row 5 was orphaned (caller guards empty splits)
+
+
+def test_drop_unlearnable_is_a_no_op_when_all_columns_learnable():
+    import numpy as np
+
+    from app.prepare import _drop_unlearnable
+
+    texts = np.array(["x", "y", "z", "w"], dtype=object)
+    y = np.array([[1, 0], [0, 1], [1, 0], [0, 1]])
+    splits = (np.array([0, 1]), np.array([2]), np.array([3]))
+
+    texts2, y2, classes2, (tr2, va2, te2) = _drop_unlearnable(texts, y, ["a", "b"], splits)
+
+    assert list(texts2) == ["x", "y", "z", "w"]
+    assert (y2 == y).all()
+    assert classes2 == ["a", "b"]
+    assert (tr2.tolist(), va2.tolist(), te2.tolist()) == ([0, 1], [2], [3])
+
+
+def test_prepare_avg_labels_and_rows_reflect_the_dropped_label_space(tmp_path):
+    """avg_labels must describe the label space actually trained (computed AFTER
+    the unlearnable-column drop) and no all-zero target rows may survive it."""
+    import numpy as np
+    import pytest
+
+    from app.prepare import prepare_data
+
+    rows = ["properties.cclom:title;properties.cclom:general_keyword;properties.ccm:taxonid"]
+    rows += [f"Titel A Nummer {i} zum Thema Physik;kw-a{i};A" for i in range(12)]
+    rows += [f"Titel B Nummer {i} zum Thema Chemie;kw-b{i};B" for i in range(12)]
+    # Six single-row labels: with seed 42 at least one lands outside the train
+    # split, making its column unlearnable and its row an orphan candidate.
+    rows += [f"Unikat Nummer {i} ganz anderes Thema;kw-u{i};R{i}" for i in range(6)]
+    csv = tmp_path / "orphan.csv"
+    csv.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    settings = Settings(data_dir=tmp_path, models_dir=tmp_path / "models", auth_enabled=False)
+    req = _request()
+    req["dataset_name"] = "orphan.csv"
+    req["min_samples_per_label"] = 1  # keep the single-row labels through prepare_targets
+
+    prep = prepare_data(req, settings, _config(), cv_folds=0,
+                        on_progress=lambda **_: None, should_stop=lambda: False)
+
+    assert prep is not None
+    assert len(prep.classes) < 8, "test setup: expected >=1 rare label outside the train split"
+    row_sums = prep.y_all.sum(axis=1)
+    assert (row_sums > 0).all(), "rows orphaned by the column drop must be removed"
+    assert prep.avg_labels == pytest.approx(float(row_sums.mean()))
+    assert prep.avg_labels == pytest.approx(1.0)  # single-label data stays exactly 1.0
+    joined = np.concatenate([prep.train_idx, prep.val_idx, prep.test_idx])
+    assert sorted(joined.tolist()) == list(range(len(prep.texts)))
+    assert len(prep.texts) == prep.y_all.shape[0]
+
+
 def test_training_job_error_message_is_sanitized():
     """A failed training job must NOT expose the raw exception (paths/internals) on
     the readonly /train/status snapshot."""
@@ -638,6 +894,399 @@ def test_crashed_save_leaves_no_visible_model(tmp_path):
     bundle = Path(settings.models_dir) / "tiny_model"
     for required in ("config.json", "metrics.json", "head.skops", "vectorizer.skops"):
         assert (bundle / required).exists()  # rename only publishes complete bundles
+
+
+def test_training_aborts_with_an_actionable_message_when_no_label_has_enough_rows(tmp_path):
+    """A min_samples_per_label above EVERY label's count aborts training. The message
+    must name the actual best count and the label total — "no label has >= 20" alone
+    leaves the user guessing whether they are one row or a thousand rows short.
+    jobs.py turns this into status=error on /train/status."""
+    import pytest
+
+    from app.errors import TrainingInputError
+
+    settings = _settings(tmp_path)
+    config = _config()
+    req = {**_request(), "min_samples_per_label": 20}  # tiny.csv holds 12 rows per label
+    with pytest.raises(TrainingInputError) as caught:
+        run_training(
+            req, settings, config, config.get("fast"), _registry(settings),
+            on_progress=lambda **_: None, should_stop=lambda: False,
+        )
+    message = str(caught.value)
+    assert "20" in message  # the limit that was not met
+    assert "12" in message  # what the best label actually has
+    assert "3" in message   # how many labels were looked at
+    assert not (Path(settings.models_dir) / "tiny_model").exists()  # nothing published
+
+
+def test_profile_carries_its_evaluation_mode_and_the_request_still_wins(tmp_path):
+    """Profiles are size classes now: which evaluation mode fits is a property of the
+    size, so the profile carries it. Resolution stays most-specific-first —
+    request > profile > config — so an explicit cv_folds still overrides the profile."""
+    settings = _settings(tmp_path)
+    config = _config()
+    config.cv_folds = 0  # config says holdout ...
+    config.profiles["cv3"] = Profile("cv3", "", True, True, [1.0], cv_folds=3)
+
+    run_training(
+        {**_request(), "model_name": "from_profile"}, settings, config, config.get("cv3"),
+        _registry(settings), on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    registry = Registry(settings.models_dir, 2)
+    assert "3-fold" in registry.info("from_profile")["metadata"]["evaluation"]
+
+    run_training(
+        {**_request(), "model_name": "from_request", "cv_folds": 0}, settings, config,
+        config.get("cv3"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    assert "holdout" in Registry(settings.models_dir, 2).info("from_request")["metadata"]["evaluation"]
+
+
+def test_shipped_config_and_code_defaults_describe_the_same_profiles():
+    """`profiles._DEFAULTS` is the fallback when config.yaml is missing, so the two are
+    duplicated by design — and silently drift apart, which would make behaviour depend on
+    whether the file happens to exist. Pin them together."""
+    from app.profiles import _DEFAULTS, load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+    assert set(shipped.profiles) == set(_DEFAULTS), "profile names differ"
+    for name, profile in shipped.profiles.items():
+        fallback = _DEFAULTS[name]
+        assert profile.c_grid == fallback.c_grid, f"{name}: C grid differs"
+        assert profile.use_char == fallback.use_char, f"{name}: use_char differs"
+        assert profile.max_word_features == fallback.max_word_features, f"{name}: word cap differs"
+        assert profile.threshold_per_label == fallback.threshold_per_label, f"{name}: thresholds differ"
+        assert profile.cv_folds == fallback.cv_folds, f"{name}: evaluation mode differs"
+
+
+def test_loading_a_bundle_with_a_container_label_warns(tmp_path, caplog):
+    """Training can no longer produce a container label, but an IMPORT can still bring one.
+
+    `app.data.split_labels` closes the training path, yet `POST /models/import` installs a
+    bundle whose `classes` come straight from its own `config.json` — so a bundle built by
+    an older version reintroduces the junk class. Correcting it here is not an option: the
+    class list is positionally tied to the head's estimators, and a loader that silently
+    dropped a column would desynchronise every prediction. So make it impossible to miss
+    instead, and point at the repair.
+    """
+    import json
+    import logging
+
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(_request(), settings, config, config.get("fast"), _registry(settings),
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+
+    # Rename one class to a container URI: the estimator count still matches, which is
+    # exactly what a legacy bundle looks like.
+    bundle = Path(settings.models_dir) / "tiny_model"
+    raw = json.loads((bundle / "config.json").read_text(encoding="utf-8"))
+    raw["classes"][0] = "http://w3id.org/openeduhub/vocabs/discipline/"
+    (bundle / "config.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        model, _ = Registry(settings.models_dir, 2).load_fresh("tiny_model")
+
+    assert "http://w3id.org/openeduhub/vocabs/discipline/" in model.classes  # still loads
+    warnings = " ".join(record.getMessage() for record in caplog.records)
+    assert "container" in warnings.lower(), f"no warning about the container label: {warnings!r}"
+    assert "prune_bundle_labels" in warnings, "the warning must name the repair script"
+
+
+def test_every_profile_brackets_both_known_optima():
+    """A short C grid is only safe if it still SPANS the useful range.
+
+    Measured on this project's own targets, the optimum sits at opposite ends: the
+    subject model picks C=32, the educational-level model picked C=2. A grid like
+    [4, 16] has two candidates but reaches neither — it would silently ship a model
+    regularized at the wrong end while looking like a normal run. This is the
+    invariant that lets `fast`/`auto` get away with only two candidates, so it is
+    pinned here rather than left as a comment in config.yaml.
+    """
+    from app.profiles import load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+    for name, profile in shipped.profiles.items():
+        assert min(profile.c_grid) <= 2.0, f"{name}: grid starts above the known low optimum C=2"
+        assert max(profile.c_grid) >= 32.0, f"{name}: grid ends below the known high optimum C=32"
+
+
+def test_profiles_form_a_monotone_cost_ladder():
+    """fast < auto < best in cost, so the profile name is a truthful price tag.
+
+    The previous set was not ordered: `large` was CHEAPER than `auto` despite sounding
+    heavier, and `thorough` sat outside the CV scheme entirely. Cost here is head fits
+    in units of the full dataset — k folds each training on (k-1)/k of the rows, once
+    per C candidate, plus the deploy fit — which is what actually drives wall-clock.
+    """
+    from app.profiles import load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+
+    def cost(profile) -> float:
+        folds = profile.cv_folds or 0
+        per_candidate = (folds - 1) if folds >= 2 else 0.7  # holdout trains on 70%
+        return per_candidate * len(profile.c_grid) + 1.0  # + the deploy fit on 100%
+
+    ladder = ["fast", "auto", "best"]
+    assert set(shipped.profiles) == set(ladder), "the shipped set is exactly the ladder"
+    costs = [cost(shipped.profiles[name]) for name in ladder]
+    assert costs == sorted(costs) and len(set(costs)) == len(costs), f"not monotone: {costs}"
+
+
+def test_training_from_gzip_equals_training_from_plain_csv(tmp_path):
+    """The whole pipeline must be indifferent to compression — proven, not assumed.
+
+    Same fixture, once plain and once gzipped, same seed: load, prepare, fit, evaluate and
+    save all have to produce the same numbers. Anything less would mean the compressed form
+    silently trains on different data, which is the failure mode nobody notices until a model
+    underperforms for no visible reason.
+    """
+    import gzip
+    import shutil
+
+    settings = _settings(tmp_path)
+    data_dir = Path(settings.data_dir)
+    plain = FIXTURES / "tiny.csv"
+    # The data dir is the fixtures dir; write the gz twin into a private one to avoid
+    # polluting the repository.
+    private = tmp_path / "data"
+    private.mkdir(parents=True, exist_ok=True)
+    shutil.copy(plain, private / "tiny.csv")
+    with open(plain, "rb") as src, gzip.open(private / "tiny.csv.gz", "wb") as dst:
+        shutil.copyfileobj(src, dst)
+    settings = Settings(data_dir=private, models_dir=tmp_path / "models", auth_enabled=False)
+    assert data_dir  # the fixture-based settings are unused beyond this point
+
+    config = _config()
+    results = {}
+    for name in ("tiny.csv", "tiny.csv.gz"):
+        model_name = f"m_{name.replace('.', '_')}"
+        run_training(
+            {**_request(), "dataset_name": name, "model_name": model_name},
+            settings, config, config.get("fast"), _registry(settings),
+            on_progress=lambda **_: None, should_stop=lambda: False,
+        )
+        registry = Registry(settings.models_dir, 2)
+        meta = registry.info(model_name)["metadata"]
+        predictions = registry.get(model_name).predict(["Bruchrechnung und Gleichungen"], top_k=3)[0]
+        results[name] = {
+            "rows": meta["n_samples"], "labels": meta["n_labels"], "best_C": meta["best_C"],
+            "f1_macro": meta["metrics"]["f1_macro"],
+            "per_label_f1": meta["metrics"]["per_label_f1"],
+            "top": [(p.uri, round(p.confidence, 10)) for p in predictions],
+        }
+
+    plain_result, gz_result = results["tiny.csv"], results["tiny.csv.gz"]
+    assert plain_result == gz_result, (
+        f"gzip changed the outcome:\n  plain: {plain_result}\n  gzip : {gz_result}")
+    assert plain_result["rows"] > 0 and plain_result["labels"] >= 2  # the run was real
+
+
+def test_no_c_grid_reaches_past_the_measured_useful_range():
+    """No profile may search above C=32, because above it quality DROPS.
+
+    This replaces an earlier assumption of mine that `best` should probe past both known
+    optima (`[0.5 … 128]`) on the theory that four consecutive runs picking the grid
+    maximum meant the optimum lay beyond it. 🟢 Measured instead
+    (`scripts/benchmark_c_range.py`, holdout split, both targets, zero convergence
+    warnings) — the curve peaks at 32 and then declines:
+
+        school       C=8 0.7504 | C=32 0.7531 | C=128 0.7511 | C=512 0.7493 | C=2048 0.7479
+        university   C=8 0.7803 | C=32 0.7814 | C=128 0.7812 | C=512 0.7785 | C=2048 0.7785
+
+    The repeated edge picks were ties on a flat plateau, not a missing optimum: at fixed
+    5-fold CV, C=32 and C=128 scored 0.8135 vs 0.8130. Reaching further costs quality AND
+    ~50% more fit time, so the upper bound is pinned here to stop it being re-widened on
+    the same hunch.
+    """
+    from app.profiles import load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+    for name, profile in shipped.profiles.items():
+        assert max(profile.c_grid) <= 32.0, f"{name}: searches above the measured optimum C=32"
+
+
+def test_c_grid_resolution_never_shrinks_along_the_ladder():
+    """A costlier rung may not search C more coarsely than a cheaper one.
+
+    With the useful range fixed at 2 … 32, the grid can only differ in resolution, and the
+    ladder's real gradation moved to the fold count (`fast` holdout -> `auto` 3 -> `best` 5).
+    `fast` may stay coarse because it exists for iteration; nothing above it may regress.
+    """
+    from app.profiles import load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+    counts = [len(shipped.profiles[name].c_grid) for name in ("fast", "auto", "best")]
+    assert counts == sorted(counts), f"resolution shrinks along the ladder: {counts}"
+
+
+def test_request_can_override_the_tfidf_feature_caps(tmp_path):
+    """The vocabulary caps are the main RAM/quality lever but were only reachable via
+    env vars or a profile — i.e. not per run. A request override makes "is the cap
+    cutting off signal?" answerable without touching the deployment. The bundle records
+    the resulting feature count, so the effect stays visible afterwards."""
+    settings = _settings(tmp_path)
+    config = _config()
+    # The fixture's natural char vocabulary is ~855, so a cap of 100 provably BINDS;
+    # asserting against a cap above the natural size would prove nothing.
+    req = {**_request(), "max_word_features": 40, "max_char_features": 100}
+    run_training(
+        req, settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    registry = Registry(settings.models_dir, 2)
+    vectorizer = registry.get("tiny_model").vectorizer
+    assert len(vectorizer.char_vec.vocabulary_) == 100  # truncated to the request's cap
+    meta = registry.info("tiny_model")["metadata"]
+    assert meta["tfidf"]["max_word_features"] == 40
+    assert meta["tfidf"]["max_char_features"] == 100
+    assert meta["tfidf"]["n_features"] <= 140  # cannot exceed the sum of both caps
+
+
+def test_config_default_text_column_weights_apply_when_the_request_omits_them(tmp_path):
+    """A weights default in config.yaml is a dataset CONVENTION, not a user instruction:
+    it applies when the request omits the field, and is narrowed to the columns actually
+    being trained on — otherwise a global default would break every CSV with different
+    column names. The bundle records what was EFFECTIVELY used, not what was configured.
+    """
+    settings = _settings(tmp_path)
+    config = _config()
+    config.text_column_weights = {"properties.cclom:title": 3, "not.in.this.csv": 5}
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    meta = Registry(settings.models_dir, 2).info("tiny_model")["metadata"]
+    assert meta["text_column_weights"] == {"properties.cclom:title": 3}
+
+
+def test_empty_text_column_weights_switch_the_config_default_off(tmp_path):
+    """`null` means "use the config default"; an explicit empty mapping means "no
+    weighting" — without that distinction a caller could not opt out of the default."""
+    settings = _settings(tmp_path)
+    config = _config()
+    config.text_column_weights = {"properties.cclom:title": 3}
+    run_training(
+        {**_request(), "text_column_weights": {}}, settings, config, config.get("fast"),
+        _registry(settings), on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    meta = Registry(settings.models_dir, 2).info("tiny_model")["metadata"]
+    assert meta["text_column_weights"] == {}
+
+
+def test_text_column_weights_are_anchored_in_the_bundle(tmp_path):
+    """The weights are a property of the TRAINED model, not of one request: the model
+    was fit on text where those fields repeat, so the bundle has to record them for a
+    caller to be able to build matching input text."""
+    settings = _settings(tmp_path)
+    config = _config()
+    req = {**_request(), "text_column_weights": {"properties.cclom:title": 2}}
+    run_training(
+        req, settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    meta = Registry(settings.models_dir, 2).info("tiny_model")["metadata"]
+    assert meta["text_column_weights"] == {"properties.cclom:title": 2}
+
+
+def test_metadata_records_the_searched_c_grid(tmp_path):
+    """best_C alone is not interpretable: a value sitting at the EDGE of the grid
+    means the search ran out of candidates, not that it found an optimum. Persist
+    the grid that was searched so that stays visible after the fact."""
+    settings = _settings(tmp_path)
+    config = _config()  # 'fast' profile searches [1.0, 2.0]
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    meta = Registry(settings.models_dir, 2).info("tiny_model")["metadata"]
+    assert meta["c_grid"] == [1.0, 2.0]
+    assert meta["best_C"] in meta["c_grid"]
+
+
+def test_vocabulary_travels_outside_skops_and_round_trips_exactly(tmp_path):
+    """skops is super-quadratic in the number of dict ENTRIES: a 200k-term vocabulary
+    measured ~45 min and 148 MB to write, while the 48 MB float head took one second.
+    The vocabulary now travels as a plain JSON member (~4000x faster, ~45x smaller).
+
+    The acceptance criterion is not the clock but exactness: a model loaded from the
+    bundle must vectorize IDENTICALLY to the one that was saved.
+    """
+    import numpy as np
+
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    bundle = Path(settings.models_dir) / "tiny_model"
+    assert (bundle / "vocabulary.json").exists()
+    # The heavy dict must be OUT of the skops container, not merely duplicated.
+    assert (bundle / "vocabulary.json").stat().st_size > 0
+
+    reloaded = Registry(settings.models_dir, 2).get("tiny_model")
+    probe = ["Bruchrechnung und Gleichungen", "Ein Gedicht interpretieren"]
+    matrix = reloaded.vectorizer.transform(probe)
+    assert matrix.shape[1] == len(reloaded.vectorizer.word_vec.vocabulary_) + (
+        len(reloaded.vectorizer.char_vec.vocabulary_) if reloaded.vectorizer.char_vec else 0
+    )
+    assert np.isfinite(matrix.data).all() and matrix.nnz > 0
+
+
+def test_bundle_with_a_vocabulary_that_does_not_fit_the_model_is_rejected(tmp_path):
+    """vocabulary.json travels inside IMPORTABLE bundles. A wrong length would silently
+    build a feature matrix of the wrong width and only fail deep inside the head —
+    reject it at load with a clean error instead."""
+    import json
+
+    import pytest
+
+    from app.registry import UnsafeModelError
+
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    path = Path(settings.models_dir) / "tiny_model" / "vocabulary.json"
+    vocabularies = json.loads(path.read_text(encoding="utf-8"))
+    vocabularies[0] = vocabularies[0][:-1]  # one term short
+    path.write_text(json.dumps(vocabularies), encoding="utf-8")
+
+    with pytest.raises(UnsafeModelError):
+        Registry(settings.models_dir, 2).get("tiny_model")
+
+
+def test_bundle_carries_per_label_f1_and_survives_a_malformed_metrics_file(tmp_path):
+    """A loaded model carries per-label F1 from metrics.json so /predict can report
+    it. metrics.json travels INSIDE importable bundles, so a malformed value must
+    degrade to "no F1" rather than crash every later prediction with a 500."""
+    import json
+
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    model = Registry(settings.models_dir, 2).get("tiny_model")
+    assert set(model.per_label_f1) == {"uri:math", "uri:bio", "uri:hist"}
+    assert all(0.0 <= score <= 1.0 for score in model.per_label_f1.values())
+
+    metrics_path = Path(settings.models_dir) / "tiny_model" / "metrics.json"
+    doc = json.loads(metrics_path.read_text(encoding="utf-8"))
+    doc["metrics"]["per_label_f1"] = ["not", "a", "mapping"]
+    metrics_path.write_text(json.dumps(doc), encoding="utf-8")
+
+    reloaded = Registry(settings.models_dir, 2).get("tiny_model")
+    assert reloaded.per_label_f1 == {}  # ignored, not crashed
+    ranked = reloaded.predict(["Bruchrechnung"], top_k=1, include_label_f1=True)
+    assert ranked[0][0].label_f1 is None
 
 
 def test_import_rejects_zip_bomb(tmp_path):

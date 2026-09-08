@@ -25,7 +25,14 @@ class TfidfBackend:
     def __init__(
         self,
         word_ngram: tuple[int, int] = (1, 2),
-        char_ngram: tuple[int, int] = (3, 5),
+        # A single 5-gram length, not the usual (3, 5). Measured on data_30k_ai.csv the
+        # shorter n-grams are pure cost: (5, 5) scores BEST clean (0.7917 micro / 0.7084
+        # macro vs 0.7910 / 0.7060 for (3, 5)) at 278 instead of 726 non-zeros per
+        # document. Since the matrix scales with non-zeros, that is 1.2 GB instead of
+        # 3.2 GB at 600k rows and 3x faster fits. (4, 5) held up marginally better under
+        # heavy character noise (-0.0278 vs -0.0316 micro at 8% typos) — the one axis
+        # where the shorter grams pay off, and within single-split noise.
+        char_ngram: tuple[int, int] = (5, 5),
         max_word_features: int = 80_000,
         max_char_features: int = 120_000,
         min_df: int = 2,

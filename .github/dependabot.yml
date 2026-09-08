@@ -9,5 +9,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Collapse all action bumps into ONE grouped PR (a single branch) per week
+    # instead of one branch per action — keeps the branch list tidy.
+    groups:
+      github-actions:
+        patterns: ["*"]
     commit-message:
       prefix: "ci"

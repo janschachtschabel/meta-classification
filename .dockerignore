@@ -9,8 +9,10 @@ deploy/
 .git/
 .env
 share_links.json
-__pycache__/
-*.pyc
+# dockerignore patterns are NOT recursive like .gitignore — without `**/` the
+# nested app/__pycache__ dirs ship into locally built images via `COPY app/`.
+**/__pycache__
+**/*.pyc
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

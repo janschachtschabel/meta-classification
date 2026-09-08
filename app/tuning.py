@@ -26,14 +26,38 @@ def macro_f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(f1_score(y_true, y_pred, average="macro", zero_division=0))
 
 
+def is_single_label(task_type: str) -> bool:
+    """binary/multiclass = exactly one label per prediction (serving uses argmax)."""
+    return task_type in ("binary", "multiclass")
+
+
+def _argmax_onehot(proba: np.ndarray) -> np.ndarray:
+    """One-hot argmax decision — the rule serving applies to binary/multiclass
+    (``ClassifierModel.predict`` returns the single best label there and
+    ignores thresholds entirely)."""
+    preds = np.zeros_like(proba, dtype=int)
+    preds[np.arange(proba.shape[0]), proba.argmax(axis=1)] = 1
+    return preds
+
+
+def _default_decision(proba: np.ndarray, task_type: str) -> np.ndarray:
+    """Decision used while SELECTING (before thresholds exist): argmax for
+    single-label tasks, the neutral 0.5 cut for multilabel."""
+    return _argmax_onehot(proba) if is_single_label(task_type) else (proba >= 0.5).astype(int)
+
+
 def select_c(
     x_train, y_train, x_val, y_val, c_grid: list[float], n_jobs: int = 1,
     should_stop: Callable[[], bool] | None = None,
     on_step: Callable[[int, int, float, float], None] | None = None,
     solver: str = "liblinear",
+    task_type: str = "multilabel",
 ):
     """Fit the head for each C, score macro-F1 on val; return the best.
 
+    The score uses the decision rule serving will apply for ``task_type``
+    (argmax for binary/multiclass, 0.5 threshold for multilabel), so C is
+    optimized for the rule that actually answers requests.
     Stops early (between C candidates) if ``should_stop`` returns True.
     Calls ``on_step(index, total, c, best_f1)`` after each candidate (sub-progress).
     Returns ``(best_c, best_f1, fitted_head)``.
@@ -53,7 +77,7 @@ def select_c(
         head = make_head(c, n_jobs=n_jobs, solver=solver)
         head.fit(x_train, y_train)
         proba = head.predict_proba(x_val)
-        score = macro_f1(y_val, (proba >= 0.5).astype(int))
+        score = macro_f1(y_val, _default_decision(proba, task_type))
         if score > best_f1:
             best_f1, best_c, best_head = score, c, head
         if on_step is not None:
@@ -76,14 +100,18 @@ def cross_val_evaluate(
     per_label: bool = True,
     should_stop: Callable[[], bool] | None = None,
     on_step: Callable[[int, int, str], None] | None = None,
+    task_type: str = "multilabel",
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
     Every row is predicted exactly once by a model that did not train on it; the
     vectorizer is refit per fold, so there is no feature leakage. ``C`` is picked by
     OOF macro-F1, thresholds are tuned on the OOF probabilities, and the metrics are
-    computed on them. Returns ``(best_c, global_threshold, per_label_thresholds,
-    metrics)`` (the caller then fits the deploy model on 100% of the data).
+    computed on them. Selection and metrics use the decision rule serving applies
+    for ``task_type`` — for binary/multiclass (argmax) threshold tuning is skipped
+    entirely, since serving never reads thresholds there. Returns ``(best_c,
+    global_threshold, per_label_thresholds, metrics)`` (the caller then fits the
+    deploy model on 100% of the data).
 
     ``on_step(done, total, detail)`` fires after EVERY head fit (k x |grid| of
     them), so the caller can show real progress across a run that takes minutes.
@@ -123,13 +151,13 @@ def cross_val_evaluate(
             done += 1
             if on_step is not None:
                 on_step(done, total_fits, f"Fold {fold}/{k}: C={c} ({done}/{total_fits} fits)")
-    best_c = max(c_grid, key=lambda c: macro_f1(y, (oof[c] >= 0.5).astype(int)))
+    best_c = max(c_grid, key=lambda c: macro_f1(y, _default_decision(oof[c], task_type)))
     proba = oof[best_c]
-    if tune_threshold:
+    if tune_threshold and not is_single_label(task_type):
         global_t, per_label_t = tune_thresholds(y, proba, classes, per_label=per_label)
     else:
         global_t, per_label_t = 0.5, {}
-    metrics = compute_metrics(y, proba, classes, global_t, per_label_t)
+    metrics = compute_metrics(y, proba, classes, global_t, per_label_t, task_type=task_type)
     return best_c, global_t, per_label_t, metrics
 
 
@@ -155,6 +183,12 @@ def tune_thresholds(
         for col, uri in enumerate(classes):
             truth = y_val[:, col]
             scores = proba[:, col]
+            if truth.sum() == 0:
+                # No positives to tune on: every threshold scores f1=0, and the
+                # ">" update would hand the label the grid MINIMUM (0.05) —
+                # near-zero threshold, fires on everything. Keep the global.
+                per_label_thresholds[uri] = best_global
+                continue
             best_t, best_f1 = best_global, -1.0
             for threshold in grid:
                 score = f1_score(truth, (scores >= threshold).astype(int), zero_division=0)
@@ -182,9 +216,26 @@ def compute_metrics(
     classes: list[str],
     global_threshold: float,
     per_label: dict[str, float],
+    task_type: str = "multilabel",
 ) -> dict:
-    """Macro/micro P/R/F1 plus per-label F1, computed on the given split."""
-    preds = apply_thresholds(proba, classes, global_threshold, per_label)
+    """Macro/micro P/R/F1 plus per-label F1, computed on the given split.
+
+    Measured with the SAME decision rule serving applies: argmax for
+    binary/multiclass (``ClassifierModel.predict`` ignores thresholds there),
+    the tuned thresholds for multilabel. ``decision_rule`` records which rule
+    produced the numbers, so bundles stay self-describing.
+
+    ``predicted_labels_per_row`` vs ``true_labels_per_row`` expose over-assertion,
+    which F1 alone hides: a wide label space pushes the F1-optimal per-label cut
+    down, and the model starts asserting far more labels than the data carries.
+    How strongly depends on the TARGET (a subject vocab behaves differently from a
+    curriculum vocab on the same rows), so every bundle carries its own pair.
+    """
+    single = is_single_label(task_type)
+    preds = (
+        _argmax_onehot(proba) if single
+        else apply_thresholds(proba, classes, global_threshold, per_label)
+    )
     per_label_f1 = f1_score(y_true, preds, average=None, zero_division=0)
     return {
         "f1_macro": float(f1_score(y_true, preds, average="macro", zero_division=0)),
@@ -192,5 +243,8 @@ def compute_metrics(
         "precision_macro": float(precision_score(y_true, preds, average="macro", zero_division=0)),
         "recall_macro": float(recall_score(y_true, preds, average="macro", zero_division=0)),
         "n_labels": len(classes),
+        "decision_rule": "argmax" if single else "thresholds",
+        "predicted_labels_per_row": round(float(preds.sum(axis=1).mean()), 3),
+        "true_labels_per_row": round(float(y_true.sum(axis=1).mean()), 3),
         "per_label_f1": {uri: float(score) for uri, score in zip(classes, per_label_f1, strict=False)},
     }

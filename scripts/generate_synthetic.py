@@ -28,8 +28,9 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from app.data import clean_text, split_labels  # noqa: E402
 from enrich_tail import FILT, LABEL_COL, TEXT_COLS, combined_text  # noqa: E402
+
+from app.data import clean_text, split_labels  # noqa: E402
 
 TITLE, DESC, KEYW = TEXT_COLS
 # Rotating per batch: target audience/level + topic angle (breadth of the subject).
@@ -108,7 +109,7 @@ def main() -> None:
     # URI -> display name from the curated data itself
     dn_col = f"{LABEL_COL}_DISPLAYNAME"
     uri_name: dict[str, str] = {}
-    for uris, names in zip(curated[LABEL_COL].fillna(""), curated[dn_col].fillna("")):
+    for uris, names in zip(curated[LABEL_COL].fillna(""), curated[dn_col].fillna(""), strict=False):
         for u, n in zip(split_labels(uris, ","), split_labels(names, ","), strict=False):
             uri_name.setdefault(u, n)
 

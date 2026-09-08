@@ -4,6 +4,7 @@ Uses the offline TF-IDF 'fast' profile so no model is downloaded. Storage is
 redirected to a temp dir via environment variables set before the app imports.
 """
 
+import atexit
 import os
 import shutil
 import tempfile
@@ -14,6 +15,9 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 _TMP = Path(tempfile.mkdtemp())
+# Module-level dir (holds trained skops bundles) — reclaim it when the test
+# process exits instead of leaking several MB into the OS temp area per run.
+atexit.register(shutil.rmtree, _TMP, ignore_errors=True)
 (_TMP / "data").mkdir()
 shutil.copy(FIXTURES / "tiny.csv", _TMP / "data" / "tiny.csv")
 
@@ -41,6 +45,9 @@ TRAIN_BODY = {
     "text_columns": ["properties.cclom:title", "properties.cclom:general_keyword"],
     "label_column": "properties.ccm:taxonid",
     "optimize_parameters": "fast",
+    # Explicit because the request default is 20 and the fixture holds 12 rows per
+    # label — without this every label would be dropped and training would abort.
+    "min_samples_per_label": 2,
 }
 
 
@@ -61,6 +68,9 @@ def trained_model() -> dict:
     order (or re-training as a fallback)."""
     started = client.post("/train", json=TRAIN_BODY, headers=ADMIN)
     assert started.status_code == 200, started.text
+    # Exact key set: the TrainStartedResponse model silently DROPS any field it
+    # doesn't declare — this guard turns a dropped contract field into a red test.
+    assert set(started.json()) == {"status", "model_name", "profile", "status_url"}
     state = _wait_for_training()
     assert state["status"] == "completed", state
     return state
@@ -164,11 +174,12 @@ def test_analyze_wrong_column_returns_400_with_message():
 
 
 def test_dataset_validate_endpoint():
-    """POST /datasets/{name}/validate reports column existence and quality warnings."""
+    """POST /datasets/{name}/validate takes ONE JSON object (aligned with
+    /datasets/analyze) and reports column existence and quality warnings."""
     r = client.post(
         "/datasets/tiny.csv/validate",
-        params={"label_column": "properties.ccm:taxonid"},
-        json=["properties.cclom:title"],  # text_columns as body
+        json={"text_columns": ["properties.cclom:title"],
+              "label_column": "properties.ccm:taxonid"},
         headers=ADMIN,
     )
     assert r.status_code == 200, r.text
@@ -176,9 +187,18 @@ def test_dataset_validate_endpoint():
     assert body["valid"] is True
     r404 = client.post(
         "/datasets/nope.csv/validate",
-        params={"label_column": "x"}, json=["y"], headers=ADMIN,
+        json={"text_columns": ["y"], "label_column": "x"}, headers=ADMIN,
     )
     assert r404.status_code == 404
+
+    # The pre-alignment contract (raw array body + query params) is gone: 422.
+    legacy = client.post(
+        "/datasets/tiny.csv/validate",
+        params={"label_column": "properties.ccm:taxonid"},
+        json=["properties.cclom:title"],
+        headers=ADMIN,
+    )
+    assert legacy.status_code == 422
 
 
 def test_dataset_import_export_delete_lifecycle():
@@ -202,6 +222,70 @@ def test_dataset_import_export_delete_lifecycle():
 
     assert client.delete("/datasets/extra.csv", headers=ADMIN).status_code == 200
     assert client.delete("/datasets/extra.csv", headers=ADMIN).status_code == 404
+
+
+def test_gzipped_dataset_upload_list_download_and_analyze():
+    """A .csv.gz dataset must work everywhere a .csv does.
+
+    The WLO full exports are 126-195 MB gzipped against ~1.4 GB plain, and pandas reads the
+    compressed form natively — so only the surrounding API stood in the way: the listing
+    globbed `*.csv` (which never matches `*.csv.gz`), the upload demanded a `.csv` suffix,
+    and the download announced `text/csv` for gzip bytes.
+    """
+    import gzip
+    import io
+
+    body = ("properties.cclom:title;properties.ccm:taxonid\n"
+            + "".join(f"Titel {i};uri:x\n" for i in range(40)))
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb") as handle:
+        handle.write(body.encode("utf-8"))
+    packed = buffer.getvalue()
+
+    files = {"file": ("packed.csv.gz", packed, "application/gzip")}
+    imported = client.post("/datasets/import", files=files, headers=ADMIN)
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["dataset_name"] == "packed.csv.gz"
+
+    listed = {d["name"]: d for d in client.get("/datasets", headers=RO).json()}
+    assert "packed.csv.gz" in listed, "gzipped dataset missing from the listing"
+    assert listed["packed.csv.gz"]["rows"] == 40, "row count read the compressed bytes"
+
+    export = client.post("/datasets/packed.csv.gz/export", headers=ADMIN)
+    assert export.status_code == 200
+    assert "gzip" in export.headers["content-type"], export.headers["content-type"]
+    assert gzip.decompress(export.content).decode("utf-8") == body, "download is not byte-faithful"
+
+    # And the content is actually usable, not merely stored.
+    info = client.get("/datasets/packed.csv.gz", headers=RO)
+    assert info.status_code == 200, info.text
+    assert "properties.ccm:taxonid" in info.json()["columns"]
+
+    assert client.delete("/datasets/packed.csv.gz", headers=ADMIN).status_code == 200
+
+
+def test_share_link_serves_gzipped_dataset_as_gzip():
+    """A SHARED gzipped dataset must announce gzip too, not just the authenticated download.
+
+    The share link is the path a recipient without an API key uses, so it is the one most
+    likely opened in a browser — exactly where a `text/csv` header on gzip bytes leads to a
+    silently decompressed file saved under its `.gz` name, which then opens nowhere.
+    """
+    import gzip
+    import io
+
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb") as handle:
+        handle.write(b"a;b\n1;2\n")
+    files = {"file": ("shared.csv.gz", buffer.getvalue(), "application/gzip")}
+    assert client.post("/datasets/import", files=files, headers=ADMIN).status_code == 200
+
+    share = client.post("/datasets/shared.csv.gz/export",
+                        json={"generate_share_url": True, "expires_hours": 1}, headers=ADMIN)
+    fetched = client.get(f"/share/{share.json()['share_id']}")
+    assert fetched.status_code == 200
+    assert "gzip" in fetched.headers["content-type"], fetched.headers["content-type"]
+    assert gzip.decompress(fetched.content) == b"a;b\n1;2\n"
 
 
 def test_share_link_for_deleted_dataset_returns_404():
@@ -251,6 +335,10 @@ def test_train_profiles_endpoint():
     assert {"fast", "auto"} <= names
     fast = next(p for p in body["profiles"] if p["name"] == "fast")
     assert fast["max_char_features"] is None  # word-only profile has no char cap
+    # The training-config defaults a request would inherit when it omits them. The UI
+    # pre-fills its form from these, so they have to be readable, not just documented.
+    assert isinstance(body["default_text_column_weights"], dict)
+    assert "default_min_samples_per_label" in body
 
 
 def test_train_error_paths(trained_model):
@@ -272,9 +360,53 @@ def test_train_error_paths(trained_model):
         training_job.update(status="idle", model_name=None)
 
 
+def test_train_request_defaults_min_samples_per_label_to_20():
+    """Dropping rare labels is a decision the user should SEE and be able to change,
+    so the request declares 20 instead of quietly scaling it to the dataset size.
+    Explicit null still asks for the size heuristic."""
+    from app.schemas import TrainRequest
+
+    body = {k: v for k, v in TRAIN_BODY.items() if k != "min_samples_per_label"}
+    assert TrainRequest(**body).min_samples_per_label == 20
+    assert TrainRequest(**body, min_samples_per_label=None).min_samples_per_label is None
+    assert TrainRequest(**body, min_samples_per_label=5).min_samples_per_label == 5
+
+
+def test_train_rejects_unusable_text_column_weights():
+    """Bounds at the trust boundary. A weight for a column that is not being trained
+    on is a typo the user would never notice (the field silently stays 1x), and an
+    unbounded multiplier copies that column's text per row — cap it."""
+    def post(weights: dict) -> int:
+        return client.post(
+            "/train",
+            json={**TRAIN_BODY, "model_name": "weighted", "text_column_weights": weights},
+            headers=ADMIN,
+        ).status_code
+
+    assert post({"properties.cclom:nope": 2}) == 422  # not among text_columns
+    assert post({"properties.cclom:title": 0}) == 422  # 0 would drop the field
+    assert post({"properties.cclom:title": 999}) == 422  # unbounded copies
+
+
+def test_train_weight_check_stays_quiet_when_text_columns_itself_is_missing():
+    """The cross-check needs text_columns. If THAT failed validation there is nothing
+    to compare against, so claiming the weights name unknown columns would be an
+    unfounded second error stacked on top of the real one."""
+    from pydantic import ValidationError
+
+    from app.schemas import TrainRequest
+
+    with pytest.raises(ValidationError) as caught:
+        TrainRequest(dataset_name="d.csv", model_name="m", label_column="l",
+                     text_column_weights={"properties.cclom:title": 2})
+    assert {err["loc"][0] for err in caught.value.errors()} == {"text_columns"}
+
+
 def test_train_stop_endpoint():
     """POST /train/stop responds for both modes; hard=true resets to idle."""
-    assert client.post("/train/stop", headers=ADMIN).json()["status"] == "stopping"
+    soft = client.post("/train/stop", headers=ADMIN).json()
+    assert soft["status"] == "stopping"
+    assert set(soft) == {"status"}  # TrainStopResponse: exact contract key set
     assert client.post("/train/stop", params={"hard": "true"},
                        headers=ADMIN).json()["status"] == "idle"
 
@@ -310,6 +442,20 @@ def test_predict_baseline_diff_is_optional(trained_model):
 
     plain = client.post("/predict", json=req, headers=RO)
     assert all("baseline_diff" not in p for p in plain.json()["results"][0]["predictions"])
+
+
+def test_predict_label_f1_is_optional(trained_model):
+    """include_label_f1=true attaches the label's training F1 to every prediction,
+    so a caller can separate "confident here" from "reliable at all". Without the
+    flag the field is absent (response unchanged)."""
+    req = {"texts": ["Bruchrechnung und Gleichungen lösen"], "model_name": "api_model"}
+    with_f1 = client.post("/predict", json={**req, "include_label_f1": True}, headers=RO)
+    assert with_f1.status_code == 200, with_f1.text
+    rows = with_f1.json()["results"][0]["predictions"]
+    assert rows and all(0.0 <= p["label_f1"] <= 1.0 for p in rows)
+
+    plain = client.post("/predict", json=req, headers=RO)
+    assert all("label_f1" not in p for p in plain.json()["results"][0]["predictions"])
 
 
 def test_predict_ignores_removed_use_auto_settings_field(trained_model):
@@ -365,9 +511,12 @@ def test_predict_explain(trained_model):
     assert r.status_code == 200
     body = r.json()
     assert "predictions" in body and "word_importance" in body and "all_scores" in body
-    # The diagnostic endpoint always carries the empty-text baseline difference.
+    # The diagnostic endpoint always carries both reliability signals, unasked:
+    # the empty-text baseline difference and the label's training F1.
     assert all("baseline_diff" in score for score in body["all_scores"].values())
     assert all("baseline_diff" in p for p in body["predictions"])
+    assert all("label_f1" in score for score in body["all_scores"].values())
+    assert all("label_f1" in p for p in body["predictions"])
 
 
 def test_predict_rejects_empty_and_oversized_input():

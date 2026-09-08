@@ -42,7 +42,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
-        run: python -m ruff check app tests
+        run: python -m ruff check app tests scripts
 
       - name: Types (mypy)
         run: python -m mypy app --config-file pyproject.toml

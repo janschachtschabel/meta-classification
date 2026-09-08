@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, ValidationInfo, field_validator
 
 
 def _empty_to_none(value: object) -> object:
@@ -29,8 +29,34 @@ class TrainRequest(BaseModel):
             "properties.cclom:general_keyword",
         ]],
     )
+    # Values capped at 10: every repeat concatenates another full copy of that
+    # column across all rows, so an unbounded multiplier is a memory lever.
+    text_column_weights: dict[str, Annotated[int, Field(ge=1, le=10)]] | None = Field(
+        None,
+        examples=[{"properties.cclom:title": 2, "properties.cclom:general_keyword": 2}],
+        description=(
+            "How often each text column is repeated in the training text. "
+            'Format: one entry per column you want to boost, e.g. '
+            '`{"properties.cclom:title": 2, "properties.cclom:general_keyword": 2}` — '
+            "columns you leave out stay at 1 (unchanged), so only list what you boost. "
+            "Allowed values 1-10; every key must appear in `text_columns`.\n\n"
+            "**Defaults:** `null` applies `preprocessing.text_column_weights` from "
+            "config.yaml (shipped as title + keywords at 2x, the measured optimum), "
+            "narrowed to the columns you are training on. Send `{}` to train unweighted. "
+            "`GET /train/profiles` reports the active default.\n\n"
+            "Why: a title or keyword list carries far more signal per word than a long "
+            "description, but the description supplies more words and drowns it out; "
+            "repeating a field gives it that weight back. `sublinear_tf` damps repetition "
+            "logarithmically, so 2 is worth ~1.7x, not 2x.\n\n"
+            "**Training-time only:** the trained model expects input built the same way, so "
+            "assemble the text you send to /predict with the same repetitions (the weights "
+            "are recorded in the model's metadata, see GET /models/{name})."
+        ),
+    )
     label_column: str = Field(..., examples=["properties.ccm:taxonid"])
-    optimize_parameters: str = Field("auto", description="Quality/effort profile: fast | auto | thorough")
+    optimize_parameters: str = Field(
+        "auto", description="Quality/effort profile, cheapest first: fast | auto | best"
+    )
     task_type: str | None = Field(
         None, examples=["auto"],
         description="Override task type: 'multilabel' | 'multiclass' | 'binary'. None/'auto' = auto-detect.",
@@ -40,22 +66,72 @@ class TrainRequest(BaseModel):
         description="Keep only labels containing this substring (optional).",
     )
     min_samples_per_label: int | None = Field(
-        None, ge=1, examples=[20],
+        20, ge=1, examples=[20],
         description=(
             "Minimum number of tagged samples a label must have to be included in training; "
-            "rarer labels are dropped. null = auto (scales with dataset size, ~20 for typical sets)."
+            "rarer labels are dropped. Declared (not auto-scaled) because dropping labels is a "
+            "decision worth seeing: 20 suits datasets of a few thousand rows and up, but a small "
+            "dataset needs a lower value or training aborts with 'not enough data'. "
+            "null = auto (scales with dataset size: 2 / 5 / 20 / 35)."
         ),
     )
     cv_folds: int | None = Field(
-        None, ge=0, le=20, examples=[5],
+        None, ge=0, le=20, examples=[3],
         description=(
-            "Evaluation mode: 0 = classic train/val/test split, >= 2 = k-fold cross-validation "
-            "(every row trains AND validates via out-of-fold metrics; the deployed model is fit "
-            "on 100% of the data). null = config default (split.cv_folds)."
+            "Evaluation mode: 0 = classic train/val/test split (the deployed model is fit on "
+            "train+val, i.e. the test share is never learned from), >= 2 = k-fold "
+            "cross-validation (every row trains AND validates via out-of-fold metrics; the "
+            "deployed model is fit on 100% of the data). k only controls how much data the "
+            "evaluation models see (67% at k=3, 80% at k=5), so a lower k is slightly "
+            "pessimistic, not less honest. null = the profile's own setting "
+            "(fast: 0, auto: 3, best: 5), which falls back to split.cv_folds."
         ),
     )
-    csv_separator: str = ";"
+    # Upper bound 2_000_000: the vocabulary caps are the main RAM lever (the head
+    # holds n_labels x n_features float32, the vectorizer the vocabulary itself), so
+    # an unbounded value is an out-of-memory request, not a quality setting.
+    max_word_features: int | None = Field(
+        None, ge=1_000, le=2_000_000, examples=[80_000],
+        description=(
+            "Word-n-gram vocabulary cap for THIS run. null = the profile's value, else "
+            "`APIV3_TFIDF_MAX_WORD_FEATURES` (default 80000). Raising it can recover signal "
+            "when the cap is saturated (compare `tfidf.n_features` against "
+            "`tfidf.max_word_features + max_char_features` in the model metadata: equal "
+            "means the vocabulary was truncated) — at a proportional cost in RAM, bundle "
+            "size and cold-load time."
+        ),
+    )
+    max_char_features: int | None = Field(
+        None, ge=1_000, le=2_000_000, examples=[120_000],
+        description=(
+            "Character-n-gram vocabulary cap for THIS run. null = the profile's value, else "
+            "`APIV3_TFIDF_MAX_CHAR_FEATURES` (default 120000). Ignored by word-only profiles "
+            "(`use_char: false`, e.g. `fast`)."
+        ),
+    )
+    # Exactly one character: pandas parses a multi-char sep as a REGEX (python
+    # engine) — a crafted one can backtrack catastrophically (ReDoS), and in
+    # /train it would hang the training thread outside any stop checkpoint.
+    csv_separator: str = Field(";", min_length=1, max_length=1)
     label_separator: str = ","
+
+    @field_validator("text_column_weights")
+    @classmethod
+    def _weights(cls, value: dict | None, info: ValidationInfo) -> dict | None:
+        """Reject weights for columns that are not being trained on.
+
+        Silently ignoring them (the loader would) hides a typo: the user believes a
+        field is boosted, the model was never told, and nothing in the result says so.
+        """
+        # "text_columns" missing from info.data means IT failed validation; there is
+        # nothing to compare against, so stay quiet rather than stack a second,
+        # unfounded error on top of the real one.
+        if not value or "text_columns" not in info.data:
+            return value
+        unknown = sorted(set(value) - set(info.data["text_columns"]))
+        if unknown:
+            raise ValueError(f"text_column_weights names columns not in text_columns: {unknown}")
+        return value
 
     @field_validator("task_type", mode="before")
     @classmethod
@@ -100,6 +176,15 @@ class _PredictOptions(BaseModel):
             "prediction: separates what the text contributes from the label's base rate."
         ),
     )
+    include_label_f1: bool = Field(
+        False,
+        description=(
+            "Attach `label_f1` (this label's F1 from the training evaluation) to every prediction. "
+            "Confidence says how sure the model is HERE, `label_f1` how much that is worth: a 0.95 "
+            "on a label that only scores 0.60 overall is worth a human look. Null for labels the "
+            "bundle has no score for."
+        ),
+    )
 
 
 class PredictRequest(_PredictOptions):
@@ -126,9 +211,22 @@ class AnalyzeRequest(BaseModel):
     dataset_name: str
     text_columns: list[str]
     label_column: str
-    csv_separator: str = ";"
+    # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
+    csv_separator: str = Field(";", min_length=1, max_length=1)
     label_separator: str = ","
     label_filter: OptionalFilter = None
+
+
+class ValidateRequest(BaseModel):
+    """Body of ``POST /datasets/{name}/validate`` — mirrors ``AnalyzeRequest``
+    minus the fields the endpoint does not use (the dataset name travels in
+    the path; validation has no label filter)."""
+
+    text_columns: list[str]
+    label_column: str
+    # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
+    csv_separator: str = Field(";", min_length=1, max_length=1)
+    label_separator: str = ","
 
 
 class ExportRequest(BaseModel):

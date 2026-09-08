@@ -77,6 +77,28 @@ def test_baseline_diff_separates_text_signal_from_base_rate():
     assert all(p.baseline_diff is None for p in plain)  # opt-in only
 
 
+def test_label_f1_exposes_per_label_reliability():
+    """include_label_f1 attaches the label's training F1, so a caller can tell a
+    confident-AND-reliable label from a confident-but-unreliable one. A label the
+    metrics never scored stays None rather than being guessed. Opt-in only."""
+    model = ClassifierModel(
+        vectorizer=_SpyVectorizer(),  # type: ignore[arg-type]
+        head=_ConstHead(),  # type: ignore[arg-type]
+        classes=["u1", "u2"],
+        task_type="multilabel",
+        avg_labels=1.0,
+        uri_to_label={"u1": "A", "u2": "B"},
+        per_label_f1={"u1": 0.95},
+    )
+    preds = model.predict(["text"], threshold=0.0, include_label_f1=True)[0]
+    by_uri = {p.uri: p for p in preds}
+    assert by_uri["u1"].label_f1 == 0.95
+    assert by_uri["u2"].label_f1 is None  # not in metrics -> honestly absent
+
+    plain = model.predict(["text"], threshold=0.0)[0]
+    assert all(p.label_f1 is None for p in plain)  # opt-in only
+
+
 def test_explicit_top_k_is_ranking_not_cap():
     """An explicit top_k means 'the K most probable labels' (ranking), NOT a cap
     on the thresholded list — otherwise the field looks dead whenever only one

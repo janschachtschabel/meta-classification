@@ -43,12 +43,18 @@ class Prediction:
     model's empty-text prediction for the label: it separates what the TEXT
     contributes from the label's base rate. A high confidence with a diff near
     zero means the label fires for almost anything, not for this text.
+
+    ``label_f1`` (only set when requested) is this label's F1 from the training
+    evaluation — how well the model does on this label AT ALL, independent of
+    the current text. Confidence answers "how sure here?", label_f1 answers "how
+    much is that worth?": 0.95 on a label scoring 0.60 deserves a human look.
     """
 
     uri: str
     label: str
     confidence: float
     baseline_diff: float | None = None
+    label_f1: float | None = None
     # Only set in ranking mode (explicit top_k): whether this label would also
     # pass its tuned threshold — keeps forced rankings honest.
     above_threshold: bool | None = None
@@ -66,6 +72,11 @@ class ClassifierModel:
     uri_to_label: dict[str, str]
     global_threshold: float = 0.5
     per_label_thresholds: dict[str, float] = field(default_factory=dict)
+    # Per-label F1 from the training evaluation (uri -> score), read from the
+    # bundle's metrics.json. Reporting-only: never influences a decision, it just
+    # travels with the prediction so a caller can weigh it. Empty for bundles
+    # trained before this existed — the field is then simply absent.
+    per_label_f1: dict[str, float] = field(default_factory=dict)
     # Lazily computed empty-text probabilities (deterministic per model, so
     # cached once); runtime-only, never persisted in the bundle.
     _baseline: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
@@ -109,6 +120,7 @@ class ClassifierModel:
         threshold: float | None = None,
         label_filter: str | None = None,
         include_baseline_diff: bool = False,
+        include_label_f1: bool = False,
     ) -> list[list[Prediction]]:
         """Classify texts, returning sorted predictions per text.
 
@@ -122,7 +134,8 @@ class ClassifierModel:
           distinguishable from asserted ones (multilabel only).
 
         ``include_baseline_diff`` attaches confidence minus the empty-text
-        baseline per prediction (diagnostic; see ``Prediction``).
+        baseline per prediction; ``include_label_f1`` attaches the label's
+        training F1 (both diagnostic, both opt-in; see ``Prediction``).
         """
         proba = self.predict_proba(texts)
         baseline = self.baseline_proba() if include_baseline_diff else None
@@ -136,6 +149,7 @@ class ClassifierModel:
                     baseline_diff=(
                         float(proba[row, col] - baseline[col]) if baseline is not None else None
                     ),
+                    label_f1=self.per_label_f1.get(uri) if include_label_f1 else None,
                 )
                 for col, uri in enumerate(self.classes)
                 if not (label_filter and label_filter not in uri)

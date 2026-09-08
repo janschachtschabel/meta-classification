@@ -17,6 +17,66 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _BASE = Path(__file__).resolve().parent.parent
 
 
+def _affinity_cpus() -> int | None:
+    """CPUs in this process' scheduler affinity mask (Linux only; None elsewhere).
+
+    taskset and the Kubernetes static CPU manager pin processes via this mask,
+    so it bounds usable parallelism exactly like a quota does.
+    """
+    getaffinity = getattr(os, "sched_getaffinity", None)
+    if getaffinity is None:
+        return None
+    try:
+        return len(getaffinity(0)) or None
+    except OSError:
+        return None
+
+
+def _cgroup_cpu_quota(cgroup_root: Path = Path("/sys/fs/cgroup")) -> float | None:
+    """CPU quota the container's cgroup imposes, in cores; None = unlimited/absent.
+
+    Checks cgroup v2 (``cpu.max``: "<quota> <period>" or "max ...") first, then
+    v1 (``cpu/cpu.cfs_quota_us`` / ``cpu.cfs_period_us``, -1 = unlimited).
+    Malformed or missing files mean "no limit" — this runs during settings
+    resolution and must never take the app down.
+    """
+    try:
+        parts = (cgroup_root / "cpu.max").read_text().split()
+        if parts and parts[0] != "max":
+            period = int(parts[1]) if len(parts) > 1 else 100_000
+            if period > 0:
+                return int(parts[0]) / period
+    except (OSError, ValueError):
+        pass
+    try:
+        quota = int((cgroup_root / "cpu" / "cpu.cfs_quota_us").read_text())
+        period = int((cgroup_root / "cpu" / "cpu.cfs_period_us").read_text())
+        if quota > 0 and period > 0:
+            return quota / period
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def available_cpus() -> int:
+    """CPUs THIS process may actually use, never below 1.
+
+    ``os.cpu_count()`` reports the NODE's cores inside a container (a CFS quota
+    is invisible to it) — on a 64-core node a 4-CPU-limited pod would otherwise
+    size ~38 fit threads into its quota and just get throttled by the kernel.
+    Bound the count by the affinity mask and the cgroup quota (fractional
+    quotas floor: an extra thread beyond the quota only adds throttling).
+    """
+    cores = os.cpu_count() or 1
+    affinity = _affinity_cpus()
+    if affinity is not None:
+        cores = min(cores, affinity)
+    quota = _cgroup_cpu_quota()
+    if quota is not None:
+        cores = min(cores, int(quota))
+    return max(1, cores)
+
+
 class Settings(BaseSettings):
     """Runtime configuration, loaded from env / .env (prefix ``APIV3_``)."""
 
@@ -105,8 +165,9 @@ class Settings(BaseSettings):
     def effective_n_jobs(self) -> int:
         """Thread count for the label-wise head fits: the requested ``n_jobs``
         (joblib semantics for negatives) bounded by the ``cpu_max_percent``
-        budget. Never below 1."""
-        cores = os.cpu_count() or 1
+        budget. Never below 1. Container-aware: cores = ``available_cpus()``
+        (cgroup quota / affinity mask), not the host's count."""
+        cores = available_cpus()
         requested = self.n_jobs if self.n_jobs > 0 else max(1, cores + 1 + self.n_jobs)
         budget = max(1, (cores * self.cpu_max_percent) // 100)
         return max(1, min(requested, budget))

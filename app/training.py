@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .classifier import ClassifierModel
 from .deploy import Fitted, fit_evaluate_deploy
@@ -45,21 +45,34 @@ def _build_metadata(
         n_val = int(len(prep.val_idx))
         n_test = int(len(prep.test_idx))
     return {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "evaluation": evaluation,
         "dataset": req["dataset_name"],
         "text_columns": req["text_columns"],
+        # Anchored in the bundle: the model was fit on text where these fields are
+        # repeated, so a caller who wants matching behaviour has to know about it.
+        # Taken from `prep`, not from `req` — the request may have left it to the
+        # config default, and the bundle must describe what was actually applied.
+        "text_column_weights": prep.text_column_weights,
         "label_column": req["label_column"],
         "label_filter": req.get("label_filter"),
         "profile": profile.name,
         "backend": "tfidf",
         "solver": settings.solver,
         "best_C": fitted.best_c,
+        # The searched grid makes best_C interpretable later: a best_C equal to the
+        # first or last entry means the search hit its BOUNDARY — the real optimum
+        # may lie outside, which is invisible from best_C alone.
+        "c_grid": list(profile.c_grid),
         "task_type": prep.task_type,
         "avg_labels_per_sample": prep.avg_labels,
         "min_samples_per_label": prep.min_samples,
         "tfidf": {
             "use_char": profile.use_char,
+            # Both caps were saturated on the 30k data (n_features == the sum), so
+            # recording them is what makes n_features interpretable.
+            "max_word_features": fitted.max_word_features,
+            "max_char_features": fitted.max_char_features if profile.use_char else None,
             "n_features": fitted.deploy_n_features,
             "train_nnz": fitted.deploy_nnz,
             "train_sparse_mb": fitted.deploy_sparse_mb,
@@ -95,9 +108,12 @@ def run_training(
     bypass that serialization.
     """
     start = time.time()
-    # Request-level cv_folds wins over the config default (mirrors min_samples_per_label).
+    # Most specific wins: request > profile > config. The profile carries the mode that
+    # suits its size class, but an explicit request value still overrides it.
     req_cv = req.get("cv_folds")
-    cv_folds = req_cv if req_cv is not None else training_cfg.cv_folds
+    cv_folds = next(
+        value for value in (req_cv, profile.cv_folds, training_cfg.cv_folds) if value is not None
+    )
     prep = prepare_data(
         req, settings, training_cfg, cv_folds=cv_folds,
         on_progress=on_progress, should_stop=should_stop,
@@ -106,6 +122,8 @@ def run_training(
         return {}
     fitted = fit_evaluate_deploy(
         prep, settings, profile, cv_folds=cv_folds,
+        max_word_features=req.get("max_word_features"),
+        max_char_features=req.get("max_char_features"),
         on_progress=on_progress, should_stop=should_stop,
     )
     if fitted is None:
@@ -120,6 +138,10 @@ def run_training(
         uri_to_label=prep.uri_to_label,
         global_threshold=fitted.global_threshold,
         per_label_thresholds=fitted.per_label_thresholds,
+        # Set here too, not only when reading the bundle back: registry.save()
+        # publishes THIS object straight into the LRU cache, so a freshly trained
+        # model would otherwise serve without label_f1 until it is evicted.
+        per_label_f1=dict(fitted.metrics.get("per_label_f1", {})),
     )
     elapsed = time.time() - start
     metadata = _build_metadata(req, settings, profile, prep, fitted, elapsed, cv_folds=cv_folds)

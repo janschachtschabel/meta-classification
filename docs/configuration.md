@@ -38,13 +38,19 @@ limits see real client IPs · storage paths on a persistent volume.
 
 | Variable | Default | Description |
 |---|---|---|
-| `APIV3_DATA_DIR` | `./data` | CSV datasets (uploads land here). |
+| `APIV3_DATA_DIR` | `./data` | CSV datasets (uploads land here). `.csv` and `.csv.gz` are both accepted — gzip is read natively and is the sane choice above ~100 MB. |
 | `APIV3_MODELS_DIR` | `./models` | Trained model bundles. |
 | `APIV3_SHARE_LINKS_FILE` | `./share_links.json` | Persisted expiring share links. |
 | `APIV3_CONFIG_FILE` | `./config.yaml` | Training profiles file (layer 2 above). |
 
-In containers, point all four at the mounted volume — the provided
-`docker-compose.yml` and Helm chart do this automatically (`/data/*`).
+In containers, the provided `docker-compose.yml` and Helm chart point the three
+*state* paths (`DATA_DIR`, `MODELS_DIR`, `SHARE_LINKS_FILE`) at the mounted
+volume (`/data/*`) automatically. `APIV3_CONFIG_FILE` deliberately stays at the
+image-baked `/app/config.yaml`: the profiles file ships with the image, and
+under the Helm chart's read-only root filesystem it is **immutable at runtime**
+(the "reloaded on every `POST /train`" note above then only matters for local
+runs). To edit profiles in production, set `APIV3_CONFIG_FILE=/data/config.yaml`
+and seed that file on the volume once.
 
 ### Authentication & UI
 
@@ -76,8 +82,8 @@ No key is ever required for `/health`, `/metrics` and `GET /share/{id}`
 
 | Variable | Default | Description |
 |---|---|---|
-| `APIV3_N_JOBS` | `-1` | Threads for the label-wise head fits (joblib semantics: `-1` = all cores, `-2` = all but one). Bounded by the CPU budget below. |
-| `APIV3_CPU_MAX_PERCENT` | `60` | Hard CPU budget for a training run: effective threads = `min(N_JOBS, cores × percent/100)`. Keeps the API responsive; `100` disables the cap. `GET /config` shows the resolved value. |
+| `APIV3_N_JOBS` | `-1` | Threads for the label-wise head fits (joblib semantics: `-1` = all cores, `-2` = all but one). "Cores" is container-aware: the cgroup CPU quota (a Kubernetes/Docker CPU limit) and the scheduler affinity mask bound `os.cpu_count()`, so `-1` inside a 4-CPU-limited pod means 4, not the node's core count. Additionally bounded by the CPU budget below. |
+| `APIV3_CPU_MAX_PERCENT` | `60` | Hard CPU budget for a training run: effective threads = `min(N_JOBS, available cores × percent/100)`. Keeps the API responsive; `100` disables the cap. `GET /config` shows the resolved value. |
 | `APIV3_SOLVER` | `newton-cg` | LogisticRegression solver. `newton-cg`/`saga` keep float32 and release the GIL (all cores share ONE matrix); `lbfgs`/`liblinear` upcast to float64. |
 | `APIV3_PARALLEL_BACKEND` | `threading` | joblib backend for the per-label fits. |
 | `APIV3_TFIDF_MAX_WORD_FEATURES` | `80000` | Word-n-gram vocabulary cap (main RAM lever; profiles may override). |
@@ -99,25 +105,120 @@ oversubscription); override only via real OS environment variables
 ```yaml
 default_profile: auto
 profiles:
-  auto:       # C_grid, tune_threshold, threshold_per_label, use_char,
-  fast:       # max_word_features, max_char_features per profile
-  thorough:
+  fast:       # C_grid, cv_folds, tune_threshold, threshold_per_label, use_char,
+  auto:       # max_word_features, max_char_features per profile
+  best:
 preprocessing:
   min_text_length_chars: 5
   drop_duplicates: true          # identical texts are deduplicated (prevents CV leakage)
   min_samples_per_label: null    # null = auto-scaled to dataset size
+  text_column_weights:           # default field weighting; {} in a request disables it
+    properties.cclom:title: 2
+    properties.cclom:general_keyword: 2
 split:
   validation_size: 0.15
   test_size: 0.15
-  cv_folds: 0                    # 0 = train/val/test split; >=2 = k-fold CV
+  cv_folds: 0                    # last-resort fallback only — see below
 ```
 
-- **Profiles** are freely extensible; `optimize_parameters` in the train request
-  selects one by name.
-- **`cv_folds`** can be overridden per request (`cv_folds` body field: `0` = split,
-  `2–20` = k-fold CV — every row trains AND validates via out-of-fold, the deployed
-  model is fit on 100 % of the data).
-- **`min_samples_per_label`** can also be set per request.
+- **Profiles** are the *fast ↔ good* dial and ship as three rungs ordered by cost:
+
+  | Profile | Char n-grams | `C_grid` | Evaluation | Head fits¹ | Deploys on |
+  |---|---|---|---|---:|---|
+  | `fast` | no | `[2, 32]` | holdout split | 2.4 | 85 % of rows |
+  | `auto` | (5,5) | `[2, 8, 32]` | 3-fold CV | 7 | **100 %** |
+  | `best` | (5,5) | `[2, 8, 32]` | 5-fold CV | 13 | **100 %** |
+
+  ¹ in units of the full dataset: `(folds − 1) × |C_grid| + 1`, which is what drives
+  wall-clock. `best` therefore costs ~1.9× `auto`.
+
+  They are freely extensible; `optimize_parameters` in the train request selects one
+  by name. **The `C` range is fixed at `2 … 32` for all of them**, from two measurements:
+
+  - **Both ends are needed.** This project's targets optimize at *opposite* ends (subject
+    picks `32`, educational level picked `2`), so `[4, 16]` would have two candidates and
+    reach neither. Pinned by `test_every_profile_brackets_both_known_optima`.
+  - **Above 32 quality drops.** Measured on a holdout split for both targets: macro F1
+    peaks at `C=32` (school 0.7531, university 0.7814) and declines at 128 / 512 / 2048
+    while fit time rises ~50 %. Pinned by
+    `test_no_c_grid_reaches_past_the_measured_useful_range`.
+
+  Within that range, resolution is cheap: a 3-candidate grid at 4× steps selects the same
+  `C` at identical F1 as an 8-candidate grid at 2× steps. `auto` and `best` therefore share
+  one grid, and the *only* difference between them is the fold count. Each bundle records
+  the grid it searched as `c_grid` next to `best_C`; an edge pick there is a tie on a flat
+  plateau, not a missing optimum (at fixed 5-fold CV, `C=32` and `C=128` scored 0.8135 vs
+  0.8130).
+- **`cv_folds`** resolves most-specific-first: **request > profile > `split.cv_folds`**.
+  Every shipped profile sets its own, so the `split.cv_folds` above only applies to
+  custom profiles that leave it unset. Per request: `0` = holdout split, `2–20` =
+  k-fold CV. The distinction that matters is not accuracy but *data usage* — under
+  k-fold CV every row trains AND validates (out-of-fold) and the deployed model is
+  fit on 100 % of the data, while a holdout split permanently spends its test share
+  on measurement. `k` only controls how much data the evaluation models see
+  (`k=3` → 67 %, `k=5` → 80 %), so fewer folds bias the reported score slightly
+  *pessimistic*, not optimistic.
+- **`min_samples_per_label`** is set per request and **defaults to `20`** there
+  (the `null` above only applies when a request omits nothing — the request field
+  wins). Send `null` explicitly for the size-scaled heuristic (2 / 5 / 20 / 35).
+  A value no label reaches aborts the run with `status=error` on `/train/status`,
+  naming how many rows the most frequent label actually has.
+- **`text_column_weights`** repeats a text column when the training text is assembled —
+  `{"title": 2}` gives short, dense fields their term frequency back against a long
+  description. The `preprocessing` default above ships as title + keywords at 2× (the
+  measured optimum) and applies when a request omits the field, narrowed to the columns
+  that request trains on; a request mapping overrides it and `{}` disables it.
+  `GET /train/profiles` reports the active default. Training-time only: build the text
+  you send to `/predict` the same way (see README).
+
+## `data/label_names.json` — authoritative label display names (optional)
+
+A plain `{"<label uri>": "<display name>"}` sidecar in the data directory. If present,
+training uses it for the bundle's `uri_to_label` and it **overrides** names derived from
+the CSV's `_DISPLAYNAME` column. Absent or malformed → ignored with a log warning; a
+training run is never failed over a display name.
+
+It exists because a CSV that separates label URIs *and* display names with the same
+character is ambiguous whenever a name contains that character
+(`"Rechts-, Wirtschafts- und Sozialwissenschaften"`). Names are then recovered from the
+CSV only where the counts provably line up, plus a reconstruction pass — measured on
+`data_300k.csv` that covers 70 % of labels, and the rest would otherwise show no name.
+
+```bash
+python scripts/fetch_vocab_labels.py                        # -> data/label_names.json
+python scripts/patch_bundle_labels.py --apply               # repair EXISTING bundles
+```
+
+`fetch_vocab_labels.py` downloads SKOS vocabularies (add URLs at the top of the file) and
+is **build-time only** — `app/` never fetches a URL, which is the same SSRF boundary that
+makes dataset/model import upload-only. `patch_bundle_labels.py` rewrites `uri_to_label`
+in a trained bundle's `config.json` **without retraining**: it is presentation-only data,
+so the script asserts `classes`, thresholds and the skops members stay byte-identical and
+keeps a `config.json.bak`. Run it without `--apply` first for a dry run.
+
+## Container labels are never trained
+
+A label value ending in `/` identifies a namespace, not a concept, and is dropped during
+loading (`data.split_labels`). This is not configurable, because such a value is always a
+tagging accident: measured, the bare vocabulary root `…/vocabs/discipline/` sat on 522 rows
+and trained as a class scoring F1 0.4096 — predictable, meaningless, and beyond the reach of
+`min_samples_per_label`. The guard is intentionally narrow: a genuine broader concept has an
+id (`…/discipline/120`) and is kept, since the label hierarchy carries real signal.
+
+Bundles trained before this guard still contain such a class. Loading one logs a warning
+naming it; repair it in place with
+
+```bash
+python scripts/prune_bundle_labels.py --model <name> --apply    # omit --apply for a dry run
+```
+
+which drops the class *and* its estimator, verifies the remaining probabilities are
+bit-identical, recomputes `f1_macro`, and keeps a full bundle backup.
+- **`max_word_features` / `max_char_features`** are settable per request too, on top of
+  the profile and the `APIV3_TFIDF_MAX_*_FEATURES` env vars (most specific wins). They
+  are the main RAM lever, so they are bounded at 2 000 000. A model whose
+  `tfidf.n_features` equals `max_word_features + max_char_features` had its vocabulary
+  **truncated** — both values are recorded in the bundle metadata so that stays checkable.
 
 ## Where to see the effective configuration
 

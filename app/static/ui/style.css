@@ -13,6 +13,7 @@
   --accent: #0f5cad;        /* 6.0:1 on surface — buttons/links */
   --accent-text: #ffffff;   /* 6.0:1 on accent */
   --danger: #b3261e;        /* 6.6:1 on surface */
+  --danger-text: #ffffff;   /* 6.6:1 on danger */
   --ok: #1e6b3a;            /* 5.9:1 on surface */
   --warn: #8a5300;          /* 6.3:1 on surface */
   --focus: #0f5cad;
@@ -28,6 +29,7 @@
     --accent: #7db3e8;      /* 6.5:1 on surface */
     --accent-text: #0f1720; /* 7.4:1 on accent */
     --danger: #f2887f;
+    --danger-text: #2b1210; /* 8.5:1 on danger — white was ~2.4:1 in dark mode */
     --ok: #7fce9c;
     --warn: #e8b566;
     --focus: #7db3e8;
@@ -54,6 +56,12 @@ body {
   background: var(--surface); color: var(--text); padding: var(--s-2) var(--s-4);
 }
 .skip-link:focus { left: var(--s-2); }
+
+/* Screen-reader-only: for live announcements without visual duplication. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 
 /* ---- layout ---- */
 .topbar {
@@ -101,7 +109,7 @@ legend { font-weight: 600; padding: 0 var(--s-2); }
   flex: 1 1 220px; min-width: 140px;
   border: 0; background: transparent; padding: var(--s-1) var(--s-2);
 }
-#textcol-pills { display: contents; }
+#textcol-pills, #labelcol-pills { display: contents; }
 .pill {
   display: inline-flex; align-items: center; gap: var(--s-1);
   background: var(--accent); color: var(--accent-text);
@@ -112,6 +120,15 @@ legend { font-weight: 600; padding: 0 var(--s-2); }
   min-height: 24px; min-width: 24px; margin: 0; padding: 0;
   font-size: 1.1em; line-height: 1; font-weight: 700;
 }
+
+/* One multiplier per selected text column; wraps instead of squeezing. */
+.weights { display: flex; flex-wrap: wrap; gap: var(--s-3); margin: 0 var(--s-2) var(--s-2); }
+.weights label { flex: 0 1 260px; min-width: 0; margin-top: 0; font-weight: 400; }
+.weights .col-name {
+  display: block; font-weight: 600; font-size: 0.9em;
+  overflow-wrap: anywhere;  /* property.cclom:* names are long and unbreakable */
+}
+.weights input { max-width: 6rem; }
 
 button {
   min-height: 40px; padding: var(--s-2) var(--s-4);
@@ -125,7 +142,7 @@ button.ghost, button.tab {
   font-weight: 500; margin-top: 0;
 }
 button.small { min-height: 32px; padding: var(--s-1) var(--s-3); margin: 0; }
-button.danger { background: var(--danger); color: #fff; }
+button.danger { background: var(--danger); color: var(--danger-text); }
 button.tab[aria-selected="true"] {
   border-color: var(--accent); color: var(--accent); font-weight: 700;
   /* colour is not the only signal: weight + underline too */

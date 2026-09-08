@@ -18,8 +18,9 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from app.data import split_labels  # noqa: E402
 from enrich_tail import FILT, LABEL_COL, TEXT_COLS, select_weak  # noqa: E402  (sibling script)
+
+from app.data import split_labels  # noqa: E402
 
 
 def api(base: str, key: str, path: str, body: dict | None = None):

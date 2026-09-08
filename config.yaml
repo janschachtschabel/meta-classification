@@ -1,35 +1,75 @@
 # Training profiles for api_v3 (TF-IDF + LogisticRegression).
 #
-# The automatic optimization per training run is: auto-select the inverse
-# regularization C on the validation split (over c_grid) + per-label threshold
-# tuning. min_samples_per_label is auto-scaled to the dataset size when null.
+# Three rungs, strictly ordered by cost: fast < auto < best. Each run auto-selects
+# the inverse regularization C over C_grid and tunes per-label thresholds.
 # Profiles can be extended freely here.
+#
+# The three levers that drive wall-clock, and what each is measured to be worth:
+#
+#   1. C candidates. Under k-fold CV the head is fit k x |grid| times, so the grid
+#      is a direct multiplier — and it is the lever the three rungs differ on most.
+#      Two independent qualities matter, and they are NOT interchangeable:
+#        - SPAN, i.e. does the grid reach the optimum at all. This is the one that
+#          bites: the known targets optimize at OPPOSITE ends (subject picks 32,
+#          educational level picked 2), so a 2-candidate [4, 16] would reach neither.
+#          Every grid below therefore covers 2 ... 32 at minimum (pinned by
+#          test_every_profile_brackets_both_known_optima).
+#        - RESOLUTION, i.e. how far the pick can land from the true optimum. Cheap to
+#          give up: measured on data_30k_ai.csv, a 3-candidate 4x grid selects the same
+#          C at identical test F1 (0.7063 / 0.7937) as an 8-candidate 2x grid, because
+#          the C curve is flat near its optimum. 4x steps are therefore the floor and
+#          finer steps are not worth the fits.
+#      Both known optima sit at the EDGE of a 2 ... 32 grid, which by this project's own
+#      rule means "the search ran out of candidates, not that it found an optimum".
+#      Only `best` can tell those apart, by probing past both ends.
+#   2. CV folds. Any k >= 2 deploys on 100% of the rows and evaluates every row
+#      out-of-fold; k only sets how much data the *evaluation* models see
+#      (k=3 -> 67%, k=5 -> 80%). Fewer folds is therefore a slightly pessimistic
+#      estimate, not a less honest one — the cheap direction is the safe one.
+#   3. Character n-grams. Dropping them is a bad trade above `fast`: it saves ~90%
+#      of the matrix but degrades 3.6x more under character noise (-0.0920 vs
+#      -0.0259 micro at 8% typos), and real editorial text is not clean.
 
 default_profile: auto
 
 profiles:
-  auto:
-    description: "Automatic C-selection + per-label threshold tuning (recommended)."
-    tune_threshold: true
-    threshold_per_label: true
-    # Inverse regularization candidates tried on the validation split.
-    # (Top end 16 included: small but free quality gain on TF-IDF; the val
-    #  selection only picks it when it actually helps — measured.)
-    C_grid: [0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
-
   fast:
-    description: "Word-only TF-IDF, few C values, global threshold. Fastest, lowest RAM."
-    tune_threshold: true
-    threshold_per_label: false
-    C_grid: [2.0, 4.0]
-    use_char: false          # word n-grams only -> much less RAM / faster
-    max_word_features: 50000
-
-  thorough:
-    description: "Wide C grid + per-label thresholds. Best quality, slowest."
+    description: "Word-only, holdout split, 2 C values. Seconds — for iteration, not for a model you deploy."
     tune_threshold: true
     threshold_per_label: true
-    C_grid: [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
+    # The bare minimum that still spans the known range: the two ends and nothing in
+    # between. One 16x gap, so the pick can sit 4x from the true optimum — acceptable
+    # for a profile whose job is "does the pipeline run at all".
+    C_grid: [2.0, 32.0]
+    cv_folds: 0              # holdout: no k-fold multiplier, seconds instead of minutes
+    use_char: false          # word n-grams only -> ~10x fewer non-zeros per document
+    # NOT capped at 50k: measured, the cap costs -0.0195 macro F1 while saving almost
+    # nothing (8.5 vs 10.0 MB matrix). The speed comes from dropping char n-grams and
+    # the k-fold multiplier, not from starving the vocabulary.
+    max_word_features: 200000
+
+  auto:
+    description: "Word+char TF-IDF, 3-fold CV, 3 C values. The recommended default."
+    tune_threshold: true
+    threshold_per_label: true
+    cv_folds: 3
+    # Same span as `fast`, twice the resolution: the middle candidate closes the 16x gap
+    # to two 4x gaps, so the pick lands at most 2x from the optimum — the spacing that
+    # was measured to be as good as an 8-candidate grid. 6 head fits over the dataset
+    # instead of `best`'s 20, while still deploying on 100% of the rows and scoring
+    # every row out-of-fold.
+    C_grid: [2.0, 8.0, 32.0]
+
+  best:
+    description: "Word+char TF-IDF, 5-fold CV. Most accurate evaluation; ~1.9x auto."
+    tune_threshold: true
+    threshold_per_label: true
+    cv_folds: 5
+    # Identical grid to `auto`: the ONLY difference is 5 folds instead of 3, because that
+    # is the only lever measured to pay at this rung. Isolated on the university target at
+    # a fixed C=32 -- 3 folds 0.7992, 5 folds 0.8135 (+0.0143), 10 folds 0.8166 (+0.0031
+    # for double the time). So 5 is the knee: CV10 is deliberately NOT used by any profile.
+    C_grid: [2.0, 8.0, 32.0]
 
 # Shared preprocessing defaults.
 preprocessing:
@@ -37,6 +77,18 @@ preprocessing:
   drop_duplicates: true
   # null -> auto-scaled to dataset size at train time.
   min_samples_per_label: null
+  # How often a text column is repeated when the training text is assembled — a
+  # short, dense field is otherwise drowned out by a long description. Measured on
+  # data_30k_ai.csv: title+keyword at 2x gained +0.0145 macro F1 at no cost in RAM
+  # or fit time; 3x was worse than 2x, and boosting the title ALONE fell below the
+  # unweighted baseline. Applies only when a /train request omits
+  # `text_column_weights` (send `{}` to switch it off), and only to columns that
+  # request actually trains on — so these WLO names are harmless for other CSVs.
+  # NOTE: a model trained this way expects input built the same way; assemble the
+  # text you send to /predict with the same repetitions.
+  text_column_weights:
+    properties.cclom:title: 2
+    properties.cclom:general_keyword: 2
 
 # Data split (train is the remainder).
 split:
@@ -45,6 +97,7 @@ split:
   # 0 = classic train/val/test split (holds out a test set for the metrics).
   # >=2 = k-fold cross-validation: every row is used for BOTH training and
   # validation (out-of-fold), and the deployed model is fit on 100% of the data.
-  # Costs k x compute; recommended 5. Classic split stays the default.
-  # Overridable per training request via the `cv_folds` body field.
+  # This is only the LAST fallback: every shipped profile sets its own cv_folds,
+  # and a /train request overrides both (request > profile > config). It applies
+  # to custom profiles added above that leave cv_folds unset.
   cv_folds: 0

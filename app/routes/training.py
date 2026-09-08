@@ -27,17 +27,26 @@ _REQ_KEYS = (
 async def list_profiles(
     _: str = Depends(require_role("readonly")), settings: Settings = Depends(get_settings)
 ) -> dict:
-    """Available quality/effort profiles (`fast` / `auto` / `thorough`).
+    """Available quality/effort profiles (`fast` / `auto` / `best`, cheapest first).
 
     Per profile: name, description, the `C` values tried, threshold tuning
     (`tune_threshold`, `threshold_per_label`) and the TF-IDF feature shape
     (`use_char`, effective `max_word_features` / `max_char_features`) — so it is
     visible what distinguishes the profiles. Profiles are defined in `config.yaml`
-    and freely extensible. **Auth:** readonly.
+    and freely extensible.
+
+    Also returns the training-config defaults a `/train` request inherits when it
+    omits the field: `default_text_column_weights` and `default_min_samples_per_label`.
+    **Auth:** readonly.
     """
     cfg = load_training_config(settings.config_file)
     return {
         "default_profile": cfg.default_profile,
+        # Training-config defaults a /train request inherits when it omits the field.
+        # Exposed so a client (the admin UI does) can pre-fill its form with what
+        # would actually happen, instead of hard-coding a guess.
+        "default_text_column_weights": cfg.text_column_weights,
+        "default_min_samples_per_label": cfg.min_samples_per_label,
         "profiles": [
             {
                 "name": p.name,
@@ -46,6 +55,9 @@ async def list_profiles(
                 "tune_threshold": p.tune_threshold,
                 "threshold_per_label": p.threshold_per_label,
                 "use_char": p.use_char,
+                # The evaluation mode this profile implies (0 = holdout, >=2 = k-fold);
+                # null means it defers to split.cv_folds. A request still overrides it.
+                "cv_folds": p.cv_folds,
                 "max_word_features": p.max_word_features or settings.tfidf_max_word_features,
                 "max_char_features": (
                     (p.max_char_features or settings.tfidf_max_char_features) if p.use_char else None
@@ -74,8 +86,10 @@ async def train(
     - `text_columns`: columns merged into the input text.
     - `label_column`: the column holding the labels. An optional `<label>_DISPLAYNAME`
       column supplies human-readable names.
-    - `optimize_parameters`: quality/effort profile `fast` | `auto` | `thorough`
-      (controls the C grid + threshold tuning, and thus the training time).
+    - `optimize_parameters`: quality/effort profile `fast` | `auto` | `best`, cheapest
+      first (controls character n-grams, the C grid and the evaluation mode — i.e. the
+      training time). `fast` evaluates on a holdout split and therefore deploys a model
+      fit on 85% of the rows; `auto` and `best` deploy on 100%.
     - `task_type`: optional override `multilabel` | `multiclass` | `binary`
       (default `auto` = automatic detection).
     - `label_filter`: optionally keep only labels containing this substring.
@@ -100,7 +114,8 @@ async def train(
     try:
         profile = cfg.get(body.optimize_parameters)
     except KeyError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        # str(KeyError) reprs its message (stray quotes) — use the message itself.
+        raise HTTPException(400, str(exc.args[0])) from exc
 
     if not (settings.data_dir / body.dataset_name).exists():
         raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.")

@@ -6,6 +6,18 @@ share_links.json
 models/
 cache/
 data/*.csv
+# Raw output of the scripts/benchmark_*.py runs — reproducible by re-running them;
+# the conclusions that matter live in docs/model-approach-comparison.md.
+/field_weights_results.json
+/label_scaling_results.json
+/feature_caps_results.json
+/row_scaling_results.json
+/c_grid_results.json
+/char_robustness_results.json
+/char_range_results.json
+# Exported model bundles staged for hand-off — regenerable via POST /models/{name}/export
+# and far too large for the repo (a subject model is ~40 MB zipped).
+fertige-modelle/
 # Keep the data/ dir present but empty in the repo (the app also creates it).
 !data/.gitkeep
 

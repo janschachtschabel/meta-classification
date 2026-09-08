@@ -1,11 +1,25 @@
-"""Make the ``app`` package importable from tests regardless of CWD."""
+"""Make the ``app`` package importable from tests regardless of CWD, and keep
+the suite hermetic against ambient configuration."""
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Hermeticity: a developer's shell APIV3_* variables or a local `.env` (the
+# docker-compose quickstart tells users to create one!) must not leak into the
+# suite — e.g. APIV3_CORS_ALLOW_ORIGINS="*" or RATE_LIMIT_ENABLED=false flip
+# real assertions. Scrub stray vars BEFORE any test module imports the app, and
+# pin the assertion-critical settings to their defaults as REAL env vars (real
+# env beats `.env` in pydantic-settings, so a local dotenv cannot flip them
+# either). Tests still override freely via monkeypatch.setenv.
+for _var in [k for k in os.environ if k.startswith("APIV3_")]:
+    del os.environ[_var]
+os.environ["APIV3_CORS_ALLOW_ORIGINS"] = ""
+os.environ["APIV3_RATE_LIMIT_ENABLED"] = "true"
 
 
 @pytest.fixture(autouse=True)

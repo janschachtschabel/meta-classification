@@ -25,7 +25,7 @@ from .classifier import make_head
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
-from .tuning import compute_metrics, cross_val_evaluate, select_c, tune_thresholds
+from .tuning import compute_metrics, cross_val_evaluate, is_single_label, select_c, tune_thresholds
 from .vectorizers import TfidfBackend
 
 logger = logging.getLogger("api_v3.training")
@@ -49,6 +49,10 @@ class Fitted:
     deploy_n_features: int
     deploy_nnz: int
     deploy_sparse_mb: float
+    # The caps actually in force (request > profile > settings), so the persisted
+    # metadata explains a feature count instead of leaving it to be guessed.
+    max_word_features: int
+    max_char_features: int
 
 
 def select_on_split(
@@ -83,7 +87,7 @@ def select_on_split(
                 message=f"Selecting regularization strength C – {len(profile.c_grid)} candidates on validation...")
     best_c, val_f1, head = select_c(
         x_tr, y_train, x_va, y_val, profile.c_grid, n_jobs=settings.effective_n_jobs(),
-        should_stop=should_stop, solver=settings.solver,
+        should_stop=should_stop, solver=settings.solver, task_type=prep.task_type,
         # Distribute the C search across 55->75% so progress (and thus the ETA
         # derived from it) keeps moving through the longest phase.
         on_step=lambda i, total, c, f: on_progress(
@@ -95,7 +99,9 @@ def select_on_split(
         return None
     logger.info("Selected C=%s (val_f1_macro=%.4f)", best_c, val_f1)
 
-    if profile.tune_threshold:
+    if profile.tune_threshold and not is_single_label(prep.task_type):
+        # Single-label tasks skip this: serving decides via argmax and never
+        # reads thresholds — tuning would only bake dead values into the bundle.
         on_progress(phase="threshold", progress=75,
                     message="Tuning per-label classification thresholds (on validation)...")
         global_t, per_label = tune_thresholds(
@@ -106,7 +112,10 @@ def select_on_split(
 
     on_progress(phase="evaluating", progress=85,
                 message="Evaluating on the held-out test split (honest metrics)...")
-    metrics = compute_metrics(y_test, head.predict_proba(x_te), classes, global_t, per_label)
+    metrics = compute_metrics(
+        y_test, head.predict_proba(x_te), classes, global_t, per_label,
+        task_type=prep.task_type,
+    )
     return best_c, global_t, per_label, metrics
 
 
@@ -116,6 +125,8 @@ def fit_evaluate_deploy(
     profile: Profile,
     *,
     cv_folds: int,
+    max_word_features: int | None = None,
+    max_char_features: int | None = None,
     on_progress: Callable[..., None],
     should_stop: Callable[[], bool],
 ) -> Fitted | None:
@@ -127,12 +138,19 @@ def fit_evaluate_deploy(
     train/val/test split is used and the deploy model is refit on train+val. All
     label-wise fits share ONE sparse matrix under the configured joblib backend
     (threading + a float32 solver = all cores at ~1x RAM).
+
+    ``max_word_features`` / ``max_char_features`` override the vocabulary caps for
+    this run (most specific wins: request -> profile -> settings), so the main
+    RAM/quality lever can be explored without changing the deployment.
     """
+    word_cap = max_word_features or profile.max_word_features or settings.tfidf_max_word_features
+    char_cap = max_char_features or profile.max_char_features or settings.tfidf_max_char_features
+
     def new_vectorizer() -> TfidfBackend:
         return TfidfBackend(
             use_char=profile.use_char,
-            max_word_features=profile.max_word_features or settings.tfidf_max_word_features,
-            max_char_features=profile.max_char_features or settings.tfidf_max_char_features,
+            max_word_features=word_cap,
+            max_char_features=char_cap,
         )
 
     texts, y_all = prep.texts, prep.y_all
@@ -149,7 +167,7 @@ def fit_evaluate_deploy(
                 k=cv_folds, c_grid=profile.c_grid, seed=settings.random_seed,
                 n_jobs=n_jobs, solver=settings.solver,
                 tune_threshold=profile.tune_threshold, per_label=profile.threshold_per_label,
-                should_stop=should_stop,
+                should_stop=should_stop, task_type=prep.task_type,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).
                 on_step=lambda done, total, detail: on_progress(
@@ -184,4 +202,5 @@ def fit_evaluate_deploy(
         global_threshold=global_t, per_label_thresholds=per_label, metrics=metrics,
         deploy_n_features=int(x_deploy.shape[1]), deploy_nnz=int(x_deploy.nnz),
         deploy_sparse_mb=round(_sparse_mb(x_deploy), 1),
+        max_word_features=word_cap, max_char_features=char_cap,
     )

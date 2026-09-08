@@ -24,7 +24,7 @@ from .settings import get_settings
 
 # Every api_v3 bundle contains all three; requiring them lets a truncated/crafted
 # archive be rejected cleanly (400) instead of crashing later in _read_bundle.
-_REQUIRED_FILES = {"config.json", "head.skops", "vectorizer.skops"}
+_REQUIRED_FILES = {"config.json", "head.skops", "vectorizer.skops", "vocabulary.json"}
 # Import guards. skops stores its members uncompressed, so legitimate exports
 # deflate well (~16x measured on a tiny bundle) — a ratio alone would misfire.
 # Reject only archives that are BOTH large in absolute terms (> floor) and
@@ -49,9 +49,10 @@ class Registry:
         # Two locks. `_lock` guards only the in-memory LRU dict (fast, no I/O);
         # `_disk_lock` serialises every bundle publish/read/delete so a reader can
         # never observe a bundle mid-rmtree/mid-replace (a disk TOCTOU). Ordering
-        # is one-directional: save() acquires `_lock` while holding `_disk_lock`
-        # (to publish disk + cache atomically), and NO path acquires `_disk_lock`
-        # while holding `_lock` — so there is no lock-ordering cycle / deadlock.
+        # is one-directional: save(), the get() miss path and delete() acquire
+        # `_lock` while holding `_disk_lock` (so disk state and cache state change
+        # atomically together — the cache can never outlive the disk), and NO path
+        # acquires `_disk_lock` while holding `_lock` — no ordering cycle/deadlock.
         self._lock = threading.Lock()
         self._disk_lock = threading.Lock()
 
@@ -156,11 +157,20 @@ class Registry:
             if name in self._cache:
                 self._cache.move_to_end(name)
                 return self._cache[name]
-        model, _ = self.load_fresh(name)
-        with self._lock:
-            self._cache[name] = model
-            self._cache.move_to_end(name)
-            self._evict()
+        # Miss path: read AND publish to the cache while holding _disk_lock, so a
+        # concurrent delete() (which pops the cache, then rmtrees under _disk_lock)
+        # can never land between our read and our insert — otherwise a deleted
+        # model would stay cached and a same-name re-import would serve the OLD
+        # weights. Nesting _lock inside _disk_lock is the documented legal order
+        # (save() does the same); the reverse never happens.
+        with self._disk_lock:
+            if not self.exists(name):
+                raise FileNotFoundError(name)
+            model, _ = _read_bundle(self._path(name))
+            with self._lock:
+                self._cache[name] = model
+                self._cache.move_to_end(name)
+                self._evict()
         return model
 
     def info(self, name: str) -> dict:
@@ -177,12 +187,17 @@ class Registry:
         return {"name": name, **config, "metadata": metadata}
 
     def delete(self, name: str) -> None:
-        with self._lock:
-            self._cache.pop(name, None)
+        # Pop the cache INSIDE the disk-lock section, AFTER the rmtree: popping
+        # first (outside) let a concurrent cold get()/save() insert the model
+        # again while our rmtree waited for the lock — cache outliving disk.
+        # With this ordering, any insert either happens before us (we remove it)
+        # or after we release (its exists() check then fails -> no insert).
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
             shutil.rmtree(self._path(name))
+            with self._lock:
+                self._cache.pop(name, None)
 
     def export_zip(self, name: str) -> bytes:
         buffer = io.BytesIO()

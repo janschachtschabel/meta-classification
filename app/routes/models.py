@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from fastapi import (
@@ -17,6 +18,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 
+from .. import data as data_mod
 from ..jobs import training_job
 from ..limiter import default_limit, export_limit, limiter
 from ..registry import UnsafeModelError, get_registry
@@ -64,7 +66,8 @@ async def delete_model(request: Request, model_name: str, _: str = Depends(requi
     **Auth:** admin · rate limit active."""
     safe_name(model_name, "model name")
     try:
-        get_registry().delete(model_name)
+        # rmtree of a large bundle is blocking disk work — off the event loop.
+        await asyncio.to_thread(get_registry().delete, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
     return {"status": "deleted", "model_name": model_name}
@@ -93,7 +96,10 @@ async def export_model(
     if body.generate_share_url:
         share_id, expires_at = get_share_store().create("model", model_name, body.expires_hours)
         return {"share_url": f"/share/{share_id}", "share_id": share_id, "expires_at": expires_at}
-    return _zip_response(model_name, registry.export_zip(model_name))
+    # Zipping a production bundle (100+ MB skops) takes seconds of CPU/disk —
+    # run it in a worker thread so /health and predicts stay responsive (same
+    # rationale as the predict cold-load offload).
+    return _zip_response(model_name, await asyncio.to_thread(registry.export_zip, model_name))
 
 
 @router.post("/models/import", summary="Import a model (file upload only)")
@@ -115,13 +121,17 @@ async def import_model(
         raise HTTPException(400, "File must be a .zip model bundle.")
     name = new_name or Path(file.filename).stem
     safe_name(name, "model name")
-    # A running training for this name would race the import on the same staging
-    # dir (and one of the two results would be silently lost) — refuse up front.
-    if training_job.is_running() and training_job.snapshot().get("model_name") == name:
+    # A training still writing this name would race the import on the same
+    # staging dir (mutual clobber / franken-bundle). Two independent signals:
+    # the job STATUS (normal runs), and THREAD liveness — after stop(hard=true)
+    # the status lies ("idle") while the abandoned thread keeps saving its bundle.
+    status_busy = training_job.is_running() and training_job.snapshot().get("model_name") == name
+    if status_busy or training_job.active_model_name() == name:
         raise HTTPException(409, f"A training for model '{name}' is currently running; retry after it finishes.")
     data = await read_upload_capped(file, settings.max_upload_mb * 1024 * 1024)
     try:
-        info = get_registry().import_zip(name, data)
+        # Validation loads both skops files — seconds of CPU; off the event loop.
+        info = await asyncio.to_thread(get_registry().import_zip, name, data)
     except FileExistsError as exc:
         raise HTTPException(409, f"Model '{name}' already exists.") from exc
     except (UnsafeModelError, ValueError) as exc:
@@ -150,8 +160,14 @@ async def download_shared(
         registry = get_registry()
         if not registry.exists(info["name"]):
             raise HTTPException(404, "Model no longer exists.")
-        return _zip_response(info["name"], registry.export_zip(info["name"]))
+        # Same blocking-zip offload as the authenticated export route.
+        blob = await asyncio.to_thread(registry.export_zip, info["name"])
+        return _zip_response(info["name"], blob)
     dataset_path = settings.data_dir / info["name"]
     if not dataset_path.exists():
         raise HTTPException(404, "Dataset no longer exists.")
-    return FileResponse(dataset_path, filename=info["name"], media_type="text/csv")
+    # Same gzip/CSV distinction as the authenticated export route: a share link is the path a
+    # recipient WITHOUT a key uses, so it is the one most likely opened in a browser — where
+    # a text/csv header on gzip bytes yields a decompressed file saved under its .gz name.
+    media_type = "application/gzip" if data_mod.is_gzipped(info["name"]) else "text/csv"
+    return FileResponse(dataset_path, filename=info["name"], media_type=media_type)

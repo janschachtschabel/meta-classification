@@ -17,7 +17,10 @@ zero "untrusted" types, so loading rejects any file that introduces one.
 
 from __future__ import annotations
 
+import copy
 import json
+import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -26,12 +29,20 @@ from skops.io import get_untrusted_types
 from skops.io import load as skops_load
 
 from .classifier import ClassifierModel
+from .data import is_container_label
 from .vectorizers import TfidfBackend
 
-FORMAT_VERSION = 1
+logger = logging.getLogger(__name__)
+
+FORMAT_VERSION = 2
 # Extra type names we explicitly trust beyond skops defaults. Empty: our own
 # bundles produce no untrusted types, so anything extra is rejected.
 _ALLOWED_EXTRA_TYPES: set[str] = set()
+# The TF-IDF vocabularies live here instead of inside vectorizer.skops. skops walks a
+# dict entry by entry and is super-quadratic in the count: 64k terms measured at 179 s
+# and 45 MB, 200k terms at ~45 min and 148 MB — while the 48 MB float head writes in a
+# second. As JSON the same data is <0.1 s and ~1 MB. Format 2 and later only.
+_VOCAB_FILE = "vocabulary.json"
 
 
 class UnsafeModelError(Exception):
@@ -87,34 +98,143 @@ def _write_bundle(
     on_step("Writing head.skops")
     skops_dump(model.head, str(directory / "head.skops"))
     on_step("Writing vectorizer.skops")
-    skops_dump(
-        [model.vectorizer.word_vec, model.vectorizer.char_vec],
-        str(directory / "vectorizer.skops"),
+    lean, vocabularies = _split_vocabularies(model.vectorizer)
+    skops_dump(lean, str(directory / "vectorizer.skops"))
+    (directory / _VOCAB_FILE).write_text(
+        json.dumps(vocabularies, ensure_ascii=False), encoding="utf-8"
     )
+
+
+def _split_vocabularies(vectorizer: TfidfBackend) -> tuple[list, list[list[str]]]:
+    """Sub-vectorizers without ``vocabulary_``, plus their terms in column order.
+
+    The copies are SHALLOW: the numpy arrays are shared (so this costs nothing) and the
+    live object is left intact — it may already be serving requests from the LRU cache,
+    and stripping an attribute off it would break prediction mid-flight.
+    """
+    lean: list = []
+    vocabularies: list[list[str]] = []
+    for sub in (vectorizer.word_vec, vectorizer.char_vec):
+        if sub is None:  # word-only profiles have no char vectorizer
+            lean.append(None)
+            vocabularies.append([])
+            continue
+        without_vocabulary = copy.copy(sub)
+        del without_vocabulary.vocabulary_
+        lean.append(without_vocabulary)
+        vocabularies.append(sorted(sub.vocabulary_, key=sub.vocabulary_.get))
+    return lean, vocabularies
+
+
+def _attach_vocabularies(sub_vectorizers: list, vocabularies: object) -> None:
+    """Rebuild ``vocabulary_`` from the JSON member, validated against the model.
+
+    Bundles are importable, so this is a trust boundary. A vocabulary of the wrong
+    length would silently produce a feature matrix of the wrong width and only fail
+    deep inside the head; duplicate terms would collapse columns. Reject both here.
+    """
+    if not isinstance(vocabularies, list) or len(vocabularies) != len(sub_vectorizers):
+        raise UnsafeModelError(f"{_VOCAB_FILE} does not describe this bundle's vectorizers")
+    for sub, terms in zip(sub_vectorizers, vocabularies, strict=True):
+        if sub is None:
+            continue
+        if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
+            raise UnsafeModelError(f"{_VOCAB_FILE} must hold a list of term lists")
+        if len(set(terms)) != len(terms):
+            raise UnsafeModelError(f"{_VOCAB_FILE} contains duplicate terms")
+        expected = len(sub.idf_)
+        if len(terms) != expected:
+            raise UnsafeModelError(
+                f"{_VOCAB_FILE} has {len(terms)} terms but the model expects {expected}"
+            )
+        sub.vocabulary_ = {term: index for index, term in enumerate(terms)}
+
+
+def _per_label_f1(metadata: dict) -> dict[str, float]:
+    """Per-label F1 out of a bundle's metrics document; ``{}`` if absent or unusable.
+
+    metrics.json travels inside *importable* bundles, so this is a trust boundary:
+    a non-mapping, a non-numeric score or a NaN would otherwise reach the model and
+    break every later prediction (a crash, or a response body that is not valid
+    JSON). Reporting-only data — dropping it silently costs nothing but a field.
+    """
+    metrics = metadata.get("metrics")
+    scores = metrics.get("per_label_f1") if isinstance(metrics, dict) else None
+    if not isinstance(scores, dict):
+        return {}
+    return {
+        uri: float(score)
+        for uri, score in scores.items()
+        if isinstance(uri, str) and isinstance(score, int | float) and math.isfinite(score)
+    }
 
 
 def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
-    config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
-    metrics_path = directory / "metrics.json"
-    metadata = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
+    # Any parse/shape failure below means "a bundle we cannot safely load" —
+    # map it to UnsafeModelError so routes answer 422/400 instead of a 500
+    # (corrupt config.json, missing keys, wrong-shaped vectorizer container).
+    # FileNotFoundError propagates unchanged (routes map it to 404/TOCTOU).
+    try:
+        config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        metrics_path = directory / "metrics.json"
+        metadata = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
 
-    head = _safe_skops_load(directory / "head.skops")
-    kind = config["backend_kind"]
-    if kind != "tfidf":
-        raise UnsafeModelError(f"Unsupported backend kind: {kind!r}")
-    word_vec, char_vec = _safe_skops_load(directory / "vectorizer.skops")
-    vectorizer = TfidfBackend()
-    vectorizer.word_vec = word_vec
-    vectorizer.char_vec = char_vec
+        head = _safe_skops_load(directory / "head.skops")
+        kind = config["backend_kind"]
+        if kind != "tfidf":
+            raise UnsafeModelError(f"Unsupported backend kind: {kind!r}")
+        vocabulary_path = directory / _VOCAB_FILE
+        if not vocabulary_path.exists():
+            # Format 1 kept the vocabularies inside vectorizer.skops. Say so plainly:
+            # without this the missing file surfaces as a bare FileNotFoundError, which
+            # the routes map to "model not found" — a misleading 404 for a bundle that
+            # is present but simply predates format 2.
+            raise UnsafeModelError(
+                f"{directory.name!r} is a format-1 bundle (no {_VOCAB_FILE}); "
+                f"format {FORMAT_VERSION} moved the vocabulary out of the skops "
+                "container. Retrain the model to use it with this version."
+            )
+        word_vec, char_vec = _safe_skops_load(directory / "vectorizer.skops")
+        _attach_vocabularies(
+            [word_vec, char_vec],
+            json.loads(vocabulary_path.read_text(encoding="utf-8")),
+        )
+        vectorizer = TfidfBackend()
+        vectorizer.word_vec = word_vec
+        vectorizer.char_vec = char_vec
 
-    model = ClassifierModel(
-        vectorizer=vectorizer,
-        head=head,
-        classes=config["classes"],
-        task_type=config["task_type"],
-        avg_labels=config["avg_labels"],
-        uri_to_label=config.get("uri_to_label", {}),
-        global_threshold=config["global_threshold"],
-        per_label_thresholds=config.get("per_label_thresholds", {}),
-    )
+        model = ClassifierModel(
+            vectorizer=vectorizer,
+            head=head,
+            classes=config["classes"],
+            task_type=config["task_type"],
+            avg_labels=config["avg_labels"],
+            uri_to_label=config.get("uri_to_label", {}),
+            global_threshold=config["global_threshold"],
+            per_label_thresholds=config.get("per_label_thresholds", {}),
+            per_label_f1=_per_label_f1(metadata),
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        raise UnsafeModelError(f"Invalid model bundle in {directory.name!r}: {exc!r}") from exc
+    _warn_about_container_labels(directory.name, model.classes)
     return model, metadata
+
+
+def _warn_about_container_labels(name: str, classes: list[str]) -> None:
+    """Flag classes that name a namespace rather than a concept (see ``data.split_labels``).
+
+    Training cannot produce these any more, but an *import* can: a bundle built by an older
+    version carries its own ``classes``. Repairing it here is not possible — the class list
+    is positionally tied to the head's estimators, so dropping an entry without dropping the
+    matching estimator would silently shift every probability onto the wrong label. Hence a
+    loud warning plus the name of the script that does it properly, rather than a refusal
+    (the bundle is otherwise perfectly usable) or a silent pass.
+    """
+    offenders = [uri for uri in classes if is_container_label(uri)]
+    if offenders:
+        logger.warning(
+            "Model %r has %d container label(s) that name a namespace, not a concept: %s. "
+            "They were trained as ordinary classes and can be predicted. Repair with "
+            "`python scripts/prune_bundle_labels.py --model %s --apply`.",
+            name, len(offenders), ", ".join(repr(u) for u in offenders), name,
+        )

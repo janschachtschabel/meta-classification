@@ -12,7 +12,7 @@ import logging
 import os
 import secrets
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,7 +20,7 @@ logger = logging.getLogger("api_v3.sharing")
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ShareStore:

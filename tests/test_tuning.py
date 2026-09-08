@@ -25,6 +25,21 @@ def test_tune_thresholds_finds_separating_value():
     assert set(metrics["per_label_f1"]) == {"c0", "c1"}
 
 
+def test_metrics_report_how_many_labels_the_model_actually_asserts():
+    """Over-assertion is invisible in F1 but decides how a suggestion list feels, and
+    it is a property of THIS training target — not of the dataset. Report the asserted
+    vs. true label count per model so every bundle carries its own number.
+
+    Here every row truly has 1 label, but both labels score above their cut, so the
+    model asserts 2.0 against a true 1.0.
+    """
+    y = np.array([[1, 0], [1, 0], [0, 1], [0, 1]])
+    proba = np.full((4, 2), 0.9)  # everything above a 0.5 cut -> 2 labels per row
+    metrics = tuning.compute_metrics(y, proba, ["c0", "c1"], 0.5, {})
+    assert metrics["predicted_labels_per_row"] == 2.0
+    assert metrics["true_labels_per_row"] == 1.0
+
+
 def test_select_c_returns_fitted_head():
     rng = np.random.RandomState(1)
     group_a = rng.normal(0.0, 1.0, (40, 4))
@@ -138,6 +153,91 @@ def test_cross_val_evaluate_stops_between_c_fits(monkeypatch):
     )
     assert result is None
     assert len(fits) == 0  # stop honoured before the first C fit, not after the whole grid
+
+
+def test_tune_thresholds_zero_positive_label_keeps_global(audit_grid=None):
+    """A label with NO positives in the val split must fall back to the global
+    threshold. Regression: `best_f1 = -1.0` let the first grid value (0.05) win
+    because f1=0 > -1, serving rare labels with a near-zero threshold."""
+    rng = np.random.default_rng(0)
+    n = 100
+    y = np.zeros((n, 2), dtype=int)
+    y[:50, 0] = 1  # label 0: separable; label 1: zero positives in val
+    proba = rng.uniform(0.0, 1.0, size=(n, 2))
+    proba[:50, 0] = rng.uniform(0.7, 1.0, size=50)
+    proba[50:, 0] = rng.uniform(0.0, 0.3, size=50)
+
+    global_t, per_label = tuning.tune_thresholds(y, proba, ["a", "b"], per_label=True)
+
+    assert per_label["b"] == pytest.approx(global_t), (
+        "zero-positive label must keep the global threshold, not the grid minimum"
+    )
+
+
+def test_compute_metrics_multiclass_measures_argmax_serving_rule():
+    """Serving decides single-label tasks via argmax and ignores thresholds
+    (ClassifierModel.predict). The reported metrics must measure THAT rule:
+    with every probability below the threshold, the thresholded rule predicts
+    nothing (f1=0) while serving still answers every row correctly via argmax."""
+    y = np.array([[1, 0], [0, 1], [1, 0]])
+    proba = np.array([[0.40, 0.30], [0.20, 0.45], [0.35, 0.10]])  # argmax all correct
+
+    argmax_metrics = tuning.compute_metrics(y, proba, ["a", "b"], 0.5, {}, task_type="multiclass")
+    assert argmax_metrics["f1_macro"] == pytest.approx(1.0)
+    assert argmax_metrics["decision_rule"] == "argmax"
+
+    thresholded = tuning.compute_metrics(y, proba, ["a", "b"], 0.5, {})
+    assert thresholded["f1_macro"] == pytest.approx(0.0)  # the discrepancy B9 fixes
+    assert thresholded["decision_rule"] == "thresholds"
+
+
+def test_select_c_scores_the_argmax_rule_for_single_label_tasks(monkeypatch):
+    """C selection must rank candidates by the decision rule serving will use:
+    a multiclass model whose probabilities all sit below 0.5 is perfect under
+    argmax but scores 0 under the thresholded rule."""
+
+    class _FixedProbaHead:
+        def __init__(self, proba):
+            self._proba = proba
+
+        def fit(self, x, y):
+            return self
+
+        def predict_proba(self, x):
+            return self._proba
+
+    y_val = np.array([[1, 0], [0, 1]])
+    proba = np.array([[0.40, 0.30], [0.20, 0.45]])
+    monkeypatch.setattr(tuning, "make_head", lambda c, **kw: _FixedProbaHead(proba))
+
+    x = np.zeros((2, 3))
+    _, f1_multiclass, _ = tuning.select_c(x, y_val, x, y_val, [1.0], task_type="multiclass")
+    _, f1_multilabel, _ = tuning.select_c(x, y_val, x, y_val, [1.0])
+    assert f1_multiclass == pytest.approx(1.0)
+    assert f1_multilabel == pytest.approx(0.0)
+
+
+def test_cross_val_evaluate_multiclass_skips_threshold_tuning():
+    """For single-label tasks serving never reads thresholds, so CV must not
+    tune them (neutral 0.5/{} in the bundle) and its metrics carry the argmax rule."""
+    texts = (["mathematik algebra gleichung bruch"] * 20
+             + ["geschichte rom antike kaiser"] * 20)
+    y = np.zeros((40, 2), dtype=int)
+    y[:20, 0] = 1
+    y[20:, 1] = 1
+
+    result = tuning.cross_val_evaluate(
+        lambda: TfidfBackend(use_char=False, max_word_features=200),
+        texts, y, ["uri:math", "uri:hist"],
+        k=4, c_grid=[1.0], seed=42, n_jobs=1, solver="liblinear",
+        tune_threshold=True, per_label=True, task_type="multiclass",
+    )
+    assert result is not None
+    _, global_t, per_label, metrics = result
+    assert global_t == 0.5
+    assert per_label == {}
+    assert metrics["decision_rule"] == "argmax"
+    assert metrics["f1_macro"] > 0.9
 
 
 def test_cross_val_evaluate_rejects_more_folds_than_rows():

@@ -8,5 +8,7 @@ window.ui = SwaggerUIBundle({
   deepLinking: true,
   presets: [SwaggerUIBundle.presets.apis],
   layout: "BaseLayout",
-  persistAuthorization: true,
+  // Deliberately NOT persistAuthorization: it would store the API key in
+  // localStorage indefinitely, while the admin UI keeps it sessionStorage-only
+  // ("gone when the tab closes") — the documented posture. Re-auth per visit.
 });
