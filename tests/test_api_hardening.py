@@ -163,6 +163,29 @@ def test_ui_sources_contain_no_inline_event_handlers():
     assert not offenders, "inline event handlers are blocked by the CSP:\n" + "\n".join(offenders)
 
 
+def test_ui_sources_contain_no_inline_style_attributes():
+    """Same CSP, second trap: a `style="..."` ATTRIBUTE is inline style, so
+    `default-src 'self'` blocks it too — and unlike a blocked handler this fails
+    *visibly wrong* rather than silently. Measured live on /ui/: five ranked
+    predictions carrying width:100%/0%/0%/0%/0% all rendered at the container's
+    full 171 px, so a 0.004 label looked exactly like a 1.000 one. Widths belong
+    in `data-width` + `el.style.width` (the CSSOM is not governed by style-src).
+    """
+    import re
+    from pathlib import Path
+
+    ui_dir = Path(__file__).parent.parent / "app" / "static" / "ui"
+    # Attribute form only (` style="` / ` style='`), so a JS property assignment
+    # like `el.style.width = ...` — the very fix this test asks for — is allowed.
+    pattern = re.compile(r"""\sstyle=["']""")
+    offenders = []
+    for f in list(ui_dir.glob("*.html")) + list(ui_dir.glob("*.js")):
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{f.name}:{i}: {line.strip()}")
+    assert not offenders, "inline style attributes are blocked by the CSP:\n" + "\n".join(offenders)
+
+
 def test_cors_wildcard_origin_disables_credentials(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path, APIV3_CORS_ALLOW_ORIGINS="*")
     resp = client.get("/health", headers={"Origin": "http://evil.example"})

@@ -7,6 +7,19 @@ const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/* Bars carry their fill in `data-width` and get it applied here, because the UI's
+   CSP (`default-src 'self'`, no 'unsafe-inline') blocks a style ATTRIBUTE: a
+   `style="width:4%"` injected via innerHTML is dropped, and the bar then inherits
+   its container's full width — a 0.004 prediction looked exactly like a 1.000 one.
+   The CSSOM is not governed by style-src, so setting the property works. Call this
+   after every innerHTML render that contains a bar. */
+function applyBarWidths(root) {
+  root.querySelectorAll("[data-width]").forEach((el) => {
+    const pct = Math.max(0, Math.min(100, Number(el.dataset.width) || 0));
+    el.style.width = `${pct}%`;
+  });
+}
+
 let toastTimer;
 function toast(msg) {
   const el = $("#toast");
@@ -146,7 +159,7 @@ async function onQuery(ev) {
       <div class="card"><h3>${esc(name)}</h3>${preds.length ? preds.map((p) => `
         <div class="pred${p.above_threshold === false ? " below-t" : ""}">
           <span class="name">${esc(p.label)}</span>
-          <span class="bar"><span style="width:${Math.round(p.confidence * 100)}%"></span></span>
+          <span class="bar"><span data-width="${Math.round(p.confidence * 100)}"></span></span>
           <span class="val">${p.confidence.toFixed(3)}${p.baseline_diff !== undefined
             ? ` <span class="muted">diff ${p.baseline_diff >= 0 ? "+" : ""}${p.baseline_diff.toFixed(3)}</span>` : ""}${
             // != null covers both: absent when not asked for, null when the bundle
@@ -155,6 +168,7 @@ async function onQuery(ev) {
             p.above_threshold === false ? ` <span class="muted">· below threshold</span>` : ""}</span>
         </div>`).join("")
         : `<p class="muted">No label above the model's threshold.</p>`}</div>`).join("");
+    applyBarWidths(out);
   } catch (err) { out.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
   finally { btn.disabled = false; $("#query-status").textContent = ""; }
 }
@@ -219,7 +233,7 @@ function renderTrainStatus(s) {
                 ["ETA", s.eta_seconds != null ? `~${Math.round(s.eta_seconds)}s` : "–"]];
   let html = `
     <div class="progress" role="progressbar" aria-valuenow="${s.progress}" aria-valuemin="0"
-         aria-valuemax="100" aria-label="Training progress"><span style="width:${s.progress}%"></span></div>
+         aria-valuemax="100" aria-label="Training progress"><span data-width="${s.progress}"></span></div>
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
   // elapsed keeps growing even when the thread is dead — only a stale heartbeat
   // (no progress signal from the training thread) reveals a silent stall.
@@ -233,6 +247,7 @@ function renderTrainStatus(s) {
     html += `<p class="ok">Done: ${esc(s.results.model_name)} — F1 macro ${s.results.metrics.f1_macro.toFixed(3)},
              micro ${s.results.metrics.f1_micro.toFixed(3)} (${s.results.n_labels} labels)</p>`;
   el.innerHTML = html;
+  applyBarWidths(el);
   const stop = $("#train-stop");
   if (stop) stop.addEventListener("click", async () => {
     trainQueue = [];  // stopping also cancels everything still queued
@@ -248,8 +263,9 @@ function renderTrainChip(s) {
   chip.classList.remove("done", "failed");
   if (s.status === "running") {
     const eta = s.eta_seconds != null ? ` · ~${Math.round(s.eta_seconds)}s left` : "";
-    chip.innerHTML = `<span class="mini-bar"><span style="width:${s.progress}%"></span></span>
+    chip.innerHTML = `<span class="mini-bar"><span data-width="${s.progress}"></span></span>
       ${esc(s.model_name || "training")} ${s.progress}%${esc(eta)}`;
+    applyBarWidths(chip);
     chip.hidden = false;
   } else if (s.status === "completed" && s.model_name) {
     chip.classList.add("done");
