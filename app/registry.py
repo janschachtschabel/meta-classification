@@ -37,6 +37,9 @@ _DECOMPRESSION_FLOOR_BYTES = 64 * 1024 * 1024
 # pattern-blocking bad ones) also kills dotfiles and Windows drive-relative
 # names like "C:evil" that slip past character blocklists.
 _ALLOWED_MEMBERS = _REQUIRED_FILES | {"metrics.json"}
+# Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
+# repairs a bundle; that script imports this constant, so the two cannot drift.
+_BACKUP_SUFFIX = ".prebackup"
 
 
 class Registry:
@@ -66,9 +69,14 @@ class Registry:
         if not self.dir.exists():
             return []
         # Hidden ".name.tmp" dirs are in-progress/crashed writes, never models.
+        # "<name>.prebackup" copies (kept by scripts/prune_bundle_labels.py before it
+        # repairs a bundle) are valid bundles but not models: serving one would hand
+        # out exactly the pre-repair weights the repair existed to remove.
         return sorted(
             p.name for p in self.dir.iterdir()
-            if not p.name.startswith(".") and (p / "config.json").exists()
+            if not p.name.startswith(".")
+            and not p.name.endswith(_BACKUP_SUFFIX)
+            and (p / "config.json").exists()
         )
 
     def sweep_stale_tmp(self) -> int:

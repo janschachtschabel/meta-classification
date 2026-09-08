@@ -33,7 +33,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from app.data import is_container_label  # noqa: E402
 from app.model_io import UnsafeModelError  # noqa: E402
-from app.registry import Registry  # noqa: E402
+from app.registry import _BACKUP_SUFFIX, Registry  # noqa: E402
 
 # Texts only need to exercise the vectorizer; the comparison is per-column, so any
 # non-degenerate batch proves the kept columns are unchanged.
@@ -107,7 +107,9 @@ def prune(registry: Registry, name: str, *, apply: bool) -> bool:
         print("  DRY RUN — pass --apply to write")
         return False
 
-    backup = registry.dir / f"{name}.prebackup"
+    # The suffix comes from the registry, which is what excludes the copy from
+    # list() — a backup named anything else would be served as a model.
+    backup = registry.dir / f"{name}{_BACKUP_SUFFIX}"
     if not backup.exists():
         shutil.copytree(registry.dir / name, backup)
     registry.save(name, model, metadata)

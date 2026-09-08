@@ -342,6 +342,22 @@ def test_sweep_stale_tmp_removes_orphaned_staging_dirs(tmp_path):
     assert Registry(models, 2).list() == ["keep_me"]
 
 
+def test_bundle_backups_are_not_listed_as_models(tmp_path):
+    """`scripts/prune_bundle_labels.py` keeps a full `<name>.prebackup` copy before
+    it rewrites a bundle. That copy is a valid bundle, so list() used to offer it as
+    an ordinary model — and predicting with it silently serves the PRE-repair
+    weights (the container-label class this project removes on purpose). A backup is
+    not a model; only the repaired bundle is."""
+    models = tmp_path / "models"
+    models.mkdir()
+    for name in ("subjects", "subjects.prebackup"):
+        bundle = models / name
+        bundle.mkdir()
+        (bundle / "config.json").write_text("{}", encoding="utf-8")
+
+    assert Registry(models, 2).list() == ["subjects"]
+
+
 def test_sweep_stale_tmp_does_not_overcount_failed_removals(tmp_path, monkeypatch):
     """rmtree runs with ignore_errors=True, so a removal can silently fail (e.g. a
     locked file on Windows). The returned count must reflect dirs actually gone,

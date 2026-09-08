@@ -162,6 +162,15 @@ th { font-size: 0.85em; color: var(--muted); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; }
 
+/* A model that can no longer be loaded (pre-format-2 bundle). Dimming is the
+   decoration; the badge text next to the name carries the meaning. */
+tr.stale td { opacity: 0.65; }
+.badge-stale {
+  display: inline-block; margin-left: var(--s-2); padding: 1px var(--s-2);
+  border: 1px solid var(--warn); border-radius: 999px;
+  color: var(--warn); font-size: 0.8em; font-weight: 600; white-space: nowrap;
+}
+
 .pred { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-1) 0; }
 .pred .name { flex: 0 0 11em; overflow-wrap: anywhere; }
 .pred .bar { flex: 1; height: 10px; background: var(--bar-bg); border-radius: 5px; overflow: hidden; }

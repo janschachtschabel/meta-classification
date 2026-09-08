@@ -169,8 +169,14 @@ async function onQuery(ev) {
         </div>`).join("")
         : `<p class="muted">No label above the model's threshold.</p>`}</div>`).join("");
     applyBarWidths(out);
-  } catch (err) { out.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
-  finally { btn.disabled = false; $("#query-status").textContent = ""; }
+  } catch (err) {
+    // 422 here means the bundle exists but cannot be loaded — in practice a
+    // pre-format-2 model. Say what to do about it; the raw message does not.
+    const hint = err.status === 422
+      ? ` This model was trained with an older bundle format and has to be retrained
+          (the Models tab marks it).` : "";
+    out.innerHTML = `<p class="error">${esc(err.message)}${esc(hint)}</p>`;
+  } finally { btn.disabled = false; $("#query-status").textContent = ""; }
 }
 
 /* ---------- training ---------- */

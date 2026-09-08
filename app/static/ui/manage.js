@@ -39,6 +39,13 @@ function fmtScore(value) {
   return Number.isFinite(value) ? value.toFixed(3) : "–";
 }
 
+/* Bundles older than format 2 keep their TF-IDF vocabulary inside the skops
+   container and no longer load — /predict answers 422. They are still listed
+   (they exist, can be downloaded and repaired elsewhere), but the table has to
+   say so instead of showing their metrics as if they were servable. */
+const CURRENT_BUNDLE_FORMAT = 2;
+const isServable = (m) => (m.format_version ?? 1) >= CURRENT_BUNDLE_FORMAT;
+
 async function loadModels() {
   const el = $("#models-list");
   el.innerHTML = `<p class="muted">Loading …</p>`;
@@ -49,12 +56,14 @@ async function loadModels() {
     el.innerHTML = `<div class="card table-wrap"><table>
       <thead><tr><th>Name</th><th>Task</th><th class="num">Labels</th><th class="num">F1 macro</th>
       <th class="num">F1 micro</th><th>Evaluation</th><th>Actions</th></tr></thead><tbody>` +
-      infos.map((m) => `<tr>
-        <td>${esc(m.name)}</td><td>${esc(m.task_type)}</td>
+      infos.map((m) => `<tr${isServable(m) ? "" : ' class="stale"'}>
+        <td>${esc(m.name)}${isServable(m) ? "" :
+          ` <span class="badge-stale">needs retraining</span>`}</td><td>${esc(m.task_type)}</td>
         <td class="num">${esc(m.metadata.n_labels ?? "–")}</td>
         <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_macro))}</td>
         <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_micro))}</td>
-        <td>${esc(m.metadata.evaluation || "–")}</td>
+        <td>${isServable(m) ? esc(m.metadata.evaluation || "–")
+          : `Old bundle format ${esc(m.format_version ?? 1)} — cannot be loaded for classification.`}</td>
         <td class="actions">
           <button class="small" data-export="${esc(m.name)}">Download</button>
           <button class="small" data-share="${esc(m.name)}">Share link</button>
