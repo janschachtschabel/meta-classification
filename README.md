@@ -240,7 +240,7 @@ For Prometheus, `GET /metrics` exposes operational gauges (uptime, models on dis
 
 ## Resources & tuning
 
-**Fast ↔ good** via the profile (`optimize_parameters`): `fast` (word-only, holdout split, 2 `C` values → seconds, for iteration), `auto` (word + char, 3-fold CV, 3 `C` values — recommended), `best` (5-fold CV, 5 `C` values reaching past both known optima). Profiles also set `cv_folds`, `use_char` and `max_word_features` / `max_char_features` in `config.yaml` — see [Profiles](#profiles-configyaml).
+**Fast ↔ good** via the profile (`optimize_parameters`): `fast` (word-only, holdout split, 2 `C` values → seconds, for iteration), `auto` (word + char, 3-fold CV, 3 `C` values — recommended), `best` (word + char, 5-fold CV, the same 3 `C` values — the fold count is the whole difference, ~1.9x `auto`). Profiles also set `cv_folds`, `use_char` and `max_word_features` / `max_char_features` in `config.yaml` — see [Profiles](#profiles-configyaml).
 
 **Resources (env):**
 - **`APIV3_N_JOBS`** — CPU cores for head training (`-1` = all, joblib semantics), additionally bounded by:
@@ -422,7 +422,7 @@ For hosting in other ML serving systems:
 ```bash
 pip install -r requirements.txt -c requirements.lock
 pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
-python -m pytest tests -q                          # 152 tests (96 % line coverage)
+python -m pytest tests -q                          # 196 tests
 python -m ruff check app tests                     # lint
 python -m mypy app --config-file pyproject.toml    # types
 ```

@@ -170,6 +170,11 @@ split:
   that request trains on; a request mapping overrides it and `{}` disables it.
   `GET /train/profiles` reports the active default. Training-time only: build the text
   you send to `/predict` the same way (see README).
+- **`max_word_features` / `max_char_features`** are settable per request too, on top of
+  the profile and the `APIV3_TFIDF_MAX_*_FEATURES` env vars (most specific wins). They
+  are the main RAM lever, so they are bounded at 2 000 000. A model whose
+  `tfidf.n_features` equals `max_word_features + max_char_features` had its vocabulary
+  **truncated** — both values are recorded in the bundle metadata so that stays checkable.
 
 ## `data/label_names.json` — authoritative label display names (optional)
 
@@ -214,11 +219,6 @@ python scripts/prune_bundle_labels.py --model <name> --apply    # omit --apply f
 
 which drops the class *and* its estimator, verifies the remaining probabilities are
 bit-identical, recomputes `f1_macro`, and keeps a full bundle backup.
-- **`max_word_features` / `max_char_features`** are settable per request too, on top of
-  the profile and the `APIV3_TFIDF_MAX_*_FEATURES` env vars (most specific wins). They
-  are the main RAM lever, so they are bounded at 2 000 000. A model whose
-  `tfidf.n_features` equals `max_word_features + max_char_features` had its vocabulary
-  **truncated** — both values are recorded in the bundle metadata so that stays checkable.
 
 ## Where to see the effective configuration
 

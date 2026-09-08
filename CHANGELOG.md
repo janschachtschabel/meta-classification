@@ -2,6 +2,66 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — audit remediation, phase 0 (2026-09-08)
+
+Test-first; **196 tests green**, ruff/mypy clean, `pip-audit` clean. Acts on
+`docs/audits/2026-09-08-audit.md`; the remaining phases are in
+`docs/plans/2026-09-08-ergaenzungsplan.md`.
+
+### Fixed — every bar in the admin UI rendered full width
+
+- The UI runs under `default-src 'self'` without `'unsafe-inline'`, which blocks a
+  style **attribute** exactly as it blocks an inline script. All three bars injected
+  `style="width:N%"` through `innerHTML`, so the browser dropped it and each bar
+  inherited its container's full width. 🟢 Measured on `/ui/`: five ranked
+  predictions carrying 100/0/0/0/0 % all drew 171 of 171 px — a 0.004 label looked
+  exactly like a 1.000 one, and the training progress bar sat at 100 % from the first
+  second.
+- Bars now carry `data-width` and `applyBarWidths()` sets `el.style.width` after each
+  render (the CSSOM is not governed by `style-src`). 🟢 After: 0 px at 0 %, 497 px at
+  100 %, progress 301 of 814 px at 37 %, chip 24 of 64 px, and **zero CSP console
+  errors** where a single page visit had logged 80+.
+- `test_ui_sources_contain_no_inline_style_attributes` pins it at the source level,
+  next to the existing inline-handler guard.
+
+### Fixed — bundles that cannot be served were offered as models
+
+- A `<name>.prebackup` copy (kept by `scripts/prune_bundle_labels.py` before it
+  repairs a bundle) is a valid bundle, so `list()` offered it — predicting with one
+  serves precisely the pre-repair weights. The registry skips the suffix and the
+  script imports the constant, so the two cannot drift.
+- Pre-format-2 bundles fail to load (`/predict` → 422) but the Models tab showed
+  their metrics like any other row. They stay listed and downloadable, now dimmed
+  with a "needs retraining" badge; a 422 in the Query tab explains what to do.
+
+### Fixed — security hardening (audit S1, S3, S4, S5)
+
+- **Dataset routes are confined to datasets.** Only the listing filtered on the CSV
+  suffixes, so inspect/analyze/validate/export/share and **delete** reached any file
+  a safe name could name — including `data/label_names.json`, the display-name
+  sidecar every later training reads. All six routes resolve through one
+  `_dataset_path()` helper.
+- `safe_name` caps a name at 100 characters (an over-long name raised inside a write
+  and surfaced as an opaque 500).
+- Startup **refuses** `APIV3_AUTH_ENABLED=true` without `APIV3_API_KEY_ADMIN` (no
+  request could ever reach the admin role) and warns when both keys are identical.
+- The `.env` path is anchored to the app directory like every other default;
+  relative, it was silently dropped when uvicorn started elsewhere.
+
+### Changed — `POST /train` returns **202 Accepted** (breaking for `== 200` checks)
+
+It queues a job and returns a status URL; the training has not happened yet. Also:
+`GET /` redirects to `/ui/` (or `/docs`), `/favicon.ico` serves an inline SVG, both
+were 404. `stop(hard=true)` is a no-op while idle — it used to discard the finished
+run's metrics. Shutdown asks a running training to stop so it can end at its next
+checkpoint inside the termination grace period, which the Helm chart already
+promised while nothing performed it.
+
+### Added — weekly `pip-audit` job
+
+The dependency tree is hash-pinned, so a CVE published against an already-pinned
+version is invisible until someone pushes. The scan now also runs Mondays.
+
 ## [Unreleased] — prediction reliability, measured tuning, sizing to 600k (2026-07-25)
 
 Test-first; 170 tests green, ruff/mypy clean.
