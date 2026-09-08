@@ -82,7 +82,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="APIV3_",
-        env_file=".env",
+        # Anchored like every other default path: a relative name is resolved against
+        # the WORKING directory, so starting uvicorn from anywhere but api_v3/ silently
+        # dropped the dotenv — and with it the API keys.
+        env_file=_BASE / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )

@@ -186,6 +186,76 @@ def test_ui_sources_contain_no_inline_style_attributes():
     assert not offenders, "inline style attributes are blocked by the CSP:\n" + "\n".join(offenders)
 
 
+def test_dataset_routes_ignore_non_dataset_files(monkeypatch, tmp_path):
+    """The data directory also holds label_names.json — the authoritative display-name
+    sidecar every later training reads. Only the LISTING filtered on the CSV suffixes,
+    so inspect / export / share / DELETE reached any file a safe name could name: one
+    stray call could destroy the vocabulary. Non-dataset files are now simply absent."""
+    client = _fresh_client(monkeypatch, tmp_path)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = data_dir / "label_names.json"
+    sidecar.write_text('{"http://example.org/1": "Mathematik"}', encoding="utf-8")
+    admin = {"X-API-Key": "admin-key"}
+
+    assert client.get("/datasets/label_names.json", headers=admin).status_code == 404
+    assert client.post("/datasets/label_names.json/export", headers=admin).status_code == 404
+    assert client.post("/datasets/label_names.json/export", headers=admin,
+                       json={"generate_share_url": True}).status_code == 404
+    assert client.delete("/datasets/label_names.json", headers=admin).status_code == 404
+    assert sidecar.exists(), "the sidecar must survive a delete attempt"
+
+
+def test_safe_name_rejects_absurdly_long_names(monkeypatch, tmp_path):
+    """A name is a path component. Past the filesystem's limit the OS raises deep
+    inside a write and the client gets an opaque 500, so cap it at the trust
+    boundary and answer 400 like every other malformed name."""
+    client = _fresh_client(monkeypatch, tmp_path)
+    resp = client.get(f"/models/{'x' * 300}", headers={"X-API-Key": "admin-key"})
+    assert resp.status_code == 400, resp.text
+    assert "too long" in resp.json()["detail"].lower()
+
+
+def test_startup_refuses_auth_without_an_admin_key(monkeypatch, tmp_path):
+    """Auth enabled with no admin key is a dead deployment: every request 401s and
+    nothing can ever be trained or managed. Today that looks like a broken key on the
+    client side; it must fail loudly at startup instead."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("APIV3_AUTH_ENABLED", "true")
+    monkeypatch.delenv("APIV3_API_KEY_ADMIN", raising=False)
+    monkeypatch.setenv("APIV3_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("APIV3_MODELS_DIR", str(tmp_path / "models"))
+    from app.registry import get_registry
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    from app.main import create_app
+
+    try:
+        # __enter__ runs the lifespan, which is where the check lives.
+        with pytest.raises(RuntimeError, match="APIV3_API_KEY_ADMIN"), TestClient(create_app()):
+            pass
+    finally:
+        get_settings.cache_clear()
+        get_registry.cache_clear()
+
+
+def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
+    """Every other default path is anchored to the api_v3 folder so the app works
+    from any working directory. The .env file was the exception — a relative name,
+    silently ignored when uvicorn is started from elsewhere, taking the API keys
+    with it."""
+    from pathlib import Path
+
+    from app.settings import Settings
+
+    env_file = Settings.model_config["env_file"]
+    assert Path(env_file).is_absolute()
+    assert Path(env_file) == Path(__file__).resolve().parent.parent / ".env"
+
+
 def test_cors_wildcard_origin_disables_credentials(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path, APIV3_CORS_ALLOW_ORIGINS="*")
     resp = client.get("/health", headers={"Origin": "http://evil.example"})

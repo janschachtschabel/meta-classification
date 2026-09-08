@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi import (
     APIRouter,
@@ -27,6 +28,22 @@ from ..settings import Settings, get_settings
 from ..sharing import get_share_store
 
 router = APIRouter(tags=["Datasets"])
+
+
+def _dataset_path(dataset_name: str, settings: Settings) -> Path:
+    """Resolve a dataset name to an existing dataset file, or raise 404.
+
+    The data directory holds more than datasets — ``label_names.json`` is the
+    authoritative display-name sidecar every training reads. Only the listing
+    filtered on the suffixes, so inspect/export/share/delete reached any file a
+    safe name could name. Checking membership here keeps the four routes honest
+    and gives them one shared 404.
+    """
+    safe_name(dataset_name, "dataset name")
+    path = settings.data_dir / dataset_name
+    if not data_mod.is_dataset_name(dataset_name) or not path.exists():
+        raise HTTPException(404, f"Dataset '{dataset_name}' not found.")
+    return path
 
 
 def _format_size(num_bytes: int) -> str:
@@ -73,13 +90,10 @@ def dataset_info(
 
     `separator` is the CSV delimiter (default `;`). **Auth:** readonly.
     """
-    safe_name(dataset_name, "dataset name")
     if len(separator) != 1:
         # pandas treats a multi-char sep as a regex (python engine) -> ReDoS.
         raise HTTPException(400, "separator must be a single character.")
-    path = settings.data_dir / dataset_name
-    if not path.exists():
-        raise HTTPException(404, f"Dataset '{dataset_name}' not found.")
+    path = _dataset_path(dataset_name, settings)
     try:
         shaped = stats_mod.sample_rows(path, separator=separator)
     except TrainingInputError as exc:
@@ -97,10 +111,7 @@ def analyze(request: Request, req: AnalyzeRequest, _: str = Depends(require_role
     rare labels, plus a threshold analysis (how many labels have >= N examples). Helps to
     choose `min_samples_per_label` and a `label_filter`. **Auth:** admin.
     """
-    safe_name(req.dataset_name, "dataset name")
-    path = settings.data_dir / req.dataset_name
-    if not path.exists():
-        raise HTTPException(404, f"Dataset '{req.dataset_name}' not found.")
+    path = _dataset_path(req.dataset_name, settings)
     try:
         return stats_mod.analyze_dataset(
             path, req.text_columns, req.label_column,
@@ -127,10 +138,7 @@ def validate(
     former raw-array body + query-parameter contract was dropped when the two
     endpoints were aligned). **Auth:** admin.
     """
-    safe_name(dataset_name, "dataset name")
-    path = settings.data_dir / dataset_name
-    if not path.exists():
-        raise HTTPException(404, f"Dataset '{dataset_name}' not found.")
+    path = _dataset_path(dataset_name, settings)
     try:
         return stats_mod.validate_dataset(
             path, req.text_columns, req.label_column,
@@ -157,7 +165,7 @@ async def import_dataset(
     appended if it carries neither suffix). Size limit active; existing names are rejected
     with 409. **Auth:** admin.
     """
-    accepted = (".csv", ".csv.gz")
+    accepted = data_mod.DATASET_SUFFIXES
     if not file.filename or not file.filename.endswith(accepted):
         raise HTTPException(400, "File must be a .csv or .csv.gz file.")
     name = new_name or file.filename
@@ -187,10 +195,7 @@ async def export_dataset(
     """Export a dataset as a CSV download or as an expiring share link
     (`generate_share_url=true`, `expires_hours` 1–168, retrievable via `GET /share/{id}`).
     **Auth:** admin."""
-    safe_name(dataset_name, "dataset name")
-    path = settings.data_dir / dataset_name
-    if not path.exists():
-        raise HTTPException(404, f"Dataset '{dataset_name}' not found.")
+    path = _dataset_path(dataset_name, settings)
     body = body or ExportRequest()
     if body.generate_share_url:
         share_id, expires_at = get_share_store().create("dataset", dataset_name, body.expires_hours)
@@ -209,9 +214,5 @@ async def delete_dataset(
 ) -> dict:
     """Delete a CSV file from the data directory (irreversible).
     **Auth:** admin · rate limit active."""
-    safe_name(dataset_name, "dataset name")
-    path = settings.data_dir / dataset_name
-    if not path.exists():
-        raise HTTPException(404, f"Dataset '{dataset_name}' not found.")
-    path.unlink()
+    _dataset_path(dataset_name, settings).unlink()
     return {"status": "deleted", "dataset_name": dataset_name}

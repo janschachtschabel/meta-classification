@@ -56,8 +56,21 @@ def require_role(required: str = "readonly"):
     return dependency
 
 
+# A name becomes one path component. Filesystems cap that around 255 bytes, and a
+# non-ASCII name costs several bytes per character — 100 leaves room to spare while
+# staying far above any real model or dataset name.
+_MAX_NAME_LENGTH = 100
+
+
 def safe_name(name: str, kind: str = "name") -> str:
     """Validate a model/dataset name, rejecting path-traversal characters."""
+    if len(name) > _MAX_NAME_LENGTH:
+        # Without this the OS raises deep inside a write and the client sees an
+        # opaque 500 instead of "your name is malformed".
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {kind}: too long ({len(name)} characters, maximum {_MAX_NAME_LENGTH}).",
+        )
     if (
         not name
         or ".." in name

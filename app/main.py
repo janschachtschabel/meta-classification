@@ -38,12 +38,37 @@ def _warmup_models(registry: Registry, names: list[str]) -> None:
             logger.info("Warmed up model %r", name)
 
 
+def _check_auth_configuration(settings) -> None:
+    """Refuse to start an authenticated deployment that nobody can administer.
+
+    With auth on and no admin key, ``_role_for_key`` can never return "admin": every
+    request 401s and no model can ever be trained, imported or deleted. That reads
+    like a client-side key problem and has cost real debugging time, so fail here
+    with the variable name instead. A readonly-only deployment is legitimate, so
+    only the admin key is required.
+    """
+    if not settings.auth_enabled:
+        return
+    if not settings.api_key_admin:
+        raise RuntimeError(
+            "APIV3_AUTH_ENABLED is true but APIV3_API_KEY_ADMIN is not set — every "
+            "request would be rejected with 401. Set the key, or run with "
+            "APIV3_AUTH_ENABLED=false for local use."
+        )
+    if settings.api_key_admin == settings.api_key_readonly:
+        logger.warning(
+            "APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY are identical — the "
+            "readonly role grants full admin access."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create storage dirs on startup, sweep model staging dirs orphaned by a
     crashed/killed save (a hidden ``.name.tmp`` whose atomic rename never ran),
     and preload any configured warmup models."""
     settings = get_settings()
+    _check_auth_configuration(settings)
     settings.ensure_dirs()
     registry = get_registry()
     swept = registry.sweep_stale_tmp()
