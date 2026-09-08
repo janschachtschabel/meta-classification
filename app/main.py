@@ -6,13 +6,14 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 
 from . import __version__
+from .jobs import training_job
 from .limiter import limiter
 from .registry import Registry, get_registry
 from .routes import datasets, models, predict, system, training
@@ -80,6 +81,11 @@ async def lifespan(app: FastAPI):
         "api_v3 ready (models_dir=%s, auth=%s)", settings.models_dir, settings.auth_enabled
     )
     yield
+    # Ask a running training to stop at its next checkpoint (between the C fits,
+    # before the deploy fit). The thread is a daemon and dies with the process
+    # anyway; this gives it the chance to end cleanly inside the termination grace
+    # period instead, which is what the Helm chart's 60 s already assumed.
+    training_job.stop()
     logger.info("api_v3 shutting down")
 
 
@@ -112,6 +118,7 @@ _SWAGGER_HTML = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MetaClassify — API docs</title>
   <link rel="stylesheet" href="/swagger-static/swagger-ui.css">
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
 </head>
 <body>
   <div id="swagger-ui"></div>
@@ -119,6 +126,17 @@ _SWAGGER_HTML = """<!DOCTYPE html>
   <script src="/swagger-static/swagger-init.js"></script>
 </body>
 </html>"""
+
+
+# Tab icon for /ui and /docs, inline so the app stays free of binary assets. Served
+# as SVG under the .ico name browsers request unprompted (they honour the content
+# type, not the extension) — otherwise every visit logs a 404.
+_FAVICON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    b'<rect width="32" height="32" rx="7" fill="#0f5cad"/>'
+    b'<path d="M8 11h16M8 16h11M8 21h7" stroke="#fff" stroke-width="3" '
+    b'stroke-linecap="round"/></svg>'
+)
 
 
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -206,6 +224,17 @@ def create_app() -> FastAPI:
     @app.get("/docs", include_in_schema=False)
     async def swagger_ui() -> HTMLResponse:
         return HTMLResponse(_SWAGGER_HTML)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        return Response(_FAVICON_SVG, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        """Send a human who opened the bare host somewhere useful (404 was the
+        first thing the app said to anyone typing the URL)."""
+        return RedirectResponse("/ui/" if settings.ui_enabled else "/docs")
 
     app.include_router(system.router)
     app.include_router(training.router)

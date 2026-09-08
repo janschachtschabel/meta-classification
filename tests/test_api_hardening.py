@@ -256,6 +256,55 @@ def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
     assert Path(env_file) == Path(__file__).resolve().parent.parent / ".env"
 
 
+def test_root_and_favicon_are_served_instead_of_404(monkeypatch, tmp_path):
+    """Opening the bare host is what a human does first, and browsers ask for
+    /favicon.ico unprompted — both answered 404 and filled the log with noise."""
+    client = _fresh_client(monkeypatch, tmp_path)
+
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 307
+    assert root.headers["location"] == "/ui/"
+
+    icon = client.get("/favicon.ico")
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+
+
+def test_hard_stop_while_idle_keeps_the_last_result(monkeypatch, tmp_path):
+    """`POST /train/stop?hard=true` resets the job state. Called when nothing runs
+    — a double click, or a UI that stops a run that just finished — it wiped the
+    metrics of the completed training, the one thing the operator was waiting for."""
+    from app.jobs import TrainingJob
+
+    job = TrainingJob()
+    job.update(status="completed", progress=100, phase="done",
+               model_name="subjects", results={"f1_macro": 0.81})
+
+    job.stop(hard=True)
+
+    snapshot = job.snapshot()
+    assert snapshot["status"] == "completed"
+    assert snapshot["results"] == {"f1_macro": 0.81}
+
+
+def test_shutdown_asks_a_running_training_to_stop(monkeypatch, tmp_path):
+    """The Helm chart grants a 60 s termination grace period and its values.yaml
+    promises the run is 'cancelled cooperatively'. Nothing performed that: the
+    daemon thread was simply killed at exit. Ask it to stop, so the checkpoints
+    between the C fits can end the run cleanly within the grace period."""
+
+    from app.jobs import training_job
+
+    client = _fresh_client(monkeypatch, tmp_path)
+    training_job._stop.clear()
+    try:
+        with client:  # __exit__ runs the lifespan shutdown
+            assert not training_job.should_stop()
+        assert training_job.should_stop()
+    finally:
+        training_job._stop.clear()
+
+
 def test_cors_wildcard_origin_disables_credentials(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path, APIV3_CORS_ALLOW_ORIGINS="*")
     resp = client.get("/health", headers={"Origin": "http://evil.example"})

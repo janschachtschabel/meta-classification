@@ -67,7 +67,9 @@ def trained_model() -> dict:
     training status. Tests declare this dependency instead of relying on file
     order (or re-training as a fallback)."""
     started = client.post("/train", json=TRAIN_BODY, headers=ADMIN)
-    assert started.status_code == 200, started.text
+    # 202 Accepted: the job was queued, not performed — the metrics arrive via
+    # /train/status. Pinned so the async contract cannot quietly become a 200.
+    assert started.status_code == 202, started.text
     # Exact key set: the TrainStartedResponse model silently DROPS any field it
     # doesn't declare — this guard turns a dropped contract field into a red test.
     assert set(started.json()) == {"status", "model_name", "profile", "status_url"}

@@ -68,7 +68,11 @@ async def list_profiles(
     }
 
 
-@router.post("/train", summary="Train a model (asynchronous)", response_model=TrainStartedResponse)
+# 202, not 200: the response says a job was ACCEPTED and points at /train/status —
+# the training itself has not happened yet. Callers that only check `< 300` are
+# unaffected; a caller checking `== 200` sees the contract it should have read.
+@router.post("/train", summary="Train a model (asynchronous)", status_code=202,
+             response_model=TrainStartedResponse)
 @limiter.limit(train_limit)
 async def train(
     request: Request,

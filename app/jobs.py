@@ -192,6 +192,12 @@ class TrainingJob:
         self._stop.set()
         if hard:
             with self._lock:
+                # Nothing to reset when nothing runs — and resetting anyway would
+                # discard the finished run's results, which is what the operator
+                # was waiting for (a double click, or stopping a run that just
+                # completed, used to blank the metrics).
+                if self._state["status"] != "running":
+                    return
                 # Invalidate the running thread's generation so its eventual
                 # completion cannot overwrite this reset.
                 self._generation += 1

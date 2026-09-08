@@ -205,7 +205,9 @@ securityContext:
 
 ########################################################################################################################
 
-## @param terminationGracePeriod Grace period for termination in seconds (a running training is cancelled cooperatively)
+## @param terminationGracePeriod Grace period for termination in seconds. Shutdown asks a running
+## training to stop, which takes effect at the next checkpoint (between the C fits, before the deploy
+## fit); a run already inside a long fit is killed with the process and has to be restarted.
 terminationGracePeriod: 60
 
 startupProbe:
