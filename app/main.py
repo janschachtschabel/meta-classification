@@ -17,7 +17,7 @@ from .jobs import training_job
 from .limiter import limiter
 from .registry import Registry, get_registry
 from .routes import datasets, models, predict, system, training
-from .settings import get_settings
+from .settings import Settings, get_settings
 
 logging.basicConfig(
     level=get_settings().log_level.upper(),
@@ -39,7 +39,7 @@ def _warmup_models(registry: Registry, names: list[str]) -> None:
             logger.info("Warmed up model %r", name)
 
 
-def _check_auth_configuration(settings) -> None:
+def _check_auth_configuration(settings: Settings) -> None:
     """Refuse to start an authenticated deployment that nobody can administer.
 
     With auth on and no admin key, ``_role_for_key`` can never return "admin": every

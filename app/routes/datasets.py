@@ -36,8 +36,8 @@ def _dataset_path(dataset_name: str, settings: Settings) -> Path:
     The data directory holds more than datasets — ``label_names.json`` is the
     authoritative display-name sidecar every training reads. Only the listing
     filtered on the suffixes, so inspect/export/share/delete reached any file a
-    safe name could name. Checking membership here keeps the four routes honest
-    and gives them one shared 404.
+    safe name could name. Checking membership here keeps every dataset route
+    honest and gives them one shared 404.
     """
     safe_name(dataset_name, "dataset name")
     path = settings.data_dir / dataset_name

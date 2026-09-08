@@ -106,11 +106,6 @@ def split_labels(value: object, separator: str = ",") -> list[str]:
     ]
 
 
-# path -> (mtime_ns, size, rows). Bounded: cleared beyond 256 entries (the data
-# dir holds a handful of CSVs; stale keys from deleted files are harmless).
-_ROW_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
-
-
 # The suffixes a dataset file carries. Everything else in the data directory is
 # not a dataset (label_names.json is the sidecar every training reads).
 DATASET_SUFFIXES = (".csv", ".csv.gz")
@@ -119,6 +114,11 @@ DATASET_SUFFIXES = (".csv", ".csv.gz")
 def is_dataset_name(name: str) -> bool:
     """Does this file name denote a dataset the API may serve, share or delete?"""
     return name.lower().endswith(DATASET_SUFFIXES)
+
+
+# path -> (mtime_ns, size, rows). Bounded: cleared beyond 256 entries (the data
+# dir holds a handful of CSVs; stale keys from deleted files are harmless).
+_ROW_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
 
 
 def is_gzipped(path: str | Path) -> bool:
