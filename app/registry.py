@@ -274,14 +274,20 @@ class Registry:
 
         The transport artifacts are never read from disk: they are regenerated per
         export, so a stale copy could otherwise ship beside the fresh one.
+
+        What gets packed is the same allowlist ``model_archive.unpack`` enforces on the
+        way back in, minus those two. A denylist could not hold: ``update_info`` stages
+        a ``metrics.json.tmp`` next to the file it replaces, so a crash in that window
+        leaves one behind — and we would have produced an archive we then refuse.
         """
+        packable = model_archive.ALLOWED_MEMBERS - {MANIFEST_FILE, CARD_FILE}
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
             members = {
                 file.name: file.read_bytes()
                 for file in sorted(self._path(name).iterdir())
-                if file.is_file() and file.name not in (MANIFEST_FILE, CARD_FILE)
+                if file.is_file() and file.name in packable
             }
         return model_archive.pack(name, members)
 

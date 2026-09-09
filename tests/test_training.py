@@ -1819,3 +1819,28 @@ def test_a_malformed_metrics_document_degrades_the_card_instead_of_failing_the_e
     assert rows[0]["f1"] == 0.5, "the one usable score still ranks first"
     assert all(row["f1"] is None for row in rows[1:]), "unusable is unknown, not weak"
     assert all(row["support"] is None for row in rows), "a list is not a support map"
+
+
+def test_export_packs_only_what_a_bundle_is_made_of(tmp_path):
+    """`update_info` stages `metrics.json.tmp` beside the file it replaces, so a crash
+    in that window leaves one behind. Export listed the directory and skipped two known
+    names — a denylist, which cannot know about that one. The stray file would have been
+    packed, and then rejected by `unpack`'s member allowlist on the way back in: an
+    archive this API produces but refuses to accept.
+    """
+    import io
+    import zipfile
+
+    registry, settings = _trained_registry(tmp_path)
+    bundle = Path(settings.models_dir) / "tiny_model"
+    (bundle / "metrics.json.tmp").write_text("{}", encoding="utf-8")
+    (bundle / ".DS_Store").write_bytes(b"\x00")
+
+    archive = registry.export_zip("tiny_model")
+    with zipfile.ZipFile(io.BytesIO(archive)) as packed:
+        assert set(packed.namelist()) == {
+            "config.json", "metrics.json", "head.skops", "vectorizer.skops",
+            "vocabulary.json", "manifest.json", "README.md",
+        }
+    # The proof that matters: what we produce, we accept.
+    assert registry.import_zip("round_trip", archive)["name"] == "round_trip"

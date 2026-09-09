@@ -141,7 +141,7 @@ def test_label_diagnostics_list_the_weakest_labels_first(trained_model):
     assert client.get("/models/ghost/labels", headers=RO).status_code == 404
 
 
-def test_label_diagnostics_report_a_threshold_only_where_serving_uses_one():
+def test_label_diagnostics_report_a_threshold_only_where_serving_uses_one(trained_model):
     """tiny.csv is single-label, so the trained model decides by argmax and never
     reads a threshold. Reporting the global 0.5 there would describe a rule the model
     does not apply; a forced multilabel run does use its tuned per-label cuts."""
