@@ -250,7 +250,7 @@ gated.
   Tests: queue order, persistence across a fresh `JobRunner`, hard stop clears the
   queue.
 
-### B1 · Evaluate an existing model on a dataset (M, 2 days) — **server done 2026-09-09**
+### B1 · Evaluate an existing model on a dataset (M, 2 days) — **done 2026-09-09**
 - `POST /models/{name}/evaluate` `{dataset_name, text_columns, label_column, …}` →
   background job; result stored under `metadata.evaluations[]` (never overwrites the
   training metrics); UI: "Evaluate on…" in the model panel with a comparison table
@@ -268,6 +268,10 @@ gated.
 - `prepare_targets` is NOT reused: it binarizes over the dataset's own label set, which
   is a different width from the model's output. Alignment to `model.classes` is the
   whole point.
+- Deviation on the UI: no cross-model comparison TABLE. The bias that makes a comparison
+  valid is "same dataset", and the model panel already shows each run's dataset beside
+  its scores — a table joining models would need every bundle's metadata on opening one
+  dialog. Worth building when two models have actually been scored on one dataset.
 
 Effort: 10–12 person-days.
 

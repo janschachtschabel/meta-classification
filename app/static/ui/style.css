@@ -326,3 +326,8 @@ input[type="file"] { min-height: 24px; padding: var(--s-1) 0; }
 /* The recommended threshold, marked by weight and a word in its own column — never by
    the background alone, which says nothing to anyone who cannot see it. */
 tr.recommended { font-weight: 600; background: var(--bar-bg); }
+
+/* ---- evaluate form inside the model panel ---- */
+.evaluate-form { margin-top: var(--s-4); border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.evaluate-form .ok { color: var(--ok); font-weight: 600; }
+.evaluate-form p:empty { display: none; }

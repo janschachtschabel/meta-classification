@@ -167,6 +167,9 @@ async function showModelDetail(name) {
     <h3>How well it works</h3>
     <div class="train-status">${definitionList(model, QUALITY_ROWS)}</div>
 
+    <h3>Scored against a dataset</h3>
+    <div id="detail-evaluations"></div>
+
     <h3>Per label</h3>
     <p class="muted">Weakest first. A high confidence on a weak label is worth less than the
       same number on a strong one. "Rows" says why a score is low — too few examples is a
@@ -178,11 +181,13 @@ async function showModelDetail(name) {
     <div class="detail-actions">
       <button type="button" class="small" data-act="download">Download bundle</button>
       <button type="button" class="small" data-act="curl">Copy curl</button>
+      <button type="button" class="small" data-act="evaluate">Evaluate on…</button>
       <button type="button" class="small" data-act="share">Share link</button>
       <button type="button" class="small" data-act="info">Documentation</button>
       <button type="button" class="small danger" data-act="delete">Delete</button>
     </div>`;
 
+  frame.querySelector("#detail-evaluations").innerHTML = evaluationsSection(model);
   renderLabelTable(frame.querySelector("#detail-labels"), labels, { key: "f1", ascending: true });
 
   // The actions that render into the page behind the modal close it first —
@@ -191,6 +196,9 @@ async function showModelDetail(name) {
     download: () => Api.download(`/models/${encodeURIComponent(name)}/export`, `${name}.zip`)
       .catch((err) => toast(err.message)),
     curl: async () => { await navigator.clipboard.writeText(curlFor(name)); toast("curl command copied."); },
+    // Stays inside the dialog: the form belongs to THIS model, and closing the panel
+    // to fill it in would lose the numbers it is meant to be compared against.
+    evaluate: () => openEvaluateForm(name, frame),
     share: () => { dialog.close(); shareResource("models", name, "#models-share"); },
     info: () => { dialog.close(); editModelInfo(name); },
     delete: async () => {

@@ -4,6 +4,18 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — "Evaluate on…" in the model panel
+
+- The model detail gained a section listing every dataset the model has been scored
+  against — rows, **labels hit**, F1 macro and micro — and a form to start another run.
+- The caveat travels with the numbers rather than living in a doc: labels hit says how
+  much of the label space the dataset exercises, and the note says plainly to compare
+  the same dataset across models, never two datasets.
+- A run with nothing comparable shows "–" instead of a zero, matching the API.
+- Verified at 360 px in dark mode: no overflow, the table scrolls in its own wrapper,
+  every target ≥ 24×24, no CSP or console errors.
+
+
 ### Added — evaluate an existing model on a dataset (`POST /models/{name}/evaluate`)
 
 - "Model B beats model A" is only a statement if both were measured on the same rows.

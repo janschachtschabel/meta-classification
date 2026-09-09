@@ -102,6 +102,25 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
 Bei einem einzelnen Wort gibt es keine Wort-Zuordnung — weglassen braucht mindestens
 zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
 
+## Zwei Modelle vergleichen (Models-Tab)
+
+Im Modell-Detail steht **Evaluate on…**: Datensatz und Spalten wählen, starten. Der Lauf
+geht als Hintergrundjob an den Server — hinter ein laufendes Training, sichtbar auf dem
+Training-Tab. Das Ergebnis landet **neben** den Trainingsmetriken im Bundle, nie darüber.
+
+In der Tabelle darüber steht dann pro Lauf: Datensatz, gewertete Zeilen, **Labels hit**,
+F1 macro und micro.
+
+- **Labels hit** ist entscheidend fürs Lesen: F1 macro mittelt über *alle* Labels des
+  Modells. Ein Datensatz, der 4 von 59 Labels berührt, drückt den Wert aus Gründen, die
+  mit der Qualität nichts zu tun haben — gemessen: macro 0,068 neben micro 0,941.
+  **Vergleiche also nur denselben Datensatz auf zwei Modellen**, nie zwei Datensätze.
+- Zeilen, deren Labels das Modell nie gelernt hat, werden **ausgeschlossen und gezählt**
+  — sie dem Modell als Fehler anzurechnen wäre unfair, sie stillschweigend wegzulassen
+  würde schmeicheln.
+- Steht bei F1 nur „–", hatten die beiden nichts gemeinsam: das Vokabular des Datensatzes
+  passt nicht zum Modell.
+
 ## Mehrere Läufe hintereinander (Training-Tab)
 
 Werden mehrere Label-Felder ausgewählt, entsteht pro Feld ein Modell. Alle Läufe gehen
