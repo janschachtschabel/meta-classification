@@ -183,7 +183,7 @@ gated.
 
 ## Phase 2 — The UI catches up with the API (2–4 weeks)
 
-### D2 · Batch classification (M, 2–3 days)
+### D2 · Batch classification (M, 2–3 days) — **done 2026-09-09**
 - Query tab: "Many texts" mode — paste one text per line *or* upload a CSV, choose
   the text column(s) and the weights the model expects (read from the bundle), run
   in chunks of 1000 through `/predict/batch`, show a table, download the result as
@@ -191,9 +191,16 @@ gated.
   `POST /predict/csv` endpoint that takes an uploaded CSV and streams a CSV back
   (bounded by `max_upload_mb`; chunked, no full-file materialisation).
 - **Why:** the daily editorial job is "classify these 500 new items", not one text.
-- Files: `app/routes/predict.py` (+ `app/predict_csv.py`, new), `app/static/ui/query.js`
-  (split from `app.js`). Tests: 3-row CSV round-trip; text weights applied as the
-  bundle records them; oversize → 413.
+- Files: `app/routes/predict_bulk.py` (new — the CSV route put a second responsibility
+  into `predict.py` and pushed it past 300 lines), `app/predict_csv.py` (new),
+  `app/static/ui/query.js` (split from `app.js`). Tests: 3-row CSV round-trip; the
+  assembled text compared against what `load_dataset` builds for the same file; a row
+  with no label still emitted; a label containing a comma; cp1252; oversize → 413.
+- Deviation: the UI's pasted-text mode goes through `/predict` in batches of **500**,
+  not 1000 — half the endpoint's cap, so progress is visible on a long paste. The CSV
+  mode does not chunk client-side at all; the server streams it.
+- 🟢 Measured: 50 000 rows against the 59-label `faecher_300k_auto` → 4.1 MB of CSV in
+  54.6 s at a **2.2 MB peak heap** on a 6.5 MB input; `transfer-encoding: chunked`.
 
 ### D3 · Dataset inspector + training pre-flight (M, 2 days)
 - Datasets tab: click a row → columns, first rows (`GET /datasets/{name}`), and an

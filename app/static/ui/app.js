@@ -43,6 +43,8 @@ async function boot() {
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
   document.querySelector('[role="tablist"]').addEventListener("keydown", onTablistKeydown);
   $("#query-form").addEventListener("submit", onQuery);
+  document.querySelectorAll('input[name="query-mode"]').forEach(
+    (radio) => radio.addEventListener("change", onQueryModeChange));
   $("#train-chip").addEventListener("click", () => switchTab("training"));
   $("#train-form").addEventListener("submit", onTrainStart);
   $("#train-dataset").addEventListener("change", loadDatasetColumns);
@@ -117,66 +119,6 @@ function onTablistKeydown(ev) {
     : move === "last" ? tabs.length - 1
     : (cur + move + tabs.length) % tabs.length;
   switchTab(tabs[next].dataset.tab, { focus: true });
-}
-
-/* ---------- query ---------- */
-
-async function loadQueryTab() {
-  const sel = $("#query-models");
-  try {
-    const names = await Api.get("/models");
-    sel.innerHTML = names.map((n) => `<option>${esc(n)}</option>`).join("");
-    if (!names.length) $("#query-results").innerHTML =
-      `<p class="muted">No models yet — train one on the Training tab first.</p>`;
-    else sel.options[0].selected = true;
-  } catch (err) { $("#query-results").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
-}
-
-async function onQuery(ev) {
-  ev.preventDefault();
-  const btn = $("#query-btn"), out = $("#query-results");
-  const models = [...$("#query-models").selectedOptions].map((o) => o.value);
-  if (!models.length) { out.innerHTML = `<p class="error">Select at least one model.</p>`; return; }
-  const body = {
-    texts: [$("#query-text").value],
-    include_baseline_diff: $("#query-diff").checked,
-    include_label_f1: $("#query-f1").checked,
-  };
-  const topk = $("#query-topk").value;
-  if (topk !== "") body.top_k = Number(topk);
-  btn.disabled = true;
-  $("#query-status").textContent = "Classifying …";
-  try {
-    let byModel;
-    if (models.length === 1) {
-      const r = await Api.post("/predict", { ...body, model_name: models[0] });
-      byModel = { [models[0]]: r.results[0].predictions };
-    } else {
-      const r = await Api.post("/predict/multi", { ...body, model_names: models });
-      byModel = r.results[0].predictions_by_model;
-    }
-    out.innerHTML = Object.entries(byModel).map(([name, preds]) => `
-      <div class="card"><h3>${esc(name)}</h3>${preds.length ? preds.map((p) => `
-        <div class="pred${p.above_threshold === false ? " below-t" : ""}">
-          <span class="name">${esc(p.label)}</span>
-          <span class="bar"><span data-width="${Math.round(p.confidence * 100)}"></span></span>
-          <span class="val">${p.confidence.toFixed(3)}${p.baseline_diff !== undefined
-            ? ` <span class="muted">diff ${p.baseline_diff >= 0 ? "+" : ""}${p.baseline_diff.toFixed(3)}</span>` : ""}${
-            // != null covers both: absent when not asked for, null when the bundle
-            // carries no score for this label (older or partially scored models).
-            p.label_f1 != null ? ` <span class="muted">F1 ${p.label_f1.toFixed(3)}</span>` : ""}${
-            p.above_threshold === false ? ` <span class="muted">· below threshold</span>` : ""}</span>
-        </div>`).join("")
-        : `<p class="muted">No label above the model's threshold.</p>`}</div>`).join("");
-    applyBarWidths(out);
-  } catch (err) {
-    // 422 here means the bundle exists but cannot be loaded — in practice a
-    // pre-format-2 model. Say what to do about it; the raw message does not.
-    const hint = err.status === 422
-      ? ` This model was trained with an older bundle format and has to be retrained
-          (the Models tab marks it).` : "";
-    out.innerHTML = `<p class="error">${esc(err.message)}${esc(hint)}</p>`;
-  } finally { btn.disabled = false; $("#query-status").textContent = ""; }
 }
 
 /* ---------- training ---------- */

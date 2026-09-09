@@ -84,6 +84,28 @@ Text eingeben, Modell(e) anhaken, **Classify**.
   dauern (das Modell wird von der Festplatte geladen) — danach kommen Antworten
   in Millisekunden.
 
+## Viele Texte auf einmal (Query-Tab)
+
+Der Query-Tab kennt drei Modi — die Auswahl steht oben im Formular:
+
+- **Ein Text:** wie bisher, mit Balken, `diff` und Label-F1.
+- **Viele Texte:** ein Text pro Zeile. Läuft in Paketen, zeigt eine Tabelle und lässt
+  sie als CSV herunterladen. Leerzeilen werden übersprungen.
+- **Eine CSV-Datei:** die Datei braucht die Textspalten, auf die das Modell trainiert
+  wurde — **welche das sind und wie stark jede zählt, liest der Server aus dem Modell
+  selbst**. Das ist kein Komfort, sondern Notwendigkeit: ein Modell, das auf
+  „Titel Titel Beschreibung" gefitted wurde, sitzt auf einer anderen Merkmalsverteilung
+  als eines auf „Titel Beschreibung" — und seine Schwellen sitzen mit darauf.
+
+Die Antwort ist eine CSV mit `row,uri,label,confidence,above_threshold`, eine Zeile je
+vorhergesagtem Label. `row` ist die 0-basierte Nummer der Eingabezeile — damit lassen
+sich die Antworten wieder an die eigene Datei anfügen. **Zeilen, für die das Modell
+nichts behauptet, stehen mit ab hier leeren Feldern trotzdem drin**: „welche hat es
+abgelehnt" gehört zur Antwort dazu.
+
+Ab ~5000 Zeilen verweist der Textmodus auf die CSV-Variante — die streamt, statt jede
+Antwort im Browser zu sammeln.
+
 ## Qualität verstehen (Models-Tab)
 
 - **F1 (0–1):** Wie gut die Antworten des Modells bei einer ehrlichen Prüfung

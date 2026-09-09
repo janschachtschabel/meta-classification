@@ -47,9 +47,39 @@
       <section id="tab-query" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-query" tabindex="0">
         <h2>Test queries</h2>
         <form id="query-form" class="card">
-          <label for="query-text">Text to classify</label>
-          <textarea id="query-text" rows="3" required
-                    placeholder="e.g. Der Satz des Pythagoras im rechtwinkligen Dreieck"></textarea>
+          <fieldset class="modes">
+            <legend>What do you want to classify?</legend>
+            <label class="check"><input type="radio" name="query-mode" value="one" checked>
+              One text</label>
+            <label class="check"><input type="radio" name="query-mode" value="many">
+              Many texts <span class="muted">(one per line)</span></label>
+            <label class="check"><input type="radio" name="query-mode" value="csv">
+              A CSV file <span class="muted">(the columns the model was trained on)</span></label>
+          </fieldset>
+
+          <div id="query-input-one">
+            <label for="query-text">Text to classify</label>
+            <textarea id="query-text" rows="3"
+                      placeholder="e.g. Der Satz des Pythagoras im rechtwinkligen Dreieck"></textarea>
+          </div>
+          <div id="query-input-many" hidden>
+            <label for="query-lines">Texts, one per line</label>
+            <textarea id="query-lines" rows="8" aria-describedby="query-lines-hint"
+                      placeholder="Der Satz des Pythagoras&#10;Photosynthese der Pflanzen&#10;Der Wiener Kongress"></textarea>
+            <p id="query-lines-hint" class="muted">Blank lines are skipped. Sent in batches;
+               the answers arrive as a table you can download as CSV.</p>
+          </div>
+          <div id="query-input-csv" hidden>
+            <label for="query-file">CSV file</label>
+            <input id="query-file" type="file" accept=".csv,text/csv" aria-describedby="query-file-hint">
+            <p id="query-file-hint" class="muted">The file needs the text columns the model was
+               trained on — the server reads which ones, and how often each counts, out of the
+               model itself. You get a CSV back: one line per predicted label, with the number
+               of the input row it belongs to.</p>
+            <label for="query-separator">Column separator</label>
+            <input id="query-separator" type="text" value=";" size="3" maxlength="1">
+          </div>
+
           <div class="row">
             <div>
               <label for="query-models">Models (Ctrl-click for several)</label>
@@ -60,10 +90,12 @@
                 <span class="muted">(blank = model decides via its tuned thresholds ·
                 N = show the N most probable, entries below their threshold appear dimmed)</span></label>
               <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
-              <label class="check"><input id="query-diff" type="checkbox" checked>
-                Show baseline diff <span class="muted">(text signal vs. base rate)</span></label>
-              <label class="check"><input id="query-f1" type="checkbox" checked>
-                Show label F1 <span class="muted">(how reliable this label is at all)</span></label>
+              <div id="query-signals">
+                <label class="check"><input id="query-diff" type="checkbox" checked>
+                  Show baseline diff <span class="muted">(text signal vs. base rate)</span></label>
+                <label class="check"><input id="query-f1" type="checkbox" checked>
+                  Show label F1 <span class="muted">(how reliable this label is at all)</span></label>
+              </div>
             </div>
           </div>
           <button type="submit" id="query-btn">Classify</button>
@@ -302,6 +334,7 @@
 
 <script src="api.js"></script>
 <script src="pills.js"></script>
+<script src="query.js"></script>
 <script src="share.js"></script>
 <script src="models.js"></script>
 <script src="model-detail.js"></script>

@@ -45,17 +45,29 @@ const Api = (() => {
     return type.includes("json") ? res.json() : res;
   }
 
-  /* Authenticated file download: fetch as blob, hand to the browser. */
-  async function download(path, filename) {
-    const res = await request(path, { method: "POST" });
-    const url = URL.createObjectURL(await res.blob());
+  /* Hand a blob to the browser as a download. */
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
     const a = Object.assign(document.createElement("a"), { href: url, download: filename });
     a.click();
     URL.revokeObjectURL(url);
   }
 
+  /* Authenticated file download: fetch as blob, hand to the browser. */
+  async function download(path, filename) {
+    saveBlob(await (await request(path, { method: "POST" })).blob(), filename);
+  }
+
+  /* The same, for endpoints that answer a multipart upload with a file. */
+  async function downloadForm(path, form, filename) {
+    const res = await request(path, { method: "POST", form });
+    const blob = await res.blob();
+    saveBlob(blob, filename);
+    return blob;
+  }
+
   return {
-    getKey, setKey, clearKey, ApiError, download,
+    getKey, setKey, clearKey, ApiError, download, downloadForm, saveBlob,
     get: (p) => request(p),
     post: (p, json) => request(p, { method: "POST", json }),
     put: (p, json) => request(p, { method: "PUT", json }),

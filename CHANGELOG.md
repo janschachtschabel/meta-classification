@@ -4,6 +4,23 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — the Query tab classifies lists and files, not just one text
+
+- Three modes: **one text** (as before), **many texts** (one per line, sent in batches
+  of 500, answered as a table you can download as CSV), and **a CSV file** (uploaded to
+  `/predict/csv`, answered as a CSV download plus a receipt).
+- A text the model asserts nothing for is listed with an empty label in both bulk modes
+  — "which ones did it refuse" is part of the answer, not something to infer from a gap.
+- A `<fieldset>` of radios, so grouping, the group name, arrow-key navigation and the
+  single tab stop come from the browser. The reliability-signal checkboxes hide in CSV
+  mode: that answer has no column for them, and a control that does nothing is a lie.
+- Verified in the running UI: keyboard-only mode switching, 360 px without horizontal
+  scrolling, every target ≥ 24×24 (the file input was 23 px — fixed for every upload
+  field), dark mode via the tokens, the outcome announced on the `aria-live` status,
+  no CSP or console errors.
+- `query.js` split out of `app.js` (389 / 236).
+
+
 ### Added — classify a whole CSV in one call (`POST /predict/csv`)
 
 - Upload a CSV, get a CSV back. The daily editorial job is "classify these 500 new
