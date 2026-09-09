@@ -5,6 +5,7 @@ Exercises the full pipeline (load -> prepare -> split -> bake-off -> threshold
 round-trip with the secure skops format.
 """
 
+import json
 import time
 from pathlib import Path
 
@@ -1394,6 +1395,105 @@ def test_bundle_carries_per_label_f1_and_survives_a_malformed_metrics_file(tmp_p
     assert reloaded.per_label_f1 == {}  # ignored, not crashed
     ranked = reloaded.predict(["Bruchrechnung"], top_k=1, include_label_f1=True)
     assert ranked[0][0].label_f1 is None
+
+
+def _trained_registry(tmp_path, info: dict | None = None) -> tuple[Registry, Settings]:
+    """Train the tiny fixture model and return its registry (helper for the export tests)."""
+    settings = _settings(tmp_path)
+    config = _config()
+    req = {**_request(), **({"info": info} if info else {})}
+    run_training(
+        req, settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    return Registry(settings.models_dir, 2), settings
+
+
+def test_export_carries_a_manifest_and_a_readable_model_card(tmp_path):
+    """An exported bundle is what a third party receives, and a ZIP of two skops
+    containers plus JSON tells a human nothing. The archive therefore carries a
+    generated card (what it does, how it was trained, how well, and the author's own
+    statements) and a manifest of SHA-256 sums covering every other member."""
+    import io
+    import zipfile
+
+    registry, _ = _trained_registry(tmp_path, info={
+        "author": "Redaktion WLO", "license": "CC BY-SA 4.0",
+        "description": "Subject classifier. Not for grading learners.",
+    })
+
+    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as archive:
+        members = set(archive.namelist())
+        assert {"manifest.json", "README.md"} <= members
+        manifest = json.loads(archive.read("manifest.json"))
+        # Every member except the manifest itself is covered, each by a real digest.
+        assert set(manifest["files"]) == members - {"manifest.json"}
+        assert all(len(digest) == 64 for digest in manifest["files"].values())
+        assert manifest["model_name"] == "tiny_model"
+
+        card = archive.read("README.md").decode("utf-8")
+    for expected in ("tiny_model", "Redaktion WLO", "CC BY-SA 4.0",
+                     "Not for grading learners", "tiny.csv", "F1"):
+        assert expected in card, f"the model card should mention {expected!r}"
+
+
+def test_import_rejects_a_tampered_member(tmp_path):
+    """The reason the manifest exists: a bundle travels as a 50-180 MB download, and a
+    member that arrives corrupted or altered must be refused rather than loaded. Only
+    skops choking on it would have caught this before."""
+    import io
+    import zipfile
+
+    import pytest
+
+    from app.registry import UnsafeModelError
+
+    registry, _ = _trained_registry(tmp_path)
+    original = registry.export_zip("tiny_model")
+
+    tampered = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(original)) as source, \
+            zipfile.ZipFile(tampered, "w", zipfile.ZIP_DEFLATED) as target:
+        for member in source.namelist():
+            payload = source.read(member)
+            if member == "head.skops":
+                payload = payload[:-1] + bytes([payload[-1] ^ 0x01])  # one flipped bit
+            target.writestr(member, payload)
+
+    with pytest.raises(UnsafeModelError, match="head.skops"):
+        registry.import_zip("tampered_copy", tampered.getvalue())
+    assert "tampered_copy" not in registry.list()
+
+
+def test_import_still_accepts_an_archive_without_a_manifest(tmp_path):
+    """Bundles exported by 3.1.0 carry no manifest. Verification applies when one is
+    present; its absence is not an error, or every model shared before this release
+    would become unimportable."""
+    import io
+    import zipfile
+
+    registry, _ = _trained_registry(tmp_path)
+    stripped = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as source, \
+            zipfile.ZipFile(stripped, "w", zipfile.ZIP_DEFLATED) as target:
+        for member in source.namelist():
+            if member not in ("manifest.json", "README.md"):
+                target.writestr(member, source.read(member))
+
+    registry.import_zip("legacy_copy", stripped.getvalue())
+    assert "legacy_copy" in registry.list()
+
+
+def test_transport_artifacts_are_not_kept_in_the_installed_bundle(tmp_path):
+    """The manifest and the card describe one ARCHIVE and are regenerated per export.
+    Writing them into the bundle directory would make the next export ship a stale
+    copy alongside the fresh one."""
+    registry, settings = _trained_registry(tmp_path)
+    registry.import_zip("copy", registry.export_zip("tiny_model"))
+
+    installed = {p.name for p in (settings.models_dir / "copy").iterdir()}
+    assert "manifest.json" not in installed and "README.md" not in installed
+    assert "head.skops" in installed and "config.json" in installed
 
 
 def test_import_rejects_zip_bomb(tmp_path):

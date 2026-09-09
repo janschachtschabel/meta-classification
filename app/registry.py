@@ -18,9 +18,18 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
+from . import model_card
 from .classifier import ClassifierModel
 from .data import label_vocabulary
-from .model_io import UnsafeModelError, _read_bundle, _write_bundle
+from .model_io import (
+    CARD_FILE,
+    MANIFEST_FILE,
+    UnsafeModelError,
+    _read_bundle,
+    _write_bundle,
+    build_manifest,
+    verify_manifest,
+)
 from .settings import get_settings
 
 # Every api_v3 bundle contains all three; requiring them lets a truncated/crafted
@@ -37,7 +46,7 @@ _DECOMPRESSION_FLOOR_BYTES = 64 * 1024 * 1024
 # Bundles contain exactly these files. Allowlisting member names (instead of
 # pattern-blocking bad ones) also kills dotfiles and Windows drive-relative
 # names like "C:evil" that slip past character blocklists.
-_ALLOWED_MEMBERS = _REQUIRED_FILES | {"metrics.json"}
+_ALLOWED_MEMBERS = _REQUIRED_FILES | {"metrics.json", MANIFEST_FILE, CARD_FILE}
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
 _BACKUP_SUFFIX = ".prebackup"
@@ -238,14 +247,33 @@ class Registry:
                 self._cache.pop(name, None)
 
     def export_zip(self, name: str) -> bytes:
-        buffer = io.BytesIO()
+        """Pack a bundle, plus a generated model card and a checksum manifest.
+
+        Both are transport artifacts: regenerated on every export so they always
+        describe THIS archive, and never stored in the bundle directory (see the
+        rationale on ``build_manifest``).
+        """
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
-            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-                for file in self._path(name).iterdir():
-                    if file.is_file():
-                        archive.write(file, arcname=file.name)
+            directory = self._path(name)
+            members = {
+                file.name: file.read_bytes()
+                for file in sorted(directory.iterdir())
+                if file.is_file() and file.name not in (MANIFEST_FILE, CARD_FILE)
+            }
+            config = json.loads(members["config.json"])
+            metadata = json.loads(members["metrics.json"]) if "metrics.json" in members else {}
+
+        card = model_card.render(name, config, metadata, label_vocabulary(config.get("classes") or []))
+        members[CARD_FILE] = card.encode("utf-8")
+        manifest = build_manifest(name, members, metadata)
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for member, payload in sorted(members.items()):
+                archive.writestr(member, payload)
+            archive.writestr(MANIFEST_FILE, json.dumps(manifest, ensure_ascii=False, indent=2))
         return buffer.getvalue()
 
     def import_zip(self, name: str, data: bytes) -> dict:
@@ -280,8 +308,17 @@ class Registry:
                     shutil.rmtree(tmp)
                 tmp.mkdir(parents=True)
                 try:
-                    for member in members:
-                        (tmp / member).write_bytes(archive.read(member))
+                    payloads = {member: archive.read(member) for member in members}
+                    if MANIFEST_FILE in payloads:
+                        # Absent for bundles exported before 3.2: verification applies
+                        # when a manifest is there, its absence is not an error.
+                        verify_manifest(
+                            json.loads(payloads[MANIFEST_FILE]),
+                            {m: p for m, p in payloads.items() if m != MANIFEST_FILE},
+                        )
+                    for member, payload in payloads.items():
+                        if member not in (MANIFEST_FILE, CARD_FILE):
+                            (tmp / member).write_bytes(payload)
                     _read_bundle(tmp)  # validates config + skops safety; raises if unsafe
                 except Exception as exc:
                     shutil.rmtree(tmp, ignore_errors=True)

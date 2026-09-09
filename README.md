@@ -405,7 +405,13 @@ add complementary signal.*
 
 An exported model is a ZIP with `config.json` + `head.skops` + `vectorizer.skops` +
 `vocabulary.json` (pure sklearn objects) and loads **directly with scikit-learn + skops** —
-without this app. The TF-IDF vocabularies live in `vocabulary.json` (terms in column
+without this app. Two further members are generated per export and describe *that
+archive*: a **`README.md`** model card (what it classifies, the author's own statements,
+how it was trained, how well it scores, and its ten weakest labels) and a
+**`manifest.json`** listing a SHA-256 for every other member. Import verifies the
+manifest and refuses an archive that arrived altered or incomplete — an archive without
+one still imports, so bundles shared before 3.2 keep working. Neither file is kept in the
+installed bundle; both are rebuilt on the next export. The TF-IDF vocabularies live in `vocabulary.json` (terms in column
 order) rather than inside the skops container: skops is super-quadratic in the number of
 dict entries, which made a 200 000-term vocabulary take ~45 min and 148 MB to write
 instead of 0.3 s and 3 MB. Re-attaching them is two lines:

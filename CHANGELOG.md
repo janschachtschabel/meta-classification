@@ -4,6 +4,33 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — exported bundles explain and verify themselves
+
+- Every export now carries a generated **`README.md` model card**: what the model
+  classifies (including the derived label vocabulary), the author's own statements,
+  how it was trained (dataset, columns, weights, profile, `C` and the searched grid,
+  rows, features, duration), how well it scores, and **its ten weakest labels** — the
+  ones where a high confidence is worth least. Where a model was trained with
+  `text_column_weights`, the card repeats the train/serve consistency warning, since
+  a recipient cannot know it otherwise.
+- And a **`manifest.json`** with a SHA-256 for every other member. Import verifies it
+  and refuses an archive whose member was altered or arrived truncated; previously
+  only skops choking on it would have caught that. An archive **without** a manifest
+  still imports, so bundles shared before this release keep working.
+- 🟢 Verified on the real 44 MB `faecher_300k_auto` bundle: export 2.0 s, six members
+  hashed, card generated with correct UTF-8 (2638 bytes for 2625 characters).
+- **Deviation from the plan, deliberate:** the manifest is built at *export* and
+  checked at *import*, not written at save and checked at load. `metrics.json` is
+  mutable by design (`PUT /models/{name}/info`) and `config.json` is rewritten by the
+  label-repair scripts, so a stored manifest would be invalidated by every legitimate
+  edit — and a load-time check would then reject a perfectly good bundle. The threat
+  worth guarding is the 50-180 MB transfer between servers, which is exactly this
+  boundary.
+- **Compatibility, one direction only:** an instance running 3.1.0 or earlier will
+  *reject* an archive exported by this version, because its member allowlist does not
+  know `manifest.json` and `README.md`. Upgrade the receiving side first.
+
+
 ### Added — model documentation that travels with the bundle
 
 - `PUT /models/{name}/info` stores `author`, `description` (purpose **and** limits),

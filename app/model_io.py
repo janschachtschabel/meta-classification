@@ -18,16 +18,19 @@ zero "untrusted" types, so loading rejects any file that introduces one.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import math
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from skops.io import dump as skops_dump
 from skops.io import get_untrusted_types
 from skops.io import load as skops_load
 
+from . import __version__
 from .classifier import ClassifierModel
 from .data import is_container_label
 from .vectorizers import TfidfBackend
@@ -44,10 +47,65 @@ _ALLOWED_EXTRA_TYPES: set[str] = set()
 # second. As JSON the same data is <0.1 s and ~1 MB. Format 2 and later only.
 _VOCAB_FILE = "vocabulary.json"
 
+# Transport-only members: generated per export, verified on import, never kept in the
+# installed bundle (a stale copy on disk would be zipped alongside the fresh one).
+MANIFEST_FILE = "manifest.json"
+CARD_FILE = "README.md"
+
 
 class UnsafeModelError(Exception):
     """Raised when a model file contains untrusted types, an unsafe layout, or is
     unreadable/corrupt (any bundle we cannot safely load)."""
+
+
+def build_manifest(name: str, members: dict[str, bytes], metadata: dict) -> dict:
+    """Describe an archive: a SHA-256 for every member, plus what it is.
+
+    Deliberately built at EXPORT rather than at save time. ``metrics.json`` is
+    mutable by design (``PUT /models/{name}/info``) and ``config.json`` is rewritten
+    by the label-repair scripts, so a manifest stored next to them would be
+    invalidated by every legitimate edit — and a load-time check would then refuse a
+    perfectly good bundle. What actually needs protecting is the 50-180 MB download
+    between two servers, and that is exactly the export/import boundary.
+    """
+    metrics = metadata.get("metrics") or {}
+    return {
+        "model_name": name,
+        "app_version": __version__,
+        "format_version": FORMAT_VERSION,
+        "exported_at": datetime.now(UTC).isoformat(),
+        "created_at": metadata.get("created_at"),
+        "n_labels": metadata.get("n_labels"),
+        "f1_macro": metrics.get("f1_macro"),
+        "dataset": metadata.get("dataset"),
+        "files": {
+            member: hashlib.sha256(payload).hexdigest()
+            for member, payload in sorted(members.items())
+        },
+    }
+
+
+def verify_manifest(manifest: object, members: dict[str, bytes]) -> None:
+    """Check every member against the manifest; raise ``UnsafeModelError`` on any drift.
+
+    Covers three failures with one comparison: a truncated download, a member altered
+    in transit, and a member the manifest does not mention at all.
+    """
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), dict):
+        raise UnsafeModelError(f"{MANIFEST_FILE} is malformed")
+    expected: dict = manifest["files"]
+    for member, payload in sorted(members.items()):
+        digest = expected.get(member)
+        if digest is None:
+            raise UnsafeModelError(f"{member} is not listed in {MANIFEST_FILE}")
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise UnsafeModelError(
+                f"{member} does not match its checksum in {MANIFEST_FILE} "
+                "(the archive was altered or arrived incomplete)"
+            )
+    missing = sorted(set(expected) - set(members))
+    if missing:
+        raise UnsafeModelError(f"{MANIFEST_FILE} lists files the archive lacks: {missing}")
 
 
 def _safe_skops_load(path: Path):
