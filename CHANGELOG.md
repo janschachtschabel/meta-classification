@@ -4,6 +4,16 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Removed — the browser no longer holds the training queue
+
+- Selecting several label fields posted the first run and kept the rest in a JavaScript
+  array, shifting one out on each poll tick. Every run now goes to the server at once
+  and the server holds the order — the tab can close, the laptop can sleep.
+- The status card shows what is waiting from the server's own answer
+  (`GET /train/status` → `queued`), not from page state.
+- The name preview no longer says "keep this tab open", because that is no longer true.
+
+
 ### Changed — a second training is queued, not refused
 
 - `POST /train` while a run is going answers **202 with a `queue_position`** instead of

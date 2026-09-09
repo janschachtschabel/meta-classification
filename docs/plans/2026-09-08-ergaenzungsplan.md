@@ -233,7 +233,7 @@ gated.
   *against* the label.
 - Files: `app/static/ui/explain.js` (new, 98), `query.js`, `index.html`, `style.css`.
 
-### A5 · Server-side training queue + D5 persisted history (M, 3 days) — **server done 2026-09-09**
+### A5 · Server-side training queue + D5 persisted history (M, 3 days) — **done 2026-09-09**
 - `POST /train` while busy → 202 with a queue position (bounded queue, e.g. 10);
   jobs persist to `models_dir/.jobs.jsonl` (request, status, metrics, duration);
   `GET /train/history`; the UI's tab-bound queue goes away (the browser can close).

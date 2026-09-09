@@ -10,15 +10,12 @@ let pollTimer = null;
 let pollInFlight = false;
 
 async function pollTick() {
-  // setInterval does not await async ticks: a slow /train POST inside
-  // advanceQueue would overlap the next tick and double-shift the queue
-  // (server 409 -> whole queue dropped). One tick at a time.
+  // setInterval does not await async ticks; one tick at a time keeps a slow response
+  // from overlapping the next.
   if (pollInFlight) return;
   pollInFlight = true;
   try {
-    const s = await Api.get("/train/status");
-    renderTrainStatus(s);
-    await advanceQueue(s.status);  // start the next queued training when idle
+    renderTrainStatus(await Api.get("/train/status"));
   } catch { /* transient poll failure: keep the last rendered state */ }
   finally { pollInFlight = false; }
 }
@@ -58,6 +55,7 @@ function announceTrainState(s) {
 function renderTrainStatus(s) {
   renderTrainChip(s);
   announceTrainState(s);
+  renderQueueLine(s.queued || []);
   const el = $("#train-status");
   const rows = [["Status", s.status], ["Phase", s.phase || "–"], ["Detail", s.phase_detail || "–"],
                 ["Model", s.model_name || "–"], ["Elapsed", s.elapsed_seconds != null ? `${s.elapsed_seconds}s` : "–"],
@@ -81,12 +79,22 @@ function renderTrainStatus(s) {
   applyBarWidths(el);
   const stop = $("#train-stop");
   if (stop) stop.addEventListener("click", async () => {
-    trainQueue = [];  // stopping also cancels everything still queued
-    renderQueueLine();
+    // The server clears the queue as part of stopping; the next poll shows it gone.
     try { await Api.post("/train/stop"); toast("Stop requested — queue cleared."); }
     catch (err) { toast(err.message); }
   });
 }
+
+/* What is waiting behind the running run — read from the server, so it survives this
+   tab being closed, which is the whole reason the queue moved out of the page. */
+function renderQueueLine(queued) {
+  const el = $("#train-queue");
+  el.hidden = !queued.length;
+  el.textContent = queued.length
+    ? `Queued on the server: ${queued.join(", ")}`
+    : "";
+}
+
 
 /* Compact status in the topbar so a running training stays visible on EVERY tab. */
 function renderTrainChip(s) {

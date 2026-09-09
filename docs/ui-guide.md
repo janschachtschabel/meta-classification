@@ -102,6 +102,19 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
 Bei einem einzelnen Wort gibt es keine Wort-Zuordnung — weglassen braucht mindestens
 zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
 
+## Mehrere Läufe hintereinander (Training-Tab)
+
+Werden mehrere Label-Felder ausgewählt, entsteht pro Feld ein Modell. Alle Läufe gehen
+**sofort an den Server**, der sie der Reihe nach abarbeitet — der Tab darf zugehen, das
+Notebook zuklappen. Was noch wartet, steht unter dem Status („Queued on the server: …")
+und kommt aus der Serverantwort, nicht aus dem Browser.
+
+**Stop** beendet den laufenden Lauf *und* leert die Warteschlange: „Stop" heißt „das soll
+enden", nicht „spring zum nächsten".
+
+Unter *Training* → **history** steht danach, was jeder Lauf ergeben hat — auch die
+gescheiterten, die kein Modell hinterlassen und deren Grund es sonst nirgends mehr gäbe.
+
 ## Vor dem Start prüfen (Training-Tab)
 
 Unter den Trainingseinstellungen steht **Check before training**. Der Knopf liest den

@@ -91,36 +91,7 @@ function renderNamePreview() {
   const plan = plannedModels();
   if (plan.length <= 1) { el.textContent = ""; return; }
   el.textContent = `Will create ${plan.length} models, trained one after another `
-    + `(keep this tab open): ${plan.map((p) => p.name).join(", ")}`;
-}
-
-/* Client-side queue: the server trains ONE model at a time (single worker), so
-   several selected label fields are trained sequentially from this tab. */
-let trainQueue = [];
-
-function renderQueueLine() {
-  const el = $("#train-queue");
-  el.hidden = !trainQueue.length;
-  el.textContent = trainQueue.length
-    ? `Queued next (keep this tab open): ${trainQueue.map((b) => b.model_name).join(", ")}`
-    : "";
-}
-
-async function advanceQueue(status) {
-  if (!trainQueue.length) return;
-  // "idle" too: a hard stop from another client (or a server restart) resets the
-  // status straight to idle — without it the queue line would sit stale forever.
-  if (!["completed", "error", "stopped", "idle"].includes(status)) return;
-  const body = trainQueue.shift();
-  renderQueueLine();
-  try {
-    await Api.post("/train", body);
-    toast(`Training "${body.model_name}" started (${trainQueue.length} more queued).`);
-  } catch (err) {
-    toast(`Queue stopped: ${err.message}`);
-    trainQueue = [];
-    renderQueueLine();
-  }
+    + `on the server: ${plan.map((p) => p.name).join(", ")}`;
 }
 
 async function onTrainStart(ev) {
@@ -154,14 +125,23 @@ async function onTrainStart(ev) {
   const bodies = plan.map((p) => ({ ...shared, model_name: p.name, label_column: p.label_column }));
   btn.disabled = true;
   try {
-    await Api.post("/train", bodies[0]);
-    trainQueue = bodies.slice(1);
-    renderQueueLine();
-    toast(trainQueue.length
-      ? `Training "${bodies[0].model_name}" started — ${trainQueue.length} more queued.`
+    // Every run is submitted right away and the SERVER holds the order. This page used
+    // to keep the rest in an array and post them as the status changed, which meant a
+    // closed tab lost them; sending them now is what makes the tab disposable.
+    // Sequentially, because a position is only meaningful against a known queue.
+    const accepted = [];
+    for (const body of bodies) {
+      const answer = await Api.post("/train", body);
+      accepted.push(answer);
+    }
+    const queued = accepted.filter((a) => a.status === "queued").length;
+    toast(queued
+      ? `Training "${bodies[0].model_name}" started — ${queued} more queued on the server.`
       : `Training "${bodies[0].model_name}" started.`);
-  } catch (err) { showError(errEl, err); }
-  finally { btn.disabled = false; }
+  } catch (err) {
+    // Some may already be queued: say so rather than implying nothing happened.
+    showError(errEl, { message: `${err.message} Runs accepted before this one are queued.` });
+  } finally { btn.disabled = false; }
 }
 
 
