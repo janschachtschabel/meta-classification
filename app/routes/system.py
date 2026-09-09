@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
 from .. import __version__
-from ..jobs import training_job
+from ..jobs import job_runner
 from ..registry import get_registry
 from ..responses import ConfigResponse, HealthResponse
 from ..security import require_role
@@ -34,7 +34,7 @@ async def metrics() -> PlainTextResponse:
     headers, and the exposed values are operational counters only (no model
     names, paths or data).
     """
-    snap = training_job.snapshot()
+    snap = job_runner.snapshot()
     registry = get_registry()
     progress = float(snap["progress"] or 0)
     lines = [

@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from .. import data as data_mod
-from ..jobs import training_job
+from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter
 from ..registry import UnsafeModelError, get_registry
 from ..schemas import ExportRequest, ModelInfo
@@ -195,8 +195,8 @@ async def import_model(
     # staging dir (mutual clobber / franken-bundle). Two independent signals:
     # the job STATUS (normal runs), and THREAD liveness — after stop(hard=true)
     # the status lies ("idle") while the abandoned thread keeps saving its bundle.
-    status_busy = training_job.is_running() and training_job.snapshot().get("model_name") == name
-    if status_busy or training_job.active_model_name() == name:
+    status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
+    if status_busy or job_runner.active_model_name() == name:
         raise HTTPException(409, f"A training for model '{name}' is currently running; retry after it finishes.")
     data = await read_upload_capped(file, settings.max_upload_mb * 1024 * 1024)
     try:

@@ -233,9 +233,9 @@ def test_hard_stop_not_overwritten_by_finishing_thread():
     import threading
     import time
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     release = threading.Event()
 
     def target(*, on_progress, should_stop):
@@ -260,9 +260,9 @@ def test_hard_stop_refuses_new_start_until_thread_exits():
 
     import pytest
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     started = threading.Event()
     release = threading.Event()
 
@@ -470,9 +470,9 @@ def test_zombie_thread_progress_cannot_mutate_reset_state():
     dropped: /metrics otherwise reports training_running=0 with progress creeping."""
     import threading
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     entered = threading.Event()
     resume = threading.Event()
 
@@ -501,9 +501,9 @@ def test_failed_training_populates_error_field():
     """/train/status documents an `error` field; failures must populate it (it was
     a documented-but-always-null key)."""
     from app.errors import TrainingInputError
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
 
     def target(on_progress, should_stop):
         raise TrainingInputError("Column 'nope' not found.")
@@ -524,9 +524,9 @@ def test_active_model_name_survives_hard_stop_while_thread_lives():
     thread liveness instead."""
     import threading
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     entered = threading.Event()
     resume = threading.Event()
 
@@ -544,15 +544,15 @@ def test_active_model_name_survives_hard_stop_while_thread_lives():
     assert job.active_model_name() is None
 
 
-def test_training_job_cooperative_stop_sets_stopped_status():
-    """TrainingJob.stop() makes a cooperative target finish and the job report
+def test_job_runner_cooperative_stop_sets_stopped_status():
+    """JobRunner.stop() makes a cooperative target finish and the job report
     status 'stopped' (not 'completed')."""
     import threading
     import time
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     running = threading.Event()
 
     def target(*, on_progress, should_stop):
@@ -635,16 +635,16 @@ def test_request_cv_folds_overrides_config(tmp_path):
     assert "cross-validation" in meta["evaluation"]
 
 
-def test_training_job_shows_crafted_input_error_message():
+def test_job_runner_shows_crafted_input_error_message():
     """User-facing input errors (wrong column name, too few rows, bad cv_folds) are
     raised as TrainingInputError and their crafted message IS shown on /train/status —
     unlike arbitrary exceptions, which stay sanitized."""
     import time
 
     from app.errors import TrainingInputError
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
 
     def target(*, on_progress, should_stop):
         raise TrainingInputError("Label column 'oops' not found in ['title', 'taxonid']")
@@ -854,14 +854,14 @@ def test_prepare_avg_labels_and_rows_reflect_the_dropped_label_space(tmp_path):
     assert len(prep.texts) == prep.y_all.shape[0]
 
 
-def test_training_job_error_message_is_sanitized():
+def test_job_runner_error_message_is_sanitized():
     """A failed training job must NOT expose the raw exception (paths/internals) on
     the readonly /train/status snapshot."""
     import time
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
 
     def target(*, on_progress, should_stop):
         raise ValueError("leaked C:/secret/path.csv column=ssn value=42")
@@ -1680,9 +1680,9 @@ def test_heartbeat_is_none_when_not_running():
     idle and finished jobs report None (so the UI shows no stale stall hint)."""
     import time
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     assert job.snapshot()["seconds_since_heartbeat"] is None
 
     job.start(lambda *, on_progress, should_stop: {"ok": True}, model_name="m")
@@ -1701,9 +1701,9 @@ def test_heartbeat_refreshes_on_each_progress_update():
     import threading
     import time
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     step = threading.Event()
     stepped = threading.Event()
     release = threading.Event()
@@ -1736,9 +1736,9 @@ def test_silent_stall_is_visible_via_growing_heartbeat_age():
     import threading
     import time
 
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     reached_stall = threading.Event()
     release = threading.Event()
 

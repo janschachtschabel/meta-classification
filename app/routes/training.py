@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import job_history
-from ..jobs import training_job
+from ..jobs import job_runner
 from ..limiter import limiter, train_limit
 from ..profiles import load_training_config
 from ..registry import get_registry
@@ -134,7 +134,7 @@ async def train(
     try:
         # The singleton registry is injected so the training save shares its disk
         # lock with every API-side registry operation.
-        position = training_job.submit(
+        position = job_runner.submit(
                            run_training, req, settings, cfg, profile, get_registry(),
                            model_name=body.model_name,
                            # Everything but the documentation block: `info` is what the
@@ -171,7 +171,7 @@ async def status(_: str = Depends(require_role("readonly"))) -> dict:
     while `elapsed_seconds` grows either way), `model_name`,
     `results` (metrics on completion), `error`. **Auth:** readonly.
     """
-    return training_job.snapshot()
+    return job_runner.snapshot()
 
 
 @router.post("/train/stop", summary="Stop the running training", response_model=TrainStopResponse)
@@ -182,7 +182,7 @@ async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> d
     the C fits, or before the final training). `hard=true`: reset the status to `idle`
     immediately. **Auth:** admin.
     """
-    training_job.stop(hard=hard)
+    job_runner.stop(hard=hard)
     return {"status": "idle" if hard else "stopping"}
 
 

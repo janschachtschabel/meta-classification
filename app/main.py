@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 
 from . import __version__
-from .jobs import training_job
+from .jobs import job_runner
 from .limiter import limiter
 from .registry import Registry, get_registry
 from .routes import datasets, models, predict, predict_bulk, system, training
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
     # before the deploy fit). The thread is a daemon and dies with the process
     # anyway; this gives it the chance to end cleanly inside the termination grace
     # period instead, which is what the Helm chart's 60 s already assumed.
-    training_job.stop()
+    job_runner.stop()
     logger.info("api_v3 shutting down")
 
 

@@ -1,10 +1,13 @@
-"""Single background training job with thread-safe state, a queue and cooperative stop.
+"""One background job at a time: thread-safe state, a bounded queue, cooperative stop.
 
-Only one training runs at a time (the typical single-instance deployment); further
-submissions wait in a bounded queue and the finishing thread starts the next one. That
-queue used to live in the browser, so closing the tab lost every run that had not
-started yet. The training function receives ``on_progress`` and ``should_stop``
-callbacks so the orchestration in ``training.py`` stays free of threading concerns.
+Named for what it is rather than for its first user. It runs trainings today and will
+run evaluations next; both are a long CPU-bound pass over a dataset, and on a
+single-instance deployment exactly one of them may hold the CPU. Further submissions
+wait in the queue and the finishing thread starts the next. That queue used to live in
+the browser, so closing the tab lost every run that had not started yet.
+
+The job function receives ``on_progress`` and ``should_stop`` callbacks so the
+orchestration in ``training.py`` stays free of threading concerns.
 
 The status snapshot reports the current phase/progress/message plus a rough
 ``eta_seconds`` and ``elapsed_seconds`` derived from progress (estimate).
@@ -50,8 +53,8 @@ def _idle_state() -> dict:
     }
 
 
-class TrainingJob:
-    """Owns the background thread and the shared, lock-protected state dict."""
+class JobRunner:
+    """Owns the background thread, the queue, and the shared lock-protected state."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -346,4 +349,4 @@ class TrainingJob:
 
 
 # Module-level singleton used by the API routes.
-training_job = TrainingJob()
+job_runner = JobRunner()

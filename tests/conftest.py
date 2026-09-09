@@ -21,7 +21,7 @@ for _var in [k for k in os.environ if k.startswith("APIV3_")]:
     del os.environ[_var]
 os.environ["APIV3_CORS_ALLOW_ORIGINS"] = ""
 os.environ["APIV3_RATE_LIMIT_ENABLED"] = "true"
-# Any TrainingJob a test constructs writes its outcome to the configured history file.
+# Any JobRunner a test constructs writes its outcome to the configured history file.
 # Without this the suite appends to the developer's REAL one — found by reading that
 # file after a live run and seeing "first", "second", "third" in it.
 os.environ["APIV3_JOB_HISTORY_FILE"] = str(

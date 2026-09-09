@@ -274,9 +274,9 @@ def test_hard_stop_while_idle_keeps_the_last_result(monkeypatch, tmp_path):
     """`POST /train/stop?hard=true` resets the job state. Called when nothing runs
     — a double click, or a UI that stops a run that just finished — it wiped the
     metrics of the completed training, the one thing the operator was waiting for."""
-    from app.jobs import TrainingJob
+    from app.jobs import JobRunner
 
-    job = TrainingJob()
+    job = JobRunner()
     job.update(status="completed", progress=100, phase="done",
                model_name="subjects", results={"f1_macro": 0.81})
 
@@ -293,16 +293,16 @@ def test_shutdown_asks_a_running_training_to_stop(monkeypatch, tmp_path):
     daemon thread was simply killed at exit. Ask it to stop, so the checkpoints
     between the C fits can end the run cleanly within the grace period."""
 
-    from app.jobs import training_job
+    from app.jobs import job_runner
 
     client = _fresh_client(monkeypatch, tmp_path)
-    training_job._stop.clear()
+    job_runner._stop.clear()
     try:
         with client:  # __exit__ runs the lifespan shutdown
-            assert not training_job.should_stop()
-        assert training_job.should_stop()
+            assert not job_runner.should_stop()
+        assert job_runner.should_stop()
     finally:
-        training_job._stop.clear()
+        job_runner._stop.clear()
 
 
 def test_cors_wildcard_origin_disables_credentials(monkeypatch, tmp_path):

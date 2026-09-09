@@ -10,7 +10,7 @@ the classic train/val/test split, or k-fold cross-validation (every row trains
 AND validates via out-of-fold, deploy on 100% of the data).
 
 Callback-driven (``on_progress`` / ``should_stop``) so it carries no threading
-logic itself; ``jobs.TrainingJob`` runs it in the background.
+logic itself; ``jobs.JobRunner`` runs it in the background.
 """
 
 from __future__ import annotations

@@ -311,15 +311,15 @@ def test_import_garbage_zip_returns_400():
 def test_import_rejected_while_training_same_name():
     """Importing a model whose training is currently running is refused (409):
     both operations would otherwise race on the same staging directory."""
-    from app.jobs import training_job
+    from app.jobs import job_runner
 
-    training_job.update(status="running", model_name="inflight")
+    job_runner.update(status="running", model_name="inflight")
     try:
         files = {"file": ("inflight.zip", b"irrelevant", "application/zip")}
         response = client.post("/models/import", files=files, headers=ADMIN)
         assert response.status_code == 409
     finally:
-        training_job.update(status="idle", model_name=None)
+        job_runner.update(status="idle", model_name=None)
 
 
 def test_datasets_endpoints():
@@ -595,8 +595,8 @@ def test_train_error_paths(trained_model):
                        headers=ADMIN).status_code == 404
     assert client.post("/train", json=TRAIN_BODY, headers=ADMIN).status_code == 409  # name exists
 
-    from app.jobs import training_job
-    training_job.update(status="running", model_name="other")
+    from app.jobs import job_runner
+    job_runner.update(status="running", model_name="other")
     try:
         queued = client.post("/train", json={**TRAIN_BODY, "model_name": "m3"}, headers=ADMIN)
         assert queued.status_code == 202, queued.text
@@ -607,8 +607,8 @@ def test_train_error_paths(trained_model):
     finally:
         # stop() clears the queue; without it the faked "running" state would leave a
         # real run waiting to be dispatched into the tests that follow.
-        training_job.stop()
-        training_job.update(status="idle", model_name=None)
+        job_runner.stop()
+        job_runner.update(status="idle", model_name=None)
 
 
 def test_train_request_defaults_min_samples_per_label_to_20():
