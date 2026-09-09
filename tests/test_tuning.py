@@ -428,32 +428,34 @@ def test_tune_threshold_columns_without_per_label_repeats_the_global():
     assert tuning.tune_thresholds(y, proba, ["a", "b"], per_label=False) == (global_t, {})
 
 
-def test_a_profile_can_pick_c_on_tuned_thresholds_and_defaults_not_to(tmp_path):
-    """C1's on-switch. Off for every shipped profile until the benchmark's gate is
-    met, so the mechanism can be measured without changing what anyone trains today.
+def test_every_shipped_profile_picks_c_on_tuned_thresholds(tmp_path):
+    """C1, measured and adopted: macro F1 up on all three benchmark seeds (median
+    +0.0033 against a >= 0.002 gate) while the model asserts FEWER labels per row.
+    The field's comment in profiles.py carries the numbers.
 
-    The yaml half is not decoration: every shipped profile omits the key, so a
-    forgotten line in the parser would still read back the code default and let an
-    assertion about the defaults pass while `config.yaml` was silently ignored.
+    The yaml half matters more now than it did while the flag was off: with the code
+    default True, a parser that ignored the key would silently refuse to let anyone turn
+    it back off, and every shipped profile reading True would hide that.
     """
     from app.profiles import Profile, load_training_config
     from app.settings import get_settings
 
-    assert Profile("x").select_c_on_tuned_thresholds is False
+    assert Profile("x").select_c_on_tuned_thresholds is True
     for profile in load_training_config(get_settings().config_file).profiles.values():
-        assert profile.select_c_on_tuned_thresholds is False, (
-            "no shipped profile picks C on tuned thresholds yet"
+        assert profile.select_c_on_tuned_thresholds is True, (
+            f"{profile.name} must select C the way it was measured to be selected"
         )
 
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-        "profiles:\n"
-        "  tuned:\n"
-        "    C_grid: [1.0]\n"
-        "    select_c_on_tuned_thresholds: true\n",
+        """profiles:
+  flat:
+    C_grid: [1.0]
+    select_c_on_tuned_thresholds: false
+""",
         encoding="utf-8",
     )
-    assert load_training_config(config_file).get("tuned").select_c_on_tuned_thresholds is True
+    assert load_training_config(config_file).get("flat").select_c_on_tuned_thresholds is False
 
 
 def test_cross_val_evaluate_picks_the_c_that_wins_under_its_own_thresholds(scripted_c_search):

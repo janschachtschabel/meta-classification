@@ -323,47 +323,51 @@ rather than argued.
 
 | # | Proposal | Status after checking | What it would cost |
 |---|---|---|---|
-| **C1** | **Pick C on tuned thresholds, not on a fixed 0.5.** Today `tuning.py` scores every candidate with `_default_decision` (a flat 0.5 cut for multilabel) and tunes thresholds only on the winner, so a candidate that would be better *with its own thresholds* can be eliminated before it is ever tried. | 🟢 **Confirmed, and the better procedure already exists in this repo**: `scripts/benchmark_field_weights.py` tunes thresholds per C and *then* picks the best. The production pipeline never adopted it. Multilabel only — single-label serving is argmax and reads no threshold. | No new fits: in CV mode the OOF probabilities for every C are already in memory (`oof[c]`). Threshold tuning per candidate is \|grid\| × the current tuning cost. |
+| **C1** | **Pick C on tuned thresholds, not on a fixed 0.5.** Today `tuning.py` scores every candidate with `_default_decision` (a flat 0.5 cut for multilabel) and tunes thresholds only on the winner, so a candidate that would be better *with its own thresholds* can be eliminated before it is ever tried. | ✅ **BUILT AND ADOPTED 2026-09-09** — median +0.0033 macro F1 over three held-out seeds, fewer labels per row, default on. See the C1 section below. The better procedure already existed in this repo: `scripts/benchmark_field_weights.py` tunes thresholds per C and *then* picks the best. The production pipeline never adopted it. Multilabel only — single-label serving is argmax and reads no threshold. | No new fits: in CV mode the OOF probabilities for every C are already in memory (`oof[c]`). Threshold tuning per candidate is \|grid\| × the current tuning cost. |
 | **C2** | **Stop searching thresholds in 0.05 steps.** `_DEFAULT_GRID` is 0.05…0.95; anything between two steps, or outside the range, is unreachable. Derive candidates from the observed scores (a PR curve), and shrink toward the global threshold where a label has few positives. | 🟢 **Confirmed** for the grid. The shrinkage half is plan item **B4**, already scheduled — C2 and B4 should be one piece of work, not two. | No new fits. Sorting each label's scores is O(n log n) per label on data already held. |
 | **C3** | **Apply the field weighting consistently at train and predict time.** | 🔴 **Already done** — the claim is out of date. `text_column_weights` is a validated `TrainRequest` field (`schemas.py:73`, rejects columns the request does not train on), `prepare.py:128` honours it over the config default, the admin UI always sends it, and `/predict/csv` reads the weights back out of the model's own metadata (`routes/predict_bulk.py:60`) so a CSV is assembled the way the model was fit. What remains is inherent: `/predict` with a bare text cannot know how the caller assembled it, which is why the training form says so. | — |
 | **C4** | **Merge labels across duplicate texts** instead of keeping the first row and discarding the rest (`data.py:264`). | 🟡 **Mechanism confirmed, effect measured as negligible.** On `data_30k.csv` dedup drops **7 445 of 32 516 rows (22.9 %)** across 5 406 duplicate groups — but only **2 groups** contain a label the kept row lacks, i.e. **2 lost label assignments in total**, and 1 genuine disagreement. `data_30k_ai.csv` and `data_30k_base.csv` have no duplicate texts at all. Duplicates here are the same item's metadata repeated, so they carry the same labels. | Measured 2026-09-09; the review effort would find almost nothing **on these three exports**. A differently shaped export (one row per collection membership) could differ — re-measure before dismissing it there. |
 | **C5** | **Two small experiments**: `class_weight="balanced"` against unweighted (with thresholds retuned either way), and a relative weight between the word and character TF-IDF blocks. | 🟢 **Confirmed as unmeasured.** `classifier.py:33` hardcodes `class_weight="balanced"`; `vectorizers.py:83` `hstack`es the two blocks with no scaling. Both interact with **B5** (calibration) — `balanced` is precisely what makes `confidence` read high. | Comparison runs only; neither changes the bundle size. |
 
-### C1 in detail — the package to build first
+### C1 — built and measured, 2026-09-09. ADOPTED.
 
-Four steps, each its own commit, because the first one is a refactor and bundling a
-refactor into a feature is how a bisect stops being useful.
+Four commits, the refactor first and alone (bundling a refactor into a feature is how a
+bisect stops being useful):
 
-0. **Split `tune_thresholds` into a column core and a URI-keyed wrapper.** The maths is
-   about columns; the `uri -> threshold` dict is presentation at the edge. Without this,
-   scoring a candidate by its own thresholds means pushing `classes` and `per_label`
-   through `select_c`, which already carries nine parameters. Behaviour-preserving, and
-   it lets `apply_thresholds` become one vectorised comparison instead of a Python loop
-   over labels.
-1. **`Profile.select_c_on_tuned_thresholds: bool = False`** — off until the gate is met,
-   the same shape as `refit_vectorizer_per_fold` and `selection_tol`.
-2. **CV path**: tune thresholds on `oof[c]` for every candidate, pick the (C, thresholds)
-   pair together, and keep the winner's thresholds instead of re-deriving them.
-3. **Holdout path**: `select_c` scores each candidate with its own thresholds and returns
-   them. This also removes a redundant `head.predict_proba(x_va)` that `deploy.py:108`
-   runs today on probabilities `select_c` had already computed and discarded.
+0. `tune_thresholds` split into a column core and a URI-keyed wrapper. ✅
+1. `Profile.select_c_on_tuned_thresholds`. ✅
+2. CV path: thresholds tuned on `oof[c]` per candidate, the pair chosen together. ✅
+3. Holdout path: `select_c` scores each candidate under its own thresholds and returns
+   them, which also removed the redundant second `predict_proba(x_va)`. ✅
+4. `scripts/benchmark_selection_rule.py`, gated on the owner's two conditions. ✅
 
-**Gate.** Macro F1 up by >= 0.002 on the 26 k target, *and* `predicted_labels_per_row`
-not more than 10 % above the baseline. The second half is the owner's own condition and
-the reason `compute_metrics` already records that pair: a threshold rule can always buy
-macro F1 by asserting more labels per row, and that is a different product rather than a
-better model. Precision and recall are reported beside them so the trade is visible.
+**Result — three seeds on data_30k_ai (26 450 rows x 48 labels, `auto` shape), each
+drawing its own held-out split and folds; the gate reads 5 290 rows neither the C search
+nor the threshold tuning saw:**
 
-**Cost.** `tune_thresholds` runs |c_grid| times instead of once — no additional model
-fits, which is what makes this the cheapest quality lever left in the plan.
+| seed | macro F1 | Δ | labels/row | best_C |
+|------|----------|---|-----------|--------|
+| 42   | 0.6884 → 0.6984 | +0.0101 | 1.525 → 1.488 (−2.4 %) | 8 → 32 |
+| 7    | 0.7243 → 0.7271 | +0.0028 | 1.511 → 1.502 (−0.6 %) | 8 → 32 |
+| 1234 | 0.7221 → 0.7254 | +0.0033 | 1.468 → 1.473 (+0.3 %) | 8 → 32 |
 
-**Sequencing, if these are taken up:** C1 and C2 are one experiment, not two — both
-change how a decision threshold is chosen, and measuring them apart would attribute the
-same gain twice. They fold naturally into **B4**, which already owns the shrinkage half.
-Run them on a fixed holdout with the label set unchanged, and report **precision, recall
-and `predicted_labels_per_row` beside macro/micro F1**: a threshold change that buys F1
-by asserting more labels per row is a different product, not a better model — which is
-exactly why `compute_metrics` already records that pair.
+Median +0.0033 against the ≥ 0.002 gate, positive on all three; the ≤ +10 % labels/row
+bound met with room (the model asserts *fewer*). `best_C` moved 8 → 32 on every seed, so
+the mechanism is systematic. No measurable time cost — it adds threshold searches, not
+fits. **Default flipped on for all three profiles.**
+
+Carried forward: **micro F1 is flat** (+0.0100 / −0.0003 / −0.0003) — the gain is in the
+rare labels macro weights equally, which is what per-label thresholds are for. And the
+rule picks the **top of the C grid every time**, so widening that grid past 32 (where
+quality was measured to drop) must be re-measured together with this flag.
+
+One seed is not a result: seed 42 alone said +0.0101, which is 3× the median. The 800-row
+smoke check at seed 7 said −0.0073. Both would have been wrong to report. A3 taught this
+the expensive way.
+
+**Not yet measured:** a second target. C2 (a PR-curve threshold grid) and B4 (shrinkage
+for rare labels) change the same decision and must be measured *together* with this, not
+credited separately.
 
 ---
 

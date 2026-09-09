@@ -4,6 +4,51 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed — C and its decision thresholds are now chosen together (plan item C1)
+
+- **The old rule threw away candidates before they could show what they were worth.**
+  `select_c` and `cross_val_evaluate` ranked every `C` at a flat 0.5 cut and tuned
+  thresholds only on the winner, so a candidate whose probabilities are *ranked* well but
+  *scaled* low scored near zero and was eliminated before its thresholds existed. Each
+  candidate is now scored under thresholds tuned for itself, and the (C, thresholds) pair
+  is picked together. The better procedure was already in this repo —
+  `scripts/benchmark_field_weights.py` has always done it this way — it had simply never
+  reached the pipeline.
+- 🟢 **Measured on data_30k_ai (26 450 rows x 48 labels, `auto` shape) and adopted.**
+  Three seeds, each drawing its own held-out split *and* its own folds; every number
+  below comes from 5 290 rows that neither the C search nor the threshold tuning saw:
+
+  | seed | macro F1 | Δ | labels/row | best_C |
+  |------|----------|---|-----------|--------|
+  | 42   | 0.6884 → 0.6984 | **+0.0101** | 1.525 → 1.488 (−2.4 %) | 8 → 32 |
+  | 7    | 0.7243 → 0.7271 | **+0.0028** | 1.511 → 1.502 (−0.6 %) | 8 → 32 |
+  | 1234 | 0.7221 → 0.7254 | **+0.0033** | 1.468 → 1.473 (+0.3 %) | 8 → 32 |
+
+  Median **+0.0033** against the plan's ≥ 0.002 gate, positive on all three. The other
+  half of the gate — the owner's condition that better decisions must not come from
+  asserting more labels — passes with room: the model asserts *fewer* labels per row,
+  closer to the ~1.45 the data actually carries, with macro precision up on two seeds of
+  three. All three seeds moved `best_C` 8 → 32, so the effect is systematic rather than
+  one lucky draw, and it costs no measurable time (233 s vs 234 s, inside this machine's
+  run-to-run spread) because it adds threshold searches, not model fits.
+- **Two caveats recorded rather than buried.** Micro F1 is flat (+0.0100 / −0.0003 /
+  −0.0003): the gain sits in the rare labels that macro weights equally, which is what
+  per-label thresholds are *for*, not an improvement everywhere. And the rule picks the
+  top of the C grid every time, so widening that grid past 32 — where quality was
+  measured to drop — has to be re-measured together with this flag.
+- `Profile.select_c_on_tuned_thresholds` is the switch, **on** for `fast`, `auto` and
+  `best`; `select_c_on_tuned_thresholds: false` in a profile turns it off. The
+  measurement is on the CV path (`auto`, `best`); `fast` is holdout and follows the same
+  rule so that it keeps predicting what `auto` will do, which is its only job.
+- The holdout path also stopped scoring the validation split twice. `select_c` returns
+  the winner's thresholds, so `deploy.select_on_split` no longer runs a second
+  `predict_proba(x_va)` purely to rediscover numbers it had already computed.
+- Test-first throughout, with each rule sabotaged to prove its test can fail: scoring on
+  the flat cut anyway, keeping the last candidate's thresholds instead of the winner's,
+  dropping either wiring, re-tuning instead of keeping, and each half of the new default.
+  Writing the wiring test found a real bug — the CV path had been left inert, accepting a
+  flag that `fit_evaluate_deploy` never passed it. **313 tests green**, ruff/mypy clean.
+
 ### Added — a profile can loosen the C search's convergence (measured, rejected, kept as a knob)
 
 - `Profile.selection_tol` sets the tolerance for the SELECTION fits only. Every C
