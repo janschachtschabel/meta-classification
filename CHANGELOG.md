@@ -38,8 +38,10 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   measured to drop — has to be re-measured together with this flag.
 - `Profile.select_c_on_tuned_thresholds` is the switch, **on** for `fast`, `auto` and
   `best`; `select_c_on_tuned_thresholds: false` in a profile turns it off. The
-  measurement is on the CV path (`auto`, `best`); `fast` is holdout and follows the same
-  rule so that it keeps predicting what `auto` will do, which is its only job.
+  gain above is the CV path (`auto`, `best`). A real-data run of the **holdout** path
+  found no disagreement at all — the flat cut already picks the top C there, even with the
+  grid widened down to 0.25 — so `fast` carries the flag at a measured cost of nothing
+  rather than an assumed one.
 - The holdout path also stopped scoring the validation split twice. `select_c` returns
   the winner's thresholds, so `deploy.select_on_split` no longer runs a second
   `predict_proba(x_va)` purely to rediscover numbers it had already computed.

@@ -104,8 +104,11 @@ class Profile:
     # thresholds are for, not a bonus everywhere. And the rule picks the TOP of the C
     # grid every time, so widening that grid past 32 (where quality was measured to
     # drop) has to be re-measured together with this flag.
-    # Measured on the CV path (`auto`, `best`); `fast` is holdout and follows the same
-    # rule so that it keeps predicting what `auto` will do, which is its only job.
+    # The gain above is the CV path (`auto`, `best`). On the HOLDOUT path (`fast`) the
+    # same real-data run found no disagreement at all: the flat cut already picks the top
+    # C there, even with the grid widened down to 0.25, so both rules deploy the same
+    # model. `fast` therefore carries the flag for consistency — it exists to predict what
+    # `auto` will do — at a measured cost of nothing rather than an assumed one.
     select_c_on_tuned_thresholds: bool = True
 
 
