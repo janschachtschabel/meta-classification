@@ -39,6 +39,10 @@ class TrainStartedResponse(BaseModel):
     model_name: str
     profile: str
     status_url: str
+    # 0 = running now; N = N runs are ahead of it. Always present rather than only when
+    # queued: a caller that has to check whether a field exists before reading it will
+    # eventually forget to.
+    queue_position: int
 
 
 class TrainStopResponse(BaseModel):

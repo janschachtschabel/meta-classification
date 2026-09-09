@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import threading
+from datetime import UTC, datetime
 
 from .settings import get_settings
 
@@ -65,6 +66,35 @@ def _read_lines() -> list[dict]:
         if isinstance(entry, dict):
             entries.append(entry)
     return entries
+
+
+def record_for(state: dict, request: dict | None, duration_seconds: float | None) -> dict:
+    """The record a finished run leaves: what was asked, how it ended, the headline score.
+
+    Lives here rather than with the runner because it is the shape of the FILE, and the
+    runner should not have to change when a column is added to it.
+
+    Deliberately not the full metrics: ``per_label_f1`` is one entry per label, and 200
+    records of a 59-label model would be a megabyte of a file nothing reads that way.
+    The history exists to COMPARE runs, which needs the two numbers a comparison is made
+    on; the bundle keeps the rest.
+    """
+    results = state.get("results") or {}
+    metrics = results.get("metrics") or {}
+    return {
+        "model_name": state.get("model_name"),
+        "status": state.get("status"),
+        "started_at": state.get("started_at"),
+        "finished_at": datetime.now(UTC).isoformat(),
+        "duration_seconds": duration_seconds,
+        "request": request,
+        "task_type": results.get("task_type"),
+        "n_labels": results.get("n_labels"),
+        "f1_macro": metrics.get("f1_macro"),
+        "f1_micro": metrics.get("f1_micro"),
+        "decision_rule": metrics.get("decision_rule"),
+        "error": state.get("error"),
+    }
 
 
 def append(record: dict) -> None:

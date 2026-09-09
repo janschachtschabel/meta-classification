@@ -3,6 +3,7 @@ the suite hermetic against ambient configuration."""
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,12 @@ for _var in [k for k in os.environ if k.startswith("APIV3_")]:
     del os.environ[_var]
 os.environ["APIV3_CORS_ALLOW_ORIGINS"] = ""
 os.environ["APIV3_RATE_LIMIT_ENABLED"] = "true"
+# Any TrainingJob a test constructs writes its outcome to the configured history file.
+# Without this the suite appends to the developer's REAL one — found by reading that
+# file after a live run and seeing "first", "second", "third" in it.
+os.environ["APIV3_JOB_HISTORY_FILE"] = str(
+    Path(tempfile.mkdtemp(prefix="apiv3-tests-")) / "job_history.jsonl"
+)
 
 
 @pytest.fixture(autouse=True)

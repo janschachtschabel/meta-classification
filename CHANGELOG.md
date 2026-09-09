@@ -4,6 +4,24 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed — a second training is queued, not refused
+
+- `POST /train` while a run is going answers **202 with a `queue_position`** instead of
+  409. The server starts the next one when the current finishes, so "train five label
+  fields" no longer needs a browser tab kept open to shepherd it — the queue used to
+  live in the page, and closing it lost every run that had not started.
+- Bounded to 10 waiting runs. A name already running or queued is still a 409: that run
+  could only fail, since `/train` refuses an existing model, so it is refused while it
+  is still a request.
+- **Stopping clears the queue** — "stop" means "end this", not "skip to the next one".
+  The browser-side queue already behaved this way; the server now keeps that promise.
+- `GET /train/status` lists what is waiting in `queued`.
+- `start()` keeps its old strict meaning (start now or refuse) and the guard the
+  existing concurrency tests pin; `submit()` is the new entry point that queues. The
+  dispatch is the finishing thread's last act, in a `finally` so a queue never strands
+  behind a run that failed in an unanticipated way.
+
+
 ### Added — finished runs are written down (`GET /train/history`)
 
 - Comparing two runs meant opening two bundles and reading their `metrics.json`, and a

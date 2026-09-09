@@ -1,8 +1,10 @@
-"""Single background training job with thread-safe state and cooperative stop.
+"""Single background training job with thread-safe state, a queue and cooperative stop.
 
-Only one training runs at a time (the typical single-instance deployment). The
-training function receives ``on_progress`` and ``should_stop`` callbacks so the
-orchestration in ``training.py`` stays free of threading concerns.
+Only one training runs at a time (the typical single-instance deployment); further
+submissions wait in a bounded queue and the finishing thread starts the next one. That
+queue used to live in the browser, so closing the tab lost every run that had not
+started yet. The training function receives ``on_progress`` and ``should_stop``
+callbacks so the orchestration in ``training.py`` stays free of threading concerns.
 
 The status snapshot reports the current phase/progress/message plus a rough
 ``eta_seconds`` and ``elapsed_seconds`` derived from progress (estimate).
@@ -16,6 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -23,6 +26,11 @@ from . import job_history
 from .errors import TrainingInputError
 
 logger = logging.getLogger("api_v3.jobs")
+
+# How many runs may wait behind the running one. "Train five label fields overnight" is
+# the case this exists for; unbounded, one script could enqueue a thousand and leave the
+# operator no way out except restarting the process.
+MAX_QUEUED = 10
 
 
 def _idle_state() -> dict:
@@ -62,11 +70,20 @@ class TrainingJob:
         self._last_model_name: str | None = None
         # What the run was asked to do, kept for its history entry.
         self._last_request: dict | None = None
+        # Runs accepted while another one holds the thread. Server-side on purpose:
+        # the browser used to hold this list, so closing the tab lost every run that
+        # had not started. Guarded by the same lock as the state.
+        self._queue: deque[tuple] = deque()
 
     def snapshot(self) -> dict:
-        """Return a copy of the state, adding elapsed/ETA while running."""
+        """Return a copy of the state, adding elapsed/ETA while running.
+
+        Carries the queued run names too: what is waiting is part of "what is going on
+        here", and the status endpoint is where anyone looks for that.
+        """
         with self._lock:
             state = dict(self._state)
+            state["queued"] = [entry[2] for entry in self._queue]
             if state["status"] == "running" and self._start_ts is not None:
                 elapsed = time.monotonic() - self._start_ts
                 state["elapsed_seconds"] = round(elapsed, 1)
@@ -119,7 +136,10 @@ class TrainingJob:
             if self._generation != generation:
                 return
             self._apply(fields)
-            record = self._history_record()
+            record = job_history.record_for(
+                self._state, self._last_request,
+                round(time.monotonic() - self._start_ts, 1) if self._start_ts else None,
+            )
         # Outside the lock: the disk write must not hold the state lock that every
         # /train/status read takes. And it must never turn a finished run into a
         # failed one — the work is already done and saved by the time we get here.
@@ -128,34 +148,80 @@ class TrainingJob:
         except OSError:
             logger.warning("Could not record %r in the job history.", record.get("model_name"))
 
-    def _history_record(self) -> dict:
-        """What survives a run: what was asked for, how it ended, and the headline score.
-
-        Deliberately not the full metrics — ``per_label_f1`` alone is one entry per
-        label, and the history exists to COMPARE runs, which needs the two numbers a
-        comparison is made on. The bundle keeps the rest.
-        """
-        results = self._state.get("results") or {}
-        metrics = results.get("metrics") or {}
-        return {
-            "model_name": self._state.get("model_name"),
-            "status": self._state.get("status"),
-            "started_at": self._state.get("started_at"),
-            "finished_at": datetime.now(UTC).isoformat(),
-            "duration_seconds": (
-                round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
-            ),
-            "request": self._last_request,
-            "task_type": results.get("task_type"),
-            "n_labels": results.get("n_labels"),
-            "f1_macro": metrics.get("f1_macro"),
-            "f1_micro": metrics.get("f1_micro"),
-            "decision_rule": metrics.get("decision_rule"),
-            "error": self._state.get("error"),
-        }
-
     def should_stop(self) -> bool:
         return self._stop.is_set()
+
+    def submit(
+        self, target: Callable, *args: object, model_name: str, request: dict | None = None
+    ) -> int:
+        """Accept a run: start it now, or queue it behind the one already going.
+
+        Returns its position — ``0`` means it is running, ``N`` that ``N`` runs are
+        ahead of it. Queueing rather than refusing is what lets several label fields be
+        trained in one go without a browser tab staying open to shepherd them.
+
+        :raises RuntimeError: when the queue is full, or when this name is already
+            running or queued — a second run under one name could only fail, since
+            ``/train`` refuses an existing model, so it is refused while it is still a
+            request and the caller can still change it.
+        """
+        with self._lock:
+            queued_names = [entry[2] for entry in self._queue]
+            if model_name == self._running_name() or model_name in queued_names:
+                raise RuntimeError(f"A run for model '{model_name}' is already running or queued.")
+            if self._busy_locked():
+                if len(self._queue) >= MAX_QUEUED:
+                    raise RuntimeError(
+                        f"The training queue is full ({MAX_QUEUED} runs waiting); "
+                        "retry once some have finished."
+                    )
+                self._queue.append((target, args, model_name, request))
+                return len(self._queue)
+        self.start(target, *args, model_name=model_name, request=request)
+        return 0
+
+    def _running_name(self) -> str | None:
+        """Name of the run holding the thread right now (caller holds the lock)."""
+        if self._state["status"] == "running":
+            return self._state["model_name"]
+        if self._thread is not None and self._thread.is_alive():
+            return self._last_model_name
+        return None
+
+    def _busy_locked(self) -> bool:
+        """Is a thread still executing? (caller holds the lock)
+
+        Includes a thread abandoned by ``stop(hard=True)``, whose deploy fit and skops
+        save keep running after the status was reset — starting another run then would
+        put two full trainings on the CPU at once.
+        """
+        return self._state["status"] == "running" or (
+            self._thread is not None and self._thread.is_alive()
+        )
+
+    def queued_names(self) -> list[str]:
+        with self._lock:
+            return [entry[2] for entry in self._queue]
+
+    def _dispatch_next(self) -> None:
+        """Start the next queued run — called by the finishing thread, as its last act.
+
+        It has to be this thread: nothing else is awake when a run ends. The liveness
+        guard in ``start`` would refuse (this thread is still alive), which is why the
+        dispatch goes around it — legitimately, because the caller IS that thread and
+        its own work returned before ``_finish``. What it hands over is a thread that is
+        about to exit, not one still training.
+        """
+        while True:
+            with self._lock:
+                if not self._queue:
+                    return
+                target, args, model_name, request = self._queue.popleft()
+            try:
+                self._launch(target, args, model_name, request)
+                return
+            except Exception:  # noqa: BLE001 - one bad entry must not strand the queue
+                logger.exception("Queued run %r could not be started; skipping it.", model_name)
 
     def active_model_name(self) -> str | None:
         """Name of the model a still-live runner thread is working on — also after
@@ -169,12 +235,34 @@ class TrainingJob:
     def start(
         self, target: Callable, *args: object, model_name: str, request: dict | None = None
     ) -> None:
-        """Launch ``target(*args, on_progress=..., should_stop=...)`` in a thread.
+        """Launch ``target(*args, on_progress=..., should_stop=...)`` in a thread NOW.
+
+        Refuses while anything is still executing. ``submit`` is the entry point that
+        queues instead; this one stays strict because it is what guarantees two full
+        trainings never share the CPU.
 
         ``request`` is recorded with the run's outcome so the history says what was
         asked for, not only what came out. The runner is the only thing that knows when
         a run ends, so it is the only place that can write that record.
         """
+        with self._lock:
+            # Refuse while a previous thread is still executing — including one
+            # abandoned by stop(hard=True), whose deploy fit / skops save keep
+            # running after the status was reset to idle. Starting anyway would
+            # run two full trainings at once, breaking the single-worker design.
+            if self._busy_locked():
+                raise RuntimeError(
+                    "A training job is already running (or a hard-stopped one is "
+                    "still finishing in the background); retry once it completes."
+                )
+        self._launch(target, args, model_name, request)
+
+    def _launch(
+        self, target: Callable, args: tuple, model_name: str, request: dict | None
+    ) -> None:
+        """Set the state up and put the run on a thread. No liveness guard: the two
+        callers each establish it their own way — ``start`` by checking, and
+        ``_dispatch_next`` by being the finishing thread itself."""
 
         def runner() -> None:
             try:
@@ -198,19 +286,12 @@ class TrainingJob:
                 sanitized = "Training failed; see server logs for details."
                 self._finish(generation, status="error", phase="error",
                              message=sanitized, error=sanitized)
+            finally:
+                # Last act of the thread, and in `finally` so a queue never strands
+                # behind a run that failed in a way nobody anticipated.
+                self._dispatch_next()
 
         with self._lock:
-            # Refuse while a previous thread is still executing — including one
-            # abandoned by stop(hard=True), whose deploy fit / skops save keep
-            # running after the status was reset to idle. Starting anyway would
-            # run two full trainings at once, breaking the single-worker design.
-            if self._state["status"] == "running" or (
-                self._thread is not None and self._thread.is_alive()
-            ):
-                raise RuntimeError(
-                    "A training job is already running (or a hard-stopped one is "
-                    "still finishing in the background); retry once it completes."
-                )
             self._stop.clear()
             self._state = _idle_state()
             self._state.update(
@@ -240,7 +321,15 @@ class TrainingJob:
         thread.start()
 
     def stop(self, *, hard: bool = False) -> None:
+        """Cancel the running run and everything waiting behind it.
+
+        The queue goes too: "stop" means "I want this to end", not "skip to the next
+        one". The browser-side queue behaved this way already, so the server keeps the
+        promise the UI had been making.
+        """
         self._stop.set()
+        with self._lock:
+            self._queue.clear()
         if hard:
             with self._lock:
                 # Nothing to reset when nothing runs — and resetting anyway would

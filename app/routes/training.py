@@ -134,7 +134,8 @@ async def train(
     try:
         # The singleton registry is injected so the training save shares its disk
         # lock with every API-side registry operation.
-        training_job.start(run_training, req, settings, cfg, profile, get_registry(),
+        position = training_job.submit(
+                           run_training, req, settings, cfg, profile, get_registry(),
                            model_name=body.model_name,
                            # Everything but the documentation block: `info` is what the
                            # model says about itself, not a parameter of the run.
@@ -145,12 +146,15 @@ async def train(
                            request={**{k: v for k, v in req.items() if k != "info"},
                                     "optimize_parameters": profile.name})
     except RuntimeError as exc:
+        # A full queue, or this name already running/queued: both are the caller's to
+        # resolve, and both are conflicts with what the server is already doing.
         raise HTTPException(409, str(exc)) from exc
     return {
-        "status": "started",
+        "status": "started" if position == 0 else "queued",
         "model_name": body.model_name,
         "profile": profile.name,
         "status_url": "/train/status",
+        "queue_position": position,
     }
 
 

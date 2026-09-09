@@ -250,6 +250,12 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
 ## Endpoints (excerpt)
 
 - **Training:** `POST /train`, `GET /train/status`, `POST /train/stop`, `GET /train/profiles`
+- **Training queue:** `POST /train` while a run is going **queues** it (202, with its
+  `queue_position`) instead of refusing — the server runs it when the current one
+  finishes, so "train five label fields" needs no browser tab kept open. Bounded to 10
+  waiting runs; a name already running or queued is a 409, because that run could only
+  fail. `GET /train/status` lists what is waiting in `queued`. **Stopping clears the
+  queue**: "stop" means "end this", not "skip to the next one".
 - **Training history:** `GET /train/history` — what every finished run left behind, newest first: the request it was started with, how it ended, its duration and the headline scores. A run that **failed** leaves no bundle to inspect, so this is the only place its reason survives; a run killed mid-flight leaves no entry, because it never finished. Bounded to the newest 200 on disk (`APIV3_JOB_HISTORY_FILE`).
 - **Classification:** `POST /predict` (takes up to 1000 texts; `POST /predict/batch` is a deprecated alias of it), `POST /predict/csv` (upload a CSV, get one back — see below), `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
   - `baseline_diff` (`include_baseline_diff=true`) — confidence minus the model's empty-text prediction. A high confidence with a diff near zero means the label fires for almost anything, not for this text.

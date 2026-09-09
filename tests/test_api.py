@@ -77,10 +77,57 @@ def trained_model() -> dict:
     assert started.status_code == 202, started.text
     # Exact key set: the TrainStartedResponse model silently DROPS any field it
     # doesn't declare — this guard turns a dropped contract field into a red test.
-    assert set(started.json()) == {"status", "model_name", "profile", "status_url"}
+    assert set(started.json()) == {"status", "model_name", "profile", "status_url",
+                                   "queue_position"}
     state = _wait_for_training()
     assert state["status"] == "completed", state
     return state
+
+
+def test_a_second_training_is_queued_instead_of_refused(trained_model):
+    """Training five label fields used to need a browser tab kept open: the queue lived
+    in the page, and closing it lost every run that had not started. A second POST is
+    now accepted with its position, and the server runs it when the first is done.
+
+    The training target is replaced with one that blocks on an Event — waiting for a
+    real run to overlap another would be both slow and flaky.
+    """
+    import threading
+
+    import app.routes.training as training_routes
+
+    started, release = threading.Event(), threading.Event()
+
+    def blocking(*_args, on_progress, should_stop, **_kwargs):
+        started.set()
+        release.wait(10)
+        return {"model_name": "queued_first", "metrics": {"f1_macro": 0.5}, "n_labels": 1}
+
+    original = training_routes.run_training
+    training_routes.run_training = blocking
+    try:
+        first = client.post("/train", json={**TRAIN_BODY, "model_name": "queued_first"}, headers=ADMIN)
+        assert first.status_code == 202, first.text
+        assert first.json()["status"] == "started"
+        assert first.json()["queue_position"] == 0
+        assert started.wait(5)
+
+        second = client.post("/train", json={**TRAIN_BODY, "model_name": "queued_second"}, headers=ADMIN)
+        assert second.status_code == 202, second.text
+        assert second.json()["status"] == "queued"
+        assert second.json()["queue_position"] == 1
+
+        # What is waiting is part of "what is going on here".
+        assert client.get("/train/status", headers=RO).json()["queued"] == ["queued_second"]
+
+        # The same name twice could only fail — /train refuses an existing model.
+        again = client.post("/train", json={**TRAIN_BODY, "model_name": "queued_second"}, headers=ADMIN)
+        assert again.status_code == 409, again.text
+    finally:
+        release.set()
+        training_routes.run_training = original
+        _wait_for_training()
+        client.post("/train/stop", params={"hard": "true"}, headers=ADMIN)
 
 
 def test_a_finished_run_is_in_the_history(trained_model):
@@ -94,8 +141,9 @@ def test_a_finished_run_is_in_the_history(trained_model):
     entries = history.json()
     assert entries, "the run from the fixture is recorded"
 
-    entry = entries[0]
-    assert entry["model_name"] == "api_model"
+    # By name, not by position: this module shares one server, and other tests in it
+    # train too — an assertion on "the newest entry" would pin test order instead.
+    entry = next(e for e in entries if e["model_name"] == "api_model")
     assert entry["status"] == "completed"
     assert entry["duration_seconds"] > 0
     assert entry["f1_macro"] > 0.5 and entry["n_labels"] >= 1
@@ -111,8 +159,8 @@ def test_the_history_records_a_run_that_failed(trained_model):
     assert client.post("/train", json=broken, headers=ADMIN).status_code == 202
     assert _wait_for_training()["status"] == "error"
 
-    entry = client.get("/train/history", headers=RO).json()[0]
-    assert entry["model_name"] == "history_failure"
+    entries = client.get("/train/history", headers=RO).json()
+    entry = next(e for e in entries if e["model_name"] == "history_failure")
     assert entry["status"] == "error"
     assert entry["error"], "the reason survives the run"
     assert entry["f1_macro"] is None
@@ -536,8 +584,10 @@ def test_train_profiles_endpoint():
 
 
 def test_train_error_paths(trained_model):
-    """/train rejects: unknown profile (400), missing dataset (404), existing
-    model name (409), and a second training while one runs (409)."""
+    """/train rejects: unknown profile (400), missing dataset (404), existing model
+    name (409). A second training while one runs is NO LONGER refused — it is queued
+    (202), which is the change that let the browser tab stop shepherding runs; the
+    remaining 409 on a busy server is a name already running or queued."""
     assert client.post("/train", json={**TRAIN_BODY, "optimize_parameters": "nope"},
                        headers=ADMIN).status_code == 400
     assert client.post("/train", json={**TRAIN_BODY, "dataset_name": "missing.csv",
@@ -548,9 +598,16 @@ def test_train_error_paths(trained_model):
     from app.jobs import training_job
     training_job.update(status="running", model_name="other")
     try:
-        r = client.post("/train", json={**TRAIN_BODY, "model_name": "m3"}, headers=ADMIN)
-        assert r.status_code == 409  # a job is already running
+        queued = client.post("/train", json={**TRAIN_BODY, "model_name": "m3"}, headers=ADMIN)
+        assert queued.status_code == 202, queued.text
+        assert queued.json()["status"] == "queued"
+        # The same name a second time is the case that stays a conflict.
+        again = client.post("/train", json={**TRAIN_BODY, "model_name": "m3"}, headers=ADMIN)
+        assert again.status_code == 409, again.text
     finally:
+        # stop() clears the queue; without it the faked "running" state would leave a
+        # real run waiting to be dispatched into the tests that follow.
+        training_job.stop()
         training_job.update(status="idle", model_name=None)
 
 

@@ -233,11 +233,17 @@ gated.
   *against* the label.
 - Files: `app/static/ui/explain.js` (new, 98), `query.js`, `index.html`, `style.css`.
 
-### A5 · Server-side training queue + D5 persisted history (M, 3 days)
+### A5 · Server-side training queue + D5 persisted history (M, 3 days) — **server done 2026-09-09**
 - `POST /train` while busy → 202 with a queue position (bounded queue, e.g. 10);
   jobs persist to `models_dir/.jobs.jsonl` (request, status, metrics, duration);
   `GET /train/history`; the UI's tab-bound queue goes away (the browser can close).
   `TrainingJob` becomes `JobRunner` with `kind` (training | evaluation) so B1 reuses it.
+- Deviation: the rename to `JobRunner` with `kind` is **deferred to B1**. Generalising a
+  concurrency-critical class before its second use case exists is speculative, and B1
+  will show what the second kind actually needs.
+- Deviation: the queue does not persist across a restart. What persists is the HISTORY
+  of finished runs; a waiting run has produced nothing yet, and silently resuming work
+  a restart interrupted is a surprise, not a feature.
 - **Why:** "train five label fields overnight" currently needs an open tab; history
   is the only way to compare runs without opening bundles.
 - Files: `app/jobs.py` (split: `jobs.py` runner + `job_history.py`), routes, UI.
