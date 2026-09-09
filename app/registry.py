@@ -16,10 +16,8 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
-from . import model_archive
-from .bundle_meta import as_count, as_mapping, as_names, per_label_f1
+from . import model_archive, model_report
 from .classifier import ClassifierModel
-from .data import label_vocabulary
 from .model_io import CARD_FILE, MANIFEST_FILE, UnsafeModelError, _read_bundle, _write_bundle
 from .settings import get_settings
 
@@ -172,64 +170,25 @@ class Registry:
                 self._evict()
         return model
 
-    def info(self, name: str) -> dict:
-        """Cheap metadata read (config + metrics) without loading the head."""
+    def _documents(self, name: str) -> tuple[dict, dict]:
+        """Both of a bundle's JSON documents, under ONE lock hold.
+
+        The two reports below are answers about the same bundle at the same moment;
+        reading the config once per report let a concurrent delete or overwrite land
+        between the halves of one answer.
+        """
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
-            config = json.loads((self._path(name) / "config.json").read_text(encoding="utf-8"))
-            metrics_path = self._path(name) / "metrics.json"
-            metadata = (
-                json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
-            )
-        classes = config.get("classes") or []
-        config.pop("uri_to_label", None)  # potentially large; not needed for info
-        # Derived, never stored: it follows from the labels, so it stays correct for
-        # bundles trained before this existed and cannot be typed in wrong.
-        vocabulary = label_vocabulary(classes)
-        return {"name": name, **config, "label_vocabulary": vocabulary, "metadata": metadata}
+            return model_report.read_documents(self._path(name))
+
+    def info(self, name: str) -> dict:
+        """Cheap metadata read (config + metrics) without loading the head."""
+        return model_report.describe(name, *self._documents(name))
 
     def label_diagnostics(self, name: str) -> _Rows:
-        """Per label: its F1, how many rows carry it, and the threshold serving applies.
-
-        Weakest first — the end anyone reviewing a model looks at. A model's headline
-        F1 says how good it is on average; this says *where* it is weak, which is what
-        decides whether a given answer deserves a second look.
-
-        ``f1`` and ``support`` are ``None`` for bundles trained before they were
-        recorded. ``threshold`` is ``None`` for binary/multiclass, where serving picks
-        the argmax and never reads a threshold — reporting one would describe a rule
-        the model does not apply.
-        """
-        info = self.info(name)
-        metadata = as_mapping(info.get("metadata"))
-        # Read through bundle_meta for the same reason the serving path does: this
-        # report is rendered from an importable document, and a wrong type in it is a
-        # missing field, not a server fault (see bundle_meta).
-        scores = per_label_f1(metadata)
-        support = as_mapping(metadata.get("per_label_support"))
-        thresholds = as_mapping(info.get("per_label_thresholds"))
-        names = self._uri_to_label(name)
-        single_label = info.get("task_type") in ("binary", "multiclass")
-
-        entries = [
-            {
-                "uri": uri,
-                "label": names.get(uri, uri),
-                "f1": scores.get(uri),
-                "support": as_count(support.get(uri)),
-                "threshold": None if single_label else thresholds.get(uri, info.get("global_threshold")),
-            }
-            for uri in as_names(info.get("classes"))
-        ]
-        # Unscored labels last: unknown is not the same as weak.
-        return sorted(entries, key=lambda e: (e["f1"] is None, e["f1"] or 0.0))
-
-    def _uri_to_label(self, name: str) -> dict:
-        """The display-name map, which ``info()`` drops because it can be large."""
-        with self._disk_lock:
-            config = json.loads((self._path(name) / "config.json").read_text(encoding="utf-8"))
-        return as_mapping(config.get("uri_to_label"))
+        """Per label: its F1, its row count and the threshold serving applies, weakest first."""
+        return model_report.label_diagnostics(*self._documents(name))
 
     def update_info(self, name: str, info: dict) -> dict:
         """Replace the author-supplied ``info`` block of an existing bundle.

@@ -135,8 +135,13 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   `app/label_names.py`; behaviour-preserving, tests move with them.
 - ~~`registry.py` crossed the ~300-line guideline~~ **done 2026-09-09**: the archive
   half moved to `app/model_archive.py` (pure byte functions) when the card and manifest
-  pushed the file to 343 lines. Registry is back to 279 and keeps only what needs the
+  pushed the file to 343 lines. Registry was back to 279 and keeps only what needs the
   disk and the locks; the same 207 tests passed unchanged before and after.
+  The reporting half followed on the same day: `info` and `label_diagnostics` grew back
+  to 328 lines as the label report and the metadata guards landed, so they moved to
+  `app/model_report.py` (pure functions over the two documents, the seam `data` /
+  `dataset_stats` already uses). Registry: 293. That split also removed the second,
+  unlocked parse of `config.json` the label report was doing.
 
 Effort: 7–8 person-days. Risk: P1 is the only item that can change numbers, and it is
 gated.
