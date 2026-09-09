@@ -18,6 +18,8 @@ data/*.csv
 /char_robustness_results.json
 /char_range_results.json
 /selection_rule_results_seed*.json
+/threshold_shrinkage_results_seed*.json
+/threshold_grid_results_seed*.json
 # Exported model bundles staged for hand-off — regenerable via POST /models/{name}/export
 # and far too large for the repo (a subject model is ~40 MB zipped).
 fertige-modelle/

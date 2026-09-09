@@ -4,6 +4,38 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Measured — two ways to choose a decision threshold, neither adopted (plan items C2, B4)
+
+Both proposals changed how a per-label cut is picked. Both are now measured on held-out
+rows, and both stay off. The mechanisms ship as flags so the questions can be re-asked on
+another target; the defaults do not move.
+
+- 🔴 **C2 — a finer threshold grid is worse, not better.** The proposal was to replace
+  `_DEFAULT_GRID`'s 19 fixed cuts with every observed score as a candidate, which finds
+  each label's F1-optimal cut exactly. It does — on the split it is tuned on. Read on a
+  held-out split it **loses**: **+0.0037 in-sample / −0.0115 held out** (seed 42) and
+  **+0.0042 / −0.0076** (seed 7). The extra resolution buys the tuning split's noise. The
+  in-sample column is the check on the sweep itself, not decoration: an exhaustive search
+  cannot lose to a 19-point one on the rows both saw, so had it not won there the whole
+  comparison would have been void. `scripts/benchmark_threshold_grid.py`.
+- 🔴 **B4 — threshold shrinkage buys nothing once C1 is in.** Blending each label's cut
+  toward the global one with weight `n_pos / (n_pos + k)` (k = 10, fixed a priori) gave
+  **+0.0006 / +0.0013 / −0.0024** macro F1 across three held-out seeds against a ≥ 0.002
+  gate — straddling zero. Shipped as `Profile.threshold_shrinkage_k`, off.
+- **The two results explain each other, and the second one nearly went in wrong.** The
+  first run of the shrinkage benchmark measured against a baseline with C1's selection
+  rule *off*, because `cross_val_evaluate`'s parameter default is `False` while the
+  shipped profile default is now `True`. That produced +0.0144 / +0.0035 / +0.0033 — the
+  gain C1 had already banked, re-credited to B4, which is exactly the double-count this
+  plan warned about for C1/C2/B4. The benchmark now reads the shipped profile so its
+  baseline cannot drift from what a training actually does.
+- Shrinkage is not useless, it is *redundant here*: it removes degenerate cuts (the
+  spread of thresholds narrows every time, sd 0.150 → 0.126, and the cut pinned at the
+  grid minimum 0.05 disappears), but C1 has already removed them from the other side by
+  picking a `C` whose probabilities do not produce them. How much there is to shrink
+  depends on the tuning split — out-of-fold over the whole pool gives a label ~420
+  positives here, a 20 % holdout split ~107 — which is why the knob is kept.
+
 ### Changed — the decision layer moved out of `tuning.py` into `thresholds.py`
 
 - C1 pushed `tuning.py` to 381 lines against this project's ~300 rule, and the file had

@@ -114,9 +114,25 @@ class Profile:
     # own cut can be trusted: weight ``n_pos / (n_pos + k)`` over its validation
     # positives. A cut fitted on four positives is mostly noise, one fitted on six
     # hundred is not, and the F1-argmax rule cannot tell them apart. ``None`` = off.
-    # ⚪ UNMEASURED, hence off: plan item B4, gated by benchmark_threshold_shrinkage.py
-    # on the same two conditions as C1 — macro F1 up by >= 0.002 AND
-    # `predicted_labels_per_row` no more than 10% above the baseline.
+    # 🔴 Measured 2026-09-10 on data_30k_ai (26 450 rows x 48 labels, `auto` shape,
+    # benchmark_threshold_shrinkage.py), k=10, three held-out seeds:
+    #     seed   42: macro 0.6984 -> 0.6990  (+0.0006)
+    #     seed    7: macro 0.7271 -> 0.7284  (+0.0013)
+    #     seed 1234: macro 0.7254 -> 0.7230  (-0.0024)
+    # Median +0.0006 against a >= 0.002 gate, straddling zero. NOT adopted.
+    # The mechanism does fire — the spread of cuts narrows every time (sd 0.150 -> 0.126,
+    # 0.135 -> 0.123, 0.141 -> 0.116) and the degenerate cut at the grid minimum 0.05
+    # disappears — it simply buys no held-out quality here. The reason is
+    # `select_c_on_tuned_thresholds`: measured against the PRE-C1 baseline the same k was
+    # worth +0.0144 / +0.0035 / +0.0033, which is the gain C1 already banked. C1 removes
+    # the degenerate cuts from the other side, by picking a C whose probabilities do not
+    # produce them. Two fixes for one problem; the plan predicted exactly this and the
+    # first run of the benchmark walked into it by leaving the baseline pre-C1.
+    # Kept as a knob because the amount to shrink scales with how many positives the
+    # TUNING split has, and that differs by evaluation mode: out-of-fold over the whole
+    # pool gives a label ~420 positives here, a 20% holdout split ~107. A fixed-C probe
+    # at holdout shape put shrinkage at +0.0040 — single seed, not the pipeline, so it
+    # justifies keeping the flag and nothing more.
     threshold_shrinkage_k: float | None = None
 
 

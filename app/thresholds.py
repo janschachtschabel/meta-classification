@@ -16,6 +16,17 @@ from __future__ import annotations
 import numpy as np
 from sklearn.metrics import f1_score
 
+# Nineteen fixed cuts, 0.05 apart. Coarse on purpose, which is a measurement and not an
+# oversight: plan item C2 proposed replacing this with every observed score as a
+# candidate (one descending sweep per label finds the F1-argmax cut exactly). Measured
+# 2026-09-10 on data_30k_ai, thresholds tuned on a validation split and read on a
+# held-out one, that is worth **+0.0037 in-sample / -0.0115 held out** (seed 42) and
+# **+0.0042 / -0.0076** (seed 7) in macro F1 — the sign is the same both times. The
+# finer search wins where it is fitted and loses where it counts, because the extra
+# resolution buys the noise in the tuning split. The in-sample number is the check on
+# the sweep itself: a search over every cut cannot lose to a search over 19 of them on
+# the rows both saw, so if it had not won there the comparison would have been void.
+# `scripts/benchmark_threshold_grid.py` re-runs it, on any seed or target.
 _DEFAULT_GRID = np.round(np.arange(0.05, 0.96, 0.05), 2)
 
 
