@@ -840,3 +840,77 @@ def test_predict_on_model_vanished_after_check_returns_404(monkeypatch):
     monkeypatch.setattr(reg_mod.Registry, "get", _vanished)
     r = client.post("/predict", json={"texts": ["x"], "model_name": "ghost"}, headers=RO)
     assert r.status_code == 404, r.text
+
+
+def test_public_share_download_survives_a_bundle_with_a_malformed_metrics_document(trained_model):
+    """`GET /share/{id}` is the one route with no API key — the id is the capability —
+    and it packs the model card on the fly. metrics.json is not schema-validated on
+    import, so a bundle whose metrics have the wrong types (an older exporter, a hand
+    edit, a crafted upload) made that public route answer 500 instead of the file.
+
+    The whole path is exercised, not the renderer alone: import -> share -> anonymous
+    download, because that is how such a bundle actually reaches a stranger.
+    """
+    import io
+    import json
+    import zipfile
+
+    export = client.post("/models/api_model/export", headers=ADMIN)
+    assert export.status_code == 200
+
+    rebuilt = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(export.content)) as source, \
+            zipfile.ZipFile(rebuilt, "w", zipfile.ZIP_DEFLATED) as target:
+        for member in source.namelist():
+            if member in ("manifest.json", "README.md"):
+                continue  # regenerated per export; a rewritten member must not match the old sums
+            payload = source.read(member)
+            if member == "metrics.json":
+                payload = json.dumps({"n_samples": "many", "tfidf": [1, 2],
+                                      "metrics": {"per_label_f1": {"uri:math": "high"}}}).encode()
+            target.writestr(member, payload)
+
+    files = {"file": ("bundle.zip", rebuilt.getvalue(), "application/zip")}
+    imported = client.post("/models/import", files=files, data={"new_name": "odd_metrics"},
+                           headers=ADMIN)
+    assert imported.status_code == 200, imported.text
+
+    shared = client.post("/models/odd_metrics/export", json={"generate_share_url": True},
+                         headers=ADMIN)
+    assert shared.status_code == 200, shared.text
+    download = client.get(shared.json()["share_url"])  # no API key: that is the point
+    assert download.status_code == 200, download.text
+    assert download.headers["content-type"] == "application/zip"
+
+    assert client.get("/models/odd_metrics/labels", headers=RO).status_code == 200
+    assert client.get("/models/odd_metrics", headers=RO).status_code == 200
+
+
+def test_import_rejects_a_bundle_whose_config_is_not_shaped_like_one(trained_model):
+    """A bundle we cannot read is bad input (400), never a server fault (500).
+
+    `_read_bundle` maps every shape error that way — but the container-label warning
+    read `classes` *after* that block, so a `classes` that is not a list escaped it as
+    a bare TypeError and the import answered 500 with a stack trace in the log.
+    """
+    import io
+    import json
+    import zipfile
+
+    export = client.post("/models/api_model/export", headers=ADMIN)
+    rebuilt = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(export.content)) as source, \
+            zipfile.ZipFile(rebuilt, "w", zipfile.ZIP_DEFLATED) as target:
+        for member in source.namelist():
+            if member in ("manifest.json", "README.md"):
+                continue  # a rewritten member cannot match the exported checksums
+            payload = source.read(member)
+            if member == "config.json":
+                payload = json.dumps({**json.loads(payload), "classes": 5}).encode()
+            target.writestr(member, payload)
+
+    files = {"file": ("bundle.zip", rebuilt.getvalue(), "application/zip")}
+    refused = client.post("/models/import", files=files, data={"new_name": "bad_config"},
+                          headers=ADMIN)
+    assert refused.status_code == 400, refused.text
+    assert "bad_config" not in client.get("/models", headers=RO).json()

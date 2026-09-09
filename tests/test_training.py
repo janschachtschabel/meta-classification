@@ -1772,3 +1772,50 @@ def test_save_phase_reports_bundle_substeps(tmp_path):
     )
     for expected in ("final model", "head.skops", "vectorizer.skops"):
         assert any(expected in d for d in details), (expected, details)
+
+
+def test_a_malformed_metrics_document_degrades_the_card_instead_of_failing_the_export(tmp_path):
+    """metrics.json is NOT schema-validated on import, and it does not need to be: the
+    serving path reads it through ``per_label_f1``, which drops anything non-numeric.
+    The two *reporting* consumers read it raw — they formatted its values directly, so
+    a bundle whose metrics document has wrong types killed the export that packs the
+    card, and with it the unauthenticated ``GET /share/{id}`` serving the same bytes.
+
+    Reporting data must degrade to "unknown", never take down the download. The wrong
+    types below are the ones measured to crash: eleven of twelve reads had no guard.
+    """
+    import io
+    import zipfile
+
+    registry, settings = _trained_registry(tmp_path)
+    hostile = {
+        "dataset": {"nested": "object"},
+        "text_columns": 7,                # not iterable
+        "n_samples": "many",              # ',' format code on a str
+        "training_time_seconds": "fast",  # str / int
+        "tfidf": [1, 2],                  # .get on a list
+        "text_column_weights": ["title"],  # .items on a list
+        "per_label_support": [3],         # .get on a list
+        "info": ["me"],                   # .get on a list
+        "metrics": {
+            "f1_macro": "high",
+            "per_label_f1": {"uri:math": "high", "uri:bio": 0.5, "uri:hist": None},
+        },
+    }
+    (Path(settings.models_dir) / "tiny_model" / "metrics.json").write_text(
+        json.dumps(hostile), encoding="utf-8"
+    )
+
+    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as archive:
+        card = archive.read("README.md").decode("utf-8")
+    assert "tiny_model" in card
+    assert "many" not in card, "an unusable row count is not printed as if it were measured"
+    table = card.split("| Label | F1 | Rows |")[1]
+    assert "| 0.500 |" in table, "the one usable score is still reported"
+    assert "high" not in table, "an unusable score is dropped, not printed as an F1"
+
+    rows = registry.label_diagnostics("tiny_model")
+    assert {row["uri"] for row in rows} == {"uri:math", "uri:bio", "uri:hist"}
+    assert rows[0]["f1"] == 0.5, "the one usable score still ranks first"
+    assert all(row["f1"] is None for row in rows[1:]), "unusable is unknown, not weak"
+    assert all(row["support"] is None for row in rows), "a list is not a support map"

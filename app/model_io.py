@@ -21,7 +21,6 @@ import copy
 import hashlib
 import json
 import logging
-import math
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +30,7 @@ from skops.io import get_untrusted_types
 from skops.io import load as skops_load
 
 from . import __version__
+from .bundle_meta import per_label_f1
 from .classifier import ClassifierModel
 from .data import is_container_label
 from .vectorizers import TfidfBackend
@@ -208,25 +208,6 @@ def _attach_vocabularies(sub_vectorizers: list, vocabularies: object) -> None:
         sub.vocabulary_ = {term: index for index, term in enumerate(terms)}
 
 
-def _per_label_f1(metadata: dict) -> dict[str, float]:
-    """Per-label F1 out of a bundle's metrics document; ``{}`` if absent or unusable.
-
-    metrics.json travels inside *importable* bundles, so this is a trust boundary:
-    a non-mapping, a non-numeric score or a NaN would otherwise reach the model and
-    break every later prediction (a crash, or a response body that is not valid
-    JSON). Reporting-only data — dropping it silently costs nothing but a field.
-    """
-    metrics = metadata.get("metrics")
-    scores = metrics.get("per_label_f1") if isinstance(metrics, dict) else None
-    if not isinstance(scores, dict):
-        return {}
-    return {
-        uri: float(score)
-        for uri, score in scores.items()
-        if isinstance(uri, str) and isinstance(score, int | float) and math.isfinite(score)
-    }
-
-
 def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
     # Any parse/shape failure below means "a bundle we cannot safely load" —
     # map it to UnsafeModelError so routes answer 422/400 instead of a 500
@@ -270,11 +251,11 @@ def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
             uri_to_label=config.get("uri_to_label", {}),
             global_threshold=config["global_threshold"],
             per_label_thresholds=config.get("per_label_thresholds", {}),
-            per_label_f1=_per_label_f1(metadata),
+            per_label_f1=per_label_f1(metadata),
         )
-    except (ValueError, KeyError, TypeError) as exc:
+        _warn_about_container_labels(directory.name, model.classes)
+    except (AttributeError, ValueError, KeyError, TypeError) as exc:
         raise UnsafeModelError(f"Invalid model bundle in {directory.name!r}: {exc!r}") from exc
-    _warn_about_container_labels(directory.name, model.classes)
     return model, metadata
 
 

@@ -4,6 +4,29 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Fixed — a bundle's own metadata can no longer take down a download
+
+- `metrics.json` travels **inside** importable bundles, so every value in it is
+  foreign input. The serving path always read it that way; the two *reporting*
+  consumers — the model card and `GET /models/{name}/labels` — formatted its values
+  directly. Eleven of twelve reads had no type guard (measured), so one wrong type
+  crashed the export that packs the card, and with it `GET /share/{id}` — **the one
+  route with no API key**, which answered 500 to an anonymous caller.
+- The discipline now has one home: `app/bundle_meta.py` (`as_mapping`, `as_names`,
+  `as_number`, `as_count`, plus `per_label_f1`, moved out of `model_io`). Reporting
+  data may legitimately be absent — bundles predating a field have none either — so
+  an unusable value degrades to "—" instead of raising.
+- Table cells in the card escape `|` and newlines: an author-supplied name could
+  otherwise break the table it sits in.
+- An import whose `config.json` has a `classes` that is not a list is refused with
+  **400** instead of 500: the container-label warning read that field *outside* the
+  block that maps shape errors, so it escaped as a bare `TypeError`.
+- A damaged archive is a 400 again, not a 500. Reading members moved into
+  `model_archive.unpack()` during the extraction, out of the handler that mapped
+  `BadZipFile`. Corruption modes measured rather than assumed: a mangled member name
+  raises `BadZipFile`, a **flipped data byte — the likeliest damage — `zlib.error`**,
+  a truncated stream `ValueError`/`EOFError`.
+
 ### Added — per-label diagnostics (`GET /models/{name}/labels`)
 
 - A model's headline F1 says how good it is on average; this says **where it is

@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import model_archive
+from .bundle_meta import as_count, as_mapping, as_names, per_label_f1
 from .classifier import ClassifierModel
 from .data import label_vocabulary
 from .model_io import CARD_FILE, MANIFEST_FILE, UnsafeModelError, _read_bundle, _write_bundle
@@ -201,10 +202,13 @@ class Registry:
         the model does not apply.
         """
         info = self.info(name)
-        metrics = (info.get("metadata") or {}).get("metrics") or {}
-        scores = metrics.get("per_label_f1") or {}
-        support = (info.get("metadata") or {}).get("per_label_support") or {}
-        thresholds = info.get("per_label_thresholds") or {}
+        metadata = as_mapping(info.get("metadata"))
+        # Read through bundle_meta for the same reason the serving path does: this
+        # report is rendered from an importable document, and a wrong type in it is a
+        # missing field, not a server fault (see bundle_meta).
+        scores = per_label_f1(metadata)
+        support = as_mapping(metadata.get("per_label_support"))
+        thresholds = as_mapping(info.get("per_label_thresholds"))
         names = self._uri_to_label(name)
         single_label = info.get("task_type") in ("binary", "multiclass")
 
@@ -213,10 +217,10 @@ class Registry:
                 "uri": uri,
                 "label": names.get(uri, uri),
                 "f1": scores.get(uri),
-                "support": support.get(uri),
+                "support": as_count(support.get(uri)),
                 "threshold": None if single_label else thresholds.get(uri, info.get("global_threshold")),
             }
-            for uri in info.get("classes") or []
+            for uri in as_names(info.get("classes"))
         ]
         # Unscored labels last: unknown is not the same as weak.
         return sorted(entries, key=lambda e: (e["f1"] is None, e["f1"] or 0.0))
@@ -225,7 +229,7 @@ class Registry:
         """The display-name map, which ``info()`` drops because it can be large."""
         with self._disk_lock:
             config = json.loads((self._path(name) / "config.json").read_text(encoding="utf-8"))
-        return config.get("uri_to_label") or {}
+        return as_mapping(config.get("uri_to_label"))
 
     def update_info(self, name: str, info: dict) -> dict:
         """Replace the author-supplied ``info`` block of an existing bundle.
