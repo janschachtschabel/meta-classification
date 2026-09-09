@@ -72,9 +72,18 @@ function renderTrainStatus(s) {
   if (s.status === "running")
     html += `<button class="small danger" id="train-stop">Stop training</button>`;
   if (s.status === "error") html += `<p class="error">${esc(s.message || "Training failed.")}</p>`;
-  if (s.status === "completed" && s.results)
-    html += `<p class="ok">Done: ${esc(s.results.model_name)} — F1 macro ${s.results.metrics.f1_macro.toFixed(3)},
-             micro ${s.results.metrics.f1_micro.toFixed(3)} (${s.results.n_labels} labels)</p>`;
+  if (s.status === "completed" && s.results) {
+    // An EVALUATION can finish with no metrics at all — when the dataset shares no
+    // labels with the model, the server answers `null` rather than a made-up 0.0.
+    // Reaching into .f1_macro then threw, and pollTick swallows exceptions, so the card
+    // simply froze on the previous state instead of showing the finished run.
+    const scores = s.results.metrics || {};
+    html += Number.isFinite(scores.f1_macro)
+      ? `<p class="ok">Done: ${esc(s.results.model_name)} — F1 macro ${scores.f1_macro.toFixed(3)},
+         micro ${scores.f1_micro.toFixed(3)} (${s.results.n_labels} labels)</p>`
+      : `<p class="ok">Done: ${esc(s.results.model_name)} — nothing comparable to score.
+         The model panel says which labels the dataset did not share.</p>`;
+  }
   el.innerHTML = html;
   applyBarWidths(el);
   const stop = $("#train-stop");

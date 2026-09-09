@@ -39,6 +39,28 @@ def _warmup_models(registry: Registry, names: list[str]) -> None:
             logger.info("Warmed up model %r", name)
 
 
+def sweep_upload_staging(data_dir: Path) -> int:
+    """Delete upload staging orphaned by a kill; returns how many were removed.
+
+    A dataset upload spools to ``<name>.part`` and a CSV classification to a hidden
+    ``.predict-*.csv.tmp``, both renamed or deleted on every normal and error path. A
+    SIGKILL mid-stream leaves one behind, and neither carries a dataset suffix, so the
+    listings never show it and nothing reclaims the disk. The models dir has been swept
+    for exactly this since the export staging landed (``Registry.sweep_stale_tmp``); this
+    is the same problem in the other directory.
+    """
+    if not data_dir.exists():
+        return 0
+    removed = 0
+    for path in data_dir.iterdir():
+        if not path.is_file():
+            continue
+        if path.name.endswith(".part") or (path.name.startswith(".") and path.name.endswith(".tmp")):
+            path.unlink(missing_ok=True)
+            removed += not path.exists()
+    return removed
+
+
 def _check_auth_configuration(settings: Settings) -> None:
     """Refuse to start an authenticated deployment that nobody can administer.
 
@@ -75,6 +97,9 @@ async def lifespan(app: FastAPI):
     swept = registry.sweep_stale_tmp()
     if swept:
         logger.warning("Swept %d orphaned model staging dir(s) from a previous crash", swept)
+    spooled = sweep_upload_staging(settings.data_dir)
+    if spooled:
+        logger.warning("Swept %d orphaned upload staging file(s) from a previous crash", spooled)
     if settings.warmup_models_list:
         resident = settings.effective_max_models_in_memory()
         if resident > settings.max_models_in_memory:

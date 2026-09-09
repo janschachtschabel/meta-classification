@@ -384,3 +384,24 @@ def _clear_settings_cache():
 
     get_settings.cache_clear()
     get_registry.cache_clear()
+
+
+def test_startup_sweeps_upload_staging_left_by_a_kill(tmp_path):
+    """Both upload paths clean up on every normal and error path, but a SIGKILL
+    mid-stream leaves a file behind: `<name>.part` from a dataset upload, and a hidden
+    `.predict-*.csv.tmp` from a CSV classification. They are invisible to the listings
+    (neither carries a dataset suffix), so nothing reclaims them — while the analogous
+    leak in the models dir HAS been swept since the export staging landed. Same problem,
+    same treatment."""
+    from app.main import sweep_upload_staging
+
+    (tmp_path / "orphan.csv.part").write_text("half an upload", encoding="utf-8")
+    (tmp_path / ".predict-abc123.csv.tmp").write_text("half a stream", encoding="utf-8")
+    (tmp_path / "real_dataset.csv").write_text("title;labels\n", encoding="utf-8")
+
+    removed = sweep_upload_staging(tmp_path)
+
+    assert removed == 2
+    assert (tmp_path / "real_dataset.csv").exists(), "a real dataset is never touched"
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob(".predict-*"))

@@ -93,3 +93,15 @@ def test_share_expiry_hours_clamped(tmp_path):
     from datetime import datetime
 
     assert datetime.fromisoformat(expires_at) <= sharing._now() + timedelta(hours=168, minutes=1)
+
+
+def test_safe_name_rejects_control_characters():
+    """A name reaches a Content-Disposition header on the export path, where a newline
+    is a header split. The guard rejected NUL only; every other control character got
+    through, including \r and \n. Pre-existing, and it matters more now that a second
+    route leans on this function."""
+    for name in ("foo\nbar", "foo\rbar", "foo\tbar", "foo\x1bbar"):
+        with pytest.raises(HTTPException) as raised:
+            safe_name(name, "model name")
+        assert raised.value.status_code == 400
+    safe_name("subjects_v2.1", "model name")  # ordinary names still pass

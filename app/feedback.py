@@ -31,6 +31,11 @@ CSV_SEPARATOR = ";"
 LABEL_SEPARATOR = ","
 
 _lock = threading.Lock()
+# How many corrections are on disk. Counted once from the file and then kept, because
+# the alternative — re-reading it on every append — is quadratic on a collection that is
+# meant to grow for the life of the volume. Safe to hold in memory: single-worker design,
+# one writer.
+_count: int | None = None
 
 
 def _feedback_path():
@@ -43,13 +48,19 @@ def append(record: dict) -> int:
     Stamped here rather than by the caller: when a correction was made is part of the
     record, and a client-supplied timestamp is a client-supplied claim.
     """
+    global _count
     path = _feedback_path()
     entry = {**record, "recorded_at": datetime.now(UTC).isoformat()}
     with _lock:
+        if _count is None:
+            # First write of this process: establish the count from what a READER sees,
+            # so a line that never finished being written is not counted as a correction.
+            _count = len(read_all())
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        return sum(1 for _ in path.open("r", encoding="utf-8"))
+        _count += 1
+        return _count
 
 
 def read_all() -> list[dict]:

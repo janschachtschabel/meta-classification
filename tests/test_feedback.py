@@ -17,6 +17,8 @@ from app import feedback
 def store(tmp_path, monkeypatch):
     path = tmp_path / "feedback.jsonl"
     monkeypatch.setattr(feedback, "_feedback_path", lambda: path)
+    # The count is process state (see the module): a fresh file means a fresh process.
+    monkeypatch.setattr(feedback, "_count", None)
     return path
 
 

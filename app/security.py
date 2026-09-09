@@ -79,7 +79,10 @@ def safe_name(name: str, kind: str = "name") -> str:
         or "\\" in name
         or ":" in name  # Windows drive-relative ("D:x") + NTFS ADS ("x:stream") escape the dir
         or name.startswith(".")
-        or "\x00" in name
+        # Every control character, not just NUL: the name reaches a Content-Disposition
+        # header on the export path, where a CR or LF is a header split — and a name
+        # carrying one is createable on the Linux deployment target.
+        or any(char < " " or char == "\x7f" for char in name)
     ):
         raise HTTPException(
             status_code=400,
