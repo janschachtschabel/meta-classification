@@ -63,3 +63,36 @@ def test_expired_link_is_purged_on_load(tmp_path):
     )
     store = ShareStore(path)  # _load() drops links whose expiry is in the past
     assert store.resolve("old") is None
+
+
+def test_a_link_that_expires_while_the_process_runs_leaves_the_listing(tmp_path, monkeypatch):
+    """Expiry was enforced in two of the three readers: `_load` purges at startup and
+    `resolve` refuses at use. `list` — the overview an operator revokes FROM — had no
+    check at all, so a link that died while the server was up was still displayed as
+    outstanding. The one screen that answers "what is still handed out" answered wrong.
+    """
+    from datetime import timedelta
+
+    import app.sharing as sharing
+
+    store = sharing.ShareStore(tmp_path / "links.json")
+    short, _ = store.create("model", "expiring", expires_hours=1)
+    long_lived, _ = store.create("model", "still_valid", expires_hours=48)
+    assert {entry["share_id"] for entry in store.list()} == {short, long_lived}
+
+    later = sharing._now() + timedelta(hours=2)
+    monkeypatch.setattr(sharing, "_now", lambda: later)
+    assert [entry["share_id"] for entry in store.list()] == [long_lived]
+    assert store.resolve(short) is None, "the two readers must agree on what is live"
+
+
+def test_a_share_file_that_is_not_a_mapping_resets_instead_of_crashing(tmp_path):
+    """The store is ours, but it sits on a mounted volume next to the models. Valid
+    JSON of the wrong shape reached `.items()` and raised at import of the first share
+    route — the same reset the unreadable-file path already handles."""
+    path = tmp_path / "links.json"
+    path.write_text('["not", "a", "mapping"]', encoding="utf-8")
+    store = ShareStore(path)
+    assert store.list() == []
+    share_id, _ = store.create("model", "m", expires_hours=1)
+    assert store.resolve(share_id) is not None, "the store stays usable after the reset"

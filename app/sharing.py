@@ -23,6 +23,23 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _is_live(info: object) -> bool:
+    """Is this link still valid? A malformed entry counts as dead.
+
+    One definition for all three readers. It used to be written twice and forgotten
+    once — ``list`` had no expiry check at all, so a link that died while the process
+    was running was still shown as outstanding by the very screen an operator revokes
+    from. Anything unparseable is dead rather than skipped, because a link whose
+    expiry we cannot read is a link whose expiry we cannot enforce.
+    """
+    if not isinstance(info, dict):
+        return False
+    try:
+        return datetime.fromisoformat(info["expires_at"]) > _now()
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 class ShareStore:
     """Thread-safe JSON-backed store of share links."""
 
@@ -36,19 +53,16 @@ class ShareStore:
             return {}
         try:
             links = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(links, dict):
+                # Valid JSON of the wrong shape: the file sits on a mounted volume,
+                # and `.items()` on a list would raise at the first share route.
+                raise ValueError(f"expected an object, got {type(links).__name__}")
         except (OSError, ValueError):
             # A corrupt/unreadable store resets to empty — but say so, don't lose
             # every active link silently.
             logger.warning("Discarding unreadable share-links file %s; all links reset.", self.path)
             return {}
-        now = _now()
-        live: dict[str, dict] = {}
-        for key, value in links.items():
-            try:
-                if datetime.fromisoformat(value["expires_at"]) > now:
-                    live[key] = value
-            except (KeyError, TypeError, ValueError):
-                continue  # skip one malformed entry rather than failing the whole store
+        live = {key: value for key, value in links.items() if _is_live(value)}
         if len(live) != len(links):
             self._links = live
             self._persist()
@@ -81,6 +95,11 @@ class ShareStore:
 
         The share id is the capability itself, so this is admin-only at the route.
         ``created_at`` is ``None`` for links created before it was recorded.
+
+        Expired entries are filtered, not deleted: a listing is a read, and ``resolve``
+        already purges the one link it was asked about. What is left is cleared at the
+        next start — the store is process-local, so a restart is the only writer that
+        can see them all at once anyway.
         """
         with self._lock:
             return sorted(
@@ -88,6 +107,7 @@ class ShareStore:
                     {"share_id": share_id, "kind": info.get("kind"), "name": info.get("name"),
                      "created_at": info.get("created_at"), "expires_at": info.get("expires_at")}
                     for share_id, info in self._links.items()
+                    if _is_live(info)
                 ),
                 key=lambda entry: entry["expires_at"] or "",
             )
@@ -110,7 +130,7 @@ class ShareStore:
             info = self._links.get(share_id)
             if info is None:
                 return None
-            if datetime.fromisoformat(info["expires_at"]) <= _now():
+            if not _is_live(info):
                 del self._links[share_id]
                 self._persist()
                 return None

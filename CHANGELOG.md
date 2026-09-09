@@ -4,6 +4,17 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Fixed — the share-link overview no longer shows dead links as live
+
+- Expiry was enforced in two of the three readers: the store purges at startup and
+  `resolve` refuses at use, but `GET /share` had **no check at all** — so a link that
+  expired while the server was running was still listed as outstanding by the one
+  screen an operator revokes from. There is now a single definition of "live" that
+  all three share; the bug was the third copy that was never written.
+- A share-links file that is valid JSON of the wrong shape (an array, say) resets
+  with a warning like an unreadable one, instead of raising on the first share route.
+
+
 ### Fixed — a bundle's own metadata can no longer take down a download
 
 - `metrics.json` travels **inside** importable bundles, so every value in it is
