@@ -81,14 +81,19 @@ def _quality_section(metadata: dict, config: dict) -> list[str]:
     per_label = metrics.get("per_label_f1") or {}
     if per_label:
         names = config.get("uri_to_label") or {}
+        support = metadata.get("per_label_support") or {}
         weakest = sorted(per_label.items(), key=lambda kv: kv[1])[:_WEAKEST_LABELS]
         lines += [
             "", f"**The {len(weakest)} weakest labels.** A high confidence on one of these "
             "is worth less than the same number on a strong label — check them before "
-            "relying on the model for those subjects.", "",
-            "| Label | F1 |", "|---|---:|",
+            "relying on the model for those subjects. The row count says why a score is "
+            "low: too few examples is a different problem from a hard distinction.", "",
+            "| Label | F1 | Rows |", "|---|---:|---:|",
         ]
-        lines += [_row(names.get(uri, uri), f"{score:.3f}") for uri, score in weakest]
+        lines += [
+            f"| {names.get(uri, uri)} | {score:.3f} | {support.get(uri, '—')} |"
+            for uri, score in weakest
+        ]
     return lines
 
 

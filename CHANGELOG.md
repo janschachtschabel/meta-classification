@@ -4,6 +4,24 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — per-label diagnostics (`GET /models/{name}/labels`)
+
+- A model's headline F1 says how good it is on average; this says **where it is
+  weak**, which is what decides whether one answer deserves a second look. Each
+  label with its F1, its support and its threshold, **weakest first**.
+- `per_label_support` (rows carrying the label) is recorded at training time from
+  the full label matrix — **not** from `compute_metrics`, which the plan proposed:
+  under a holdout split that function only sees the test share, so the number would
+  report ~15 % of the examples while reading as the real count. It is what makes a
+  score interpretable: 0.13 on 25 rows is a different statement from 0.13 on 5,000.
+- `threshold` is `null` for binary/multiclass, where serving decides by argmax and
+  never reads one — reporting the global 0.5 there would describe a rule the model
+  does not apply. 🟢 Confirmed on the real store: 59-label multilabel model reports
+  its tuned cuts, a 70-label multiclass model reports none.
+- Bundles trained before this release report `support: null` and keep working; the
+  model card's weakest-label table gains the row count where it is available.
+
+
 ### Added — share links can be reviewed and withdrawn
 
 - `GET /share` lists every live link (id, kind, name, created, expires) and

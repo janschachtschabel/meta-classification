@@ -121,6 +121,40 @@ def test_export_import_roundtrip_via_api(trained_model):
     assert "api_copy" in client.get("/models", headers=RO).json()
 
 
+def test_label_diagnostics_list_the_weakest_labels_first(trained_model):
+    """"How good is this model" is one number; "where is it weak" is the question that
+    decides whether to trust an answer. Per label: its F1, how many rows carry it, and
+    the threshold serving applies — weakest first, because that is the end anyone
+    reviewing a model looks at."""
+    resp = client.get("/models/api_model/labels", headers=RO)
+    assert resp.status_code == 200, resp.text
+    labels = resp.json()
+
+    info = client.get("/models/api_model", headers=RO).json()
+    assert {entry["uri"] for entry in labels} == set(info["classes"])
+    scores = [entry["f1"] for entry in labels]
+    assert scores == sorted(scores), "weakest label first"
+    for entry in labels:
+        assert entry["label"] and entry["support"] >= 1
+        assert 0.0 <= entry["f1"] <= 1.0
+
+    assert client.get("/models/ghost/labels", headers=RO).status_code == 404
+
+
+def test_label_diagnostics_report_a_threshold_only_where_serving_uses_one():
+    """tiny.csv is single-label, so the trained model decides by argmax and never
+    reads a threshold. Reporting the global 0.5 there would describe a rule the model
+    does not apply; a forced multilabel run does use its tuned per-label cuts."""
+    single = client.get("/models/api_model/labels", headers=RO).json()
+    assert all(entry["threshold"] is None for entry in single), "argmax reads no threshold"
+
+    multi = {**TRAIN_BODY, "model_name": "multilabel_model", "task_type": "multilabel"}
+    assert client.post("/train", json=multi, headers=ADMIN).status_code == 202
+    assert _wait_for_training()["status"] == "completed"
+    entries = client.get("/models/multilabel_model/labels", headers=RO).json()
+    assert all(isinstance(entry["threshold"], float) for entry in entries)
+
+
 def test_model_info_can_be_set_after_training_and_travels_with_the_bundle(trained_model):
     """The point of the info block is the moment a model is handed to someone else:
     the bundle records what was measured, but not who made it, what for, or where the

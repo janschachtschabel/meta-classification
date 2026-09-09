@@ -82,6 +82,15 @@ def _build_metadata(
         "n_val": n_val,
         "n_test": n_test,
         "n_labels": len(prep.classes),
+        # Rows carrying each label, over ALL data used — not over the evaluated split.
+        # Under a holdout split compute_metrics only sees the test share, so a support
+        # taken there would report ~15% of the examples while reading as the real count.
+        # This is what makes a per-label F1 interpretable: 0.13 on 25 rows is a very
+        # different statement from 0.13 on 5,000.
+        "per_label_support": {
+            uri: int(count)
+            for uri, count in zip(prep.classes, prep.y_all.sum(axis=0), strict=True)
+        },
         "metrics": fitted.metrics,
         "training_time_seconds": round(elapsed, 1),
         # Author-supplied documentation, kept in its own block so a reader can tell a

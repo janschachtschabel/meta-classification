@@ -1300,6 +1300,29 @@ def test_label_vocabulary_is_only_reported_when_the_classes_agree(tmp_path):
     assert label_vocabulary([]) is None
 
 
+def test_metadata_records_how_many_rows_carry_each_label(tmp_path):
+    """An F1 of 0.13 means one thing on a label with 25 examples and another on one
+    with 5,000, so the diagnostics need the count next to the score.
+
+    Taken from the full label matrix, NOT from the evaluated split: under a holdout
+    split `compute_metrics` only sees the test share, so a support computed there
+    would silently report about 15% of the examples for `fast`-profile models."""
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    meta = Registry(settings.models_dir, 2).info("tiny_model")["metadata"]
+
+    support = meta["per_label_support"]
+    assert set(support) == set(Registry(settings.models_dir, 2).info("tiny_model")["classes"])
+    # tiny.csv carries exactly one label per row, so the counts must add up to the rows.
+    assert sum(support.values()) == meta["n_samples"]
+    # Every kept label cleared min_samples_per_label — that is why it was kept.
+    assert min(support.values()) >= meta["min_samples_per_label"]
+
+
 def test_metadata_records_the_searched_c_grid(tmp_path):
     """best_C alone is not interpretable: a value sitting at the EDGE of the grid
     means the search ran out of candidates, not that it found an optimum. Persist

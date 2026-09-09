@@ -59,6 +59,24 @@ async def model_info(model_name: str, _: str = Depends(require_role("readonly"))
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
 
 
+@router.get("/models/{model_name}/labels", summary="Per-label diagnostics")
+async def model_labels(model_name: str, _: str = Depends(require_role("readonly"))) -> list[dict]:
+    """Every label with its F1, its support (rows carrying it) and its threshold,
+    **weakest first**.
+
+    The headline F1 says how good a model is on average; this says where it is weak,
+    which is what decides whether one answer deserves a second look. `support` makes
+    a score readable — 0.13 on 25 rows is a different statement from 0.13 on 5,000.
+    `threshold` is `null` for binary/multiclass, where serving decides by argmax and
+    reads no threshold. **Auth:** readonly.
+    """
+    safe_name(model_name, "model name")
+    try:
+        return get_registry().label_diagnostics(model_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+
+
 @router.put("/models/{model_name}/info", summary="Set the model's documentation")
 @limiter.limit(default_limit)
 async def set_model_info(

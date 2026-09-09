@@ -27,6 +27,11 @@ from .settings import get_settings
 _BACKUP_SUFFIX = ".prebackup"
 
 
+# `Registry.list` shadows the builtin inside the class body, so any annotation after
+# that method has to name the builtin through this alias.
+_Rows = list[dict]
+
+
 class Registry:
     """Disk-backed model store with a bounded LRU memory cache (low RAM)."""
 
@@ -182,6 +187,45 @@ class Registry:
         # bundles trained before this existed and cannot be typed in wrong.
         vocabulary = label_vocabulary(classes)
         return {"name": name, **config, "label_vocabulary": vocabulary, "metadata": metadata}
+
+    def label_diagnostics(self, name: str) -> _Rows:
+        """Per label: its F1, how many rows carry it, and the threshold serving applies.
+
+        Weakest first — the end anyone reviewing a model looks at. A model's headline
+        F1 says how good it is on average; this says *where* it is weak, which is what
+        decides whether a given answer deserves a second look.
+
+        ``f1`` and ``support`` are ``None`` for bundles trained before they were
+        recorded. ``threshold`` is ``None`` for binary/multiclass, where serving picks
+        the argmax and never reads a threshold — reporting one would describe a rule
+        the model does not apply.
+        """
+        info = self.info(name)
+        metrics = (info.get("metadata") or {}).get("metrics") or {}
+        scores = metrics.get("per_label_f1") or {}
+        support = (info.get("metadata") or {}).get("per_label_support") or {}
+        thresholds = info.get("per_label_thresholds") or {}
+        names = self._uri_to_label(name)
+        single_label = info.get("task_type") in ("binary", "multiclass")
+
+        entries = [
+            {
+                "uri": uri,
+                "label": names.get(uri, uri),
+                "f1": scores.get(uri),
+                "support": support.get(uri),
+                "threshold": None if single_label else thresholds.get(uri, info.get("global_threshold")),
+            }
+            for uri in info.get("classes") or []
+        ]
+        # Unscored labels last: unknown is not the same as weak.
+        return sorted(entries, key=lambda e: (e["f1"] is None, e["f1"] or 0.0))
+
+    def _uri_to_label(self, name: str) -> dict:
+        """The display-name map, which ``info()`` drops because it can be large."""
+        with self._disk_lock:
+            config = json.loads((self._path(name) / "config.json").read_text(encoding="utf-8"))
+        return config.get("uri_to_label") or {}
 
     def update_info(self, name: str, info: dict) -> dict:
         """Replace the author-supplied ``info`` block of an existing bundle.
