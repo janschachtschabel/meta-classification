@@ -102,6 +102,21 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
 Bei einem einzelnen Wort gibt es keine Wort-Zuordnung — weglassen braucht mindestens
 zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
 
+## Vor dem Start prüfen (Training-Tab)
+
+Unter den Trainingseinstellungen steht **Check before training**. Der Knopf liest den
+Datensatz einmal durch und beantwortet die zwei Fragen, die man sonst erst nach dem Lauf
+beantwortet bekommt:
+
+- **Wie viele Labels überleben *deine* Schwelle?** Steht dort „keeps 0 of 3 labels",
+  würde der Lauf mit „not enough data" abbrechen — sichtbar in Sekunden statt nach einer
+  Stunde. Ein Knopf übernimmt den Vorschlag der Heuristik direkt ins Feld.
+- **Was kostet der Lauf** mit dem gewählten Profil — und bei mehreren Label-Feldern:
+  *pro Modell*.
+
+Geprüft wird gegen das **erste** ausgewählte Label-Feld; bei mehreren können sich die
+Zahlen unterscheiden.
+
 ## Einen Datensatz prüfen, bevor man ihn trainiert (Datasets-Tab)
 
 Ein Klick auf den Dateinamen zeigt die Spalten und die ersten Zeilen. Darunter wählt man

@@ -219,6 +219,11 @@
                  if no label reaches it, training stops with "not enough data".</p>
             </div>
           </div>
+          <button type="button" class="small ghost" id="train-preflight">Check before training</button>
+          <p class="muted">Reads every row of the dataset and reports how many labels survive
+             your threshold and roughly what the run will cost. On a large export this takes
+             a moment — which is exactly the moment worth spending before an hour of CPU.</p>
+          <div id="train-preflight-out" aria-live="polite"></div>
           <details>
             <summary>Vocabulary caps <span class="muted">(advanced — RAM vs. quality)</span></summary>
             <p class="muted" id="train-caps-help">
@@ -341,6 +346,8 @@
 <script src="model-detail.js"></script>
 <script src="datasets.js"></script>
 <script src="dataset-detail.js"></script>
+<script src="train-status.js"></script>
+<script src="training.js"></script>
 <script src="app.js"></script>
 <dialog id="model-detail" aria-labelledby="model-detail-title"></dialog>
 <dialog id="dataset-detail" aria-labelledby="dataset-detail-title"></dialog>

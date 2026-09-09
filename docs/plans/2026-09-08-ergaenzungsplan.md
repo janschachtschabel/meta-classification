@@ -202,14 +202,23 @@ gated.
 - 🟢 Measured: 50 000 rows against the 59-label `faecher_300k_auto` → 4.1 MB of CSV in
   54.6 s at a **2.2 MB peak heap** on a 6.5 MB input; `transfer-encoding: chunked`.
 
-### D3 · Dataset inspector + training pre-flight (M, 2 days)
+### D3 · Dataset inspector + training pre-flight (M, 2 days) — **done 2026-09-09**
 - Datasets tab: click a row → columns, first rows (`GET /datasets/{name}`), and an
   "Analyze" button (`/datasets/analyze`) showing label counts, the `labels_with_N+`
   table and warnings. Training tab: after picking dataset + label field, show the
   same numbers inline with a recommended `min_samples_per_label` and an estimated
   duration from rows × profile (README cost model, labelled "estimate").
-- Files: `app/static/ui/datasets.js`, `training.js`, `app/dataset_stats.py` (+`support`
-  per label). Tests: analyze output includes the fields the UI reads.
+- Files: `app/dataset_stats.py` (+ the recommendation and the cost estimate),
+  `app/profiles.py` (the cost model), `app/static/ui/dataset-detail.js` (new),
+  `datasets.js`, and `app.js` split into shell / `training.js` / `train-status.js`.
+  Tests: the cost model reproduces all six published README figures; analyze carries the
+  fields the UI reads.
+- Deviation: `support` per label was NOT added to `dataset_stats` — `analyze` already
+  returns `top_20_labels` and `rare_labels_under_10`, and the threshold table answers the
+  question the UI actually asks ("how many labels survive N"). A per-label support map
+  over a 300 k dataset would be a large payload nothing reads.
+- Deviation: both views analyse **on demand**, not on open / on change. Analysis parses
+  every row; opening a panel or changing a select should not start a 195 MB job.
 
 ### D4 · Explain view (S–M, 1 day) — **done 2026-09-09**
 - "Why?" on a prediction → `/predict/explain`; the top words per label rendered as

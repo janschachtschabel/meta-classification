@@ -4,6 +4,22 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — a pre-flight check in the Training tab
+
+- **Check before training** reads the dataset once and answers the two questions you
+  otherwise only get after the run: how many labels *your* threshold keeps, and what the
+  run costs on the selected profile (per model, when several label fields are planned).
+- On the fixture this immediately catches the real failure: the form's default threshold
+  of 20 "keeps 0 of 3 labels" — a run that would have stopped with "not enough data".
+  A button puts the heuristic's value into the field.
+- On demand, not on every change of the label field: it parses the whole CSV, and a
+  300 k export costs half a minute each time. The button says what it costs.
+- `app.js` split three ways along the seam the new view exposed: the shell (126),
+  `training.js` — the form, the pickers, the browser-side queue (227) — and
+  `train-status.js` — the poll loop, the status card, the topbar chip (112). They change
+  for different reasons: what a run is *configured* with, versus what it *reports*.
+
+
 ### Added — a dataset inspector in the Datasets tab
 
 - Clicking a dataset name shows its columns and first rows, and offers **Analyze**:
