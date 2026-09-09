@@ -10,9 +10,17 @@
    rather than straight into toFixed(). */
 "use strict";
 
-const fmtInt = (v) => (Number.isFinite(v) ? v.toLocaleString() : "–");
-const fmtMinutes = (v) => (Number.isFinite(v) ? `${(v / 60).toFixed(1)} min` : "–");
-const fmtDate = (v) => { const d = new Date(v); return isNaN(d) ? "–" : d.toLocaleString(); };
+// Locale-aware on purpose: 156373 reads as 156.373 to a German reader and 156,373
+// to an English one, and the UI language — not the browser's — is what they picked.
+const fmtInt = (v) => (Number.isFinite(v) ? v.toLocaleString(I18n.locale()) : "–");
+// Rounded before formatting, not after: Intl would otherwise render 40.1666 in full,
+// and one decimal is all this number ever meant.
+const fmtMinutes = (v) =>
+  (Number.isFinite(v) ? t("common.minutes", { count: Number((v / 60).toFixed(1)) }) : "–");
+const fmtDate = (v) => {
+  const d = new Date(v);
+  return isNaN(d) ? "–" : d.toLocaleString(I18n.locale());
+};
 
 /* The searched grid is small (3–5 values). When the winner sits at either end, the
    optimum may well lie outside it — worth saying, because the fix is a wider grid,
@@ -23,8 +31,8 @@ function regularization(meta) {
   if (!Number.isFinite(best)) return "–";
   if (!grid.length) return String(best);
   const atEdge = best <= Math.min(...grid) || best >= Math.max(...grid);
-  return `${best} (searched ${grid.join(", ")})` +
-    (atEdge ? " — the winner sits at the edge of the grid, so a better value may lie outside it" : "");
+  return t("modelDetail.cSearched", { best, grid: grid.join(", ") }) +
+    (atEdge ? t("modelDetail.cAtEdge") : "");
 }
 
 function textColumns(meta) {
@@ -35,45 +43,51 @@ function textColumns(meta) {
   return columns.map((c) => (weights[c] > 1 ? `${c} ×${weights[c]}` : c)).join(", ");
 }
 
-/* Label + how to read one value out of the model, in the order they are shown. An
-   entry returning "" is dropped, so optional fields do not leave empty rows. */
+/* Label key + how to read one value out of the model, in the order they are shown.
+   An entry returning "" is dropped, so optional fields do not leave empty rows. */
 const TRAINING_ROWS = [
-  ["Dataset", (m) => m.metadata.dataset],
-  ["Label column", (m) => m.metadata.label_column],
-  ["Text columns", (m) => textColumns(m.metadata)],
-  ["Label filter", (m) => m.metadata.label_filter],
-  ["Rows used", (m) => fmtInt(m.metadata.n_samples)],
-  ["Min. rows per label", (m) => m.metadata.min_samples_per_label],
-  ["Profile", (m) => m.metadata.profile],
-  ["Regularization C", (m) => regularization(m.metadata)],
-  ["Features", (m) => {
+  ["modelDetail.row.dataset", (m) => m.metadata.dataset],
+  ["modelDetail.row.labelColumn", (m) => m.metadata.label_column],
+  ["modelDetail.row.textColumns", (m) => textColumns(m.metadata)],
+  ["modelDetail.row.labelFilter", (m) => m.metadata.label_filter],
+  ["modelDetail.row.rowsUsed", (m) => fmtInt(m.metadata.n_samples)],
+  ["modelDetail.row.minRowsPerLabel", (m) => m.metadata.min_samples_per_label],
+  ["modelDetail.row.profile", (m) => m.metadata.profile],
+  ["modelDetail.row.regularization", (m) => regularization(m.metadata)],
+  ["modelDetail.row.features", (m) => {
     const tfidf = m.metadata.tfidf || {};
     return Number.isFinite(tfidf.n_features)
-      ? `${fmtInt(tfidf.n_features)} (${tfidf.use_char ? "word + character" : "word only"}) n-grams`
+      ? t("modelDetail.features", {
+          count: tfidf.n_features,
+          kind: tfidf.use_char ? t("modelDetail.features.wordChar") : t("modelDetail.features.word"),
+        })
       : "";
   }],
-  ["Evaluation", (m) => m.metadata.evaluation],
-  ["Training time", (m) => fmtMinutes(m.metadata.training_time_seconds)],
-  ["Created", (m) => fmtDate(m.metadata.created_at)],
+  ["modelDetail.row.evaluation", (m) => m.metadata.evaluation],
+  ["modelDetail.row.trainingTime", (m) => fmtMinutes(m.metadata.training_time_seconds)],
+  ["modelDetail.row.created", (m) => fmtDate(m.metadata.created_at)],
 ];
 
 const metricsOf = (m) => (m.metadata && m.metadata.metrics) || {};
 
 const QUALITY_ROWS = [
-  ["F1 macro", (m) => fmtScore(metricsOf(m).f1_macro)],
-  ["F1 micro", (m) => fmtScore(metricsOf(m).f1_micro)],
-  ["Decision rule", (m) => metricsOf(m).decision_rule],
-  ["Labels asserted per row", (m) => {
+  ["modelDetail.row.f1Macro", (m) => fmtScore(metricsOf(m).f1_macro)],
+  ["modelDetail.row.f1Micro", (m) => fmtScore(metricsOf(m).f1_micro)],
+  ["modelDetail.row.decisionRule", (m) => metricsOf(m).decision_rule],
+  ["modelDetail.row.labelsPerRow", (m) => {
     const metrics = metricsOf(m);
     return Number.isFinite(metrics.predicted_labels_per_row)
-      ? `${metrics.predicted_labels_per_row} (the data carries ${metrics.true_labels_per_row ?? "–"})`
+      ? t("modelDetail.labelsPerRow", {
+          predicted: metrics.predicted_labels_per_row,
+          actual: metrics.true_labels_per_row ?? "–",
+        })
       : "";
   }],
 ];
 
 function definitionList(model, rows) {
   const cells = rows
-    .map(([label, read]) => [label, read(model)])
+    .map(([labelKey, read]) => [t(labelKey), read(model)])
     .filter(([, value]) => value !== undefined && value !== null && value !== "");
   return `<dl>${cells.map(([label, value]) =>
     `<dt>${esc(label)}</dt><dd>${esc(String(value))}</dd>`).join("")}</dl>`;
@@ -88,30 +102,32 @@ function compareBy(key, ascending) {
     const x = a[key], y = b[key];
     if (x === null || x === undefined) return (y === null || y === undefined) ? 0 : 1;
     if (y === null || y === undefined) return -1;
-    const order = typeof x === "string" ? String(x).localeCompare(String(y)) : x - y;
+    const order = typeof x === "string"
+      ? String(x).localeCompare(String(y), I18n.locale()) : x - y;
     return ascending ? order : -order;
   };
 }
 
 const LABEL_COLUMNS = [
-  ["label", "Label", ""],
-  ["f1", "F1", "num"],
-  ["support", "Rows", "num"],
-  ["threshold", "Threshold", "num"],
+  ["label", "modelDetail.labels.label", ""],
+  ["f1", "modelDetail.labels.f1", "num"],
+  ["support", "modelDetail.labels.rows", "num"],
+  ["threshold", "modelDetail.labels.threshold", "num"],
 ];
 
 function renderLabelTable(box, labels, sort) {
   const sorted = [...labels].sort(compareBy(sort.key, sort.ascending));
   box.innerHTML = `<div class="table-wrap"><table>
-    <thead><tr>${LABEL_COLUMNS.map(([key, title, cls]) => `
+    <thead><tr>${LABEL_COLUMNS.map(([key, titleKey, cls]) => `
       <th class="${cls}" aria-sort="${sort.key === key ? (sort.ascending ? "ascending" : "descending") : "none"}">
-        <button type="button" class="th-sort" data-sort="${key}">${esc(title)}</button>
+        <button type="button" class="th-sort" data-sort="${key}">${esc(t(titleKey))}</button>
       </th>`).join("")}</tr></thead>
     <tbody>${sorted.map((row) => `<tr>
       <td>${esc(row.label)}</td>
       <td class="num">${esc(fmtScore(row.f1))}</td>
       <td class="num">${esc(row.support === null || row.support === undefined ? "–" : fmtInt(row.support))}</td>
-      <td class="num">${esc(row.threshold === null || row.threshold === undefined ? "argmax" : fmtScore(row.threshold))}</td>
+      <td class="num">${esc(row.threshold === null || row.threshold === undefined
+        ? t("modelDetail.argmax") : fmtScore(row.threshold))}</td>
     </tr>`).join("")}</tbody></table></div>`;
   box.querySelectorAll("[data-sort]").forEach((button) => button.addEventListener("click", () => {
     const key = button.dataset.sort;
@@ -132,7 +148,7 @@ function curlFor(name) {
 
 async function showModelDetail(name) {
   const dialog = $("#model-detail");
-  dialog.innerHTML = `<div class="detail" tabindex="-1"><p class="muted">Loading …</p></div>`;
+  dialog.innerHTML = `<div class="detail" tabindex="-1"><p class="muted">${t("common.loading")}</p></div>`;
   dialog.showModal();
   const frame = dialog.querySelector(".detail");
   frame.focus();
@@ -145,7 +161,7 @@ async function showModelDetail(name) {
     ]);
   } catch (err) {
     frame.innerHTML = `<p class="error">${esc(err.message)}</p>
-      <button type="button" class="ghost" data-close>Close</button>`;
+      <button type="button" class="ghost" data-close>${t("common.close")}</button>`;
     frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
     return;
   }
@@ -154,37 +170,35 @@ async function showModelDetail(name) {
   frame.innerHTML = `
     <div class="detail-head">
       <h2 id="model-detail-title">${esc(name)}</h2>
-      <button type="button" class="ghost small" data-close aria-label="Close details">Close</button>
+      <button type="button" class="ghost small" data-close
+              aria-label="${esc(t("common.closeDetails"))}">${t("common.close")}</button>
     </div>
-    <p class="muted">${esc(model.task_type)} · ${esc(String((model.classes || []).length))} labels${
-      vocabulary ? ` · from <code>${esc(vocabulary)}</code>` : ""}</p>
-    ${isServable(model) ? "" : `<p class="error">Bundle format ${esc(String(model.format_version ?? 1))}:
-      this model cannot be loaded for classification any more. Download it, or retrain it.</p>`}
+    <p class="muted">${esc(model.task_type)} · ${t("modelDetail.labelCount", {
+      count: (model.classes || []).length })}${
+      vocabulary ? t("modelDetail.fromVocabulary", { vocabulary: esc(vocabulary) }) : ""}</p>
+    ${isServable(model) ? "" : `<p class="error">${t("modelDetail.staleBundle", {
+      version: esc(String(model.format_version ?? 1)) })}</p>`}
 
-    <h3>How it was trained</h3>
+    <h3>${t("modelDetail.howTrained")}</h3>
     <div class="train-status">${definitionList(model, TRAINING_ROWS)}</div>
 
-    <h3>How well it works</h3>
+    <h3>${t("modelDetail.howWell")}</h3>
     <div class="train-status">${definitionList(model, QUALITY_ROWS)}</div>
 
-    <h3>Scored against a dataset</h3>
+    <h3>${t("modelDetail.scoredAgainst")}</h3>
     <div id="detail-evaluations"></div>
 
-    <h3>Per label</h3>
-    <p class="muted">Weakest first. A high confidence on a weak label is worth less than the
-      same number on a strong one. "Rows" says why a score is low — too few examples is a
-      different problem from a hard distinction; it is blank for models trained before the
-      count was recorded. "argmax" means this model picks its single best label and reads
-      no threshold.</p>
+    <h3>${t("modelDetail.perLabel")}</h3>
+    <p class="muted">${t("modelDetail.perLabelNote")}</p>
     <div id="detail-labels"></div>
 
     <div class="detail-actions">
-      <button type="button" class="small" data-act="download">Download bundle</button>
-      <button type="button" class="small" data-act="curl">Copy curl</button>
-      <button type="button" class="small" data-act="evaluate">Evaluate on…</button>
-      <button type="button" class="small" data-act="share">Share link</button>
-      <button type="button" class="small" data-act="info">Documentation</button>
-      <button type="button" class="small danger" data-act="delete">Delete</button>
+      <button type="button" class="small" data-act="download">${t("modelDetail.action.download")}</button>
+      <button type="button" class="small" data-act="curl">${t("modelDetail.action.curl")}</button>
+      <button type="button" class="small" data-act="evaluate">${t("modelDetail.action.evaluate")}</button>
+      <button type="button" class="small" data-act="share">${t("common.shareLink")}</button>
+      <button type="button" class="small" data-act="info">${t("modelDetail.action.documentation")}</button>
+      <button type="button" class="small danger" data-act="delete">${t("common.delete")}</button>
     </div>`;
 
   frame.querySelector("#detail-evaluations").innerHTML = evaluationsSection(model);
@@ -195,18 +209,18 @@ async function showModelDetail(name) {
   const actions = {
     download: () => Api.download(`/models/${encodeURIComponent(name)}/export`, `${name}.zip`)
       .catch((err) => toast(err.message)),
-    curl: async () => { await navigator.clipboard.writeText(curlFor(name)); toast("curl command copied."); },
+    curl: async () => { await navigator.clipboard.writeText(curlFor(name)); toast(t("modelDetail.curlCopied")); },
     // Stays inside the dialog: the form belongs to THIS model, and closing the panel
     // to fill it in would lose the numbers it is meant to be compared against.
     evaluate: () => openEvaluateForm(name, frame),
     share: () => { dialog.close(); shareResource("models", name, "#models-share"); },
     info: () => { dialog.close(); editModelInfo(name); },
     delete: async () => {
-      if (!confirm(`Delete model "${name}"? This cannot be undone.`)) return;
+      if (!confirm(t("models.deleteConfirm", { name }))) return;
       try {
         await Api.del(`/models/${encodeURIComponent(name)}`);
         dialog.close();
-        toast("Model deleted.");
+        toast(t("models.deleted"));
         loadModels();
       } catch (err) { toast(err.message); }
     },

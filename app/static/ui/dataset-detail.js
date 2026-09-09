@@ -16,16 +16,16 @@ function columnPickers(columns) {
     `<option${selected === c ? " selected" : ""}>${esc(c)}</option>`).join("");
   return `<div class="row">
     <div>
-      <label for="ds-text-cols">Text columns (Ctrl-click for several)</label>
+      <label for="ds-text-cols">${t("common.textColumnsMulti")}</label>
       <select id="ds-text-cols" multiple size="5">${options(null)}</select>
     </div>
     <div>
-      <label for="ds-label-col">Label column</label>
+      <label for="ds-label-col">${t("common.labelColumn")}</label>
       <select id="ds-label-col">${options(null)}</select>
     </div>
   </div>
-  <button type="button" class="small" id="ds-analyze">Analyze</button>
-  <p class="muted">Reads every row, so this takes a moment on a large export.</p>`;
+  <button type="button" class="small" id="ds-analyze">${t("datasetDetail.analyze")}</button>
+  <p class="muted">${t("datasetDetail.analyzeNote")}</p>`;
 }
 
 function thresholdRows(analysis, recommended) {
@@ -34,42 +34,44 @@ function thresholdRows(analysis, recommended) {
     .sort((a, b) => a.n - b.n)
     .map(({ n, kept }) => `<tr${n === recommended ? ' class="recommended"' : ""}>
       <td class="num">${n}</td><td class="num">${kept}</td>
-      <td>${n === recommended ? "recommended for this size" : ""}</td></tr>`)
+      <td>${n === recommended ? t("datasetDetail.recommended") : ""}</td></tr>`)
     .join("");
+}
+
+/* "Coffee break or afternoon", in the reader's units — the same three bands the
+   pre-flight uses, so the two views never disagree about what a run costs. */
+function costLabel(minutes) {
+  if (minutes < 1) return t("common.underAMinute");
+  if (minutes < 90) return t("common.minutes", { count: Number(minutes.toFixed(0)) });
+  return t("common.hours", { count: Number((minutes / 60).toFixed(1)) });
 }
 
 function costRows(estimate) {
   return Object.entries(estimate).map(([profile, minutes]) => `<tr>
     <td>${esc(profile)}</td>
-    <td class="num">${minutes < 1 ? "under a minute"
-      : minutes < 90 ? `${minutes.toFixed(0)} min`
-      : `${(minutes / 60).toFixed(1)} h`}</td></tr>`).join("");
+    <td class="num">${costLabel(minutes)}</td></tr>`).join("");
 }
 
 function analysisHtml(body) {
   const recommended = body.recommended_min_samples_per_label;
   const rare = Object.keys(body.rare_labels_under_10 || {}).length;
   return `<div class="analysis">
-    <h3>${fmtInt(body.total_samples)} rows with labels · ${body.unique_labels} labels</h3>
-    ${rare ? `<p class="error" role="alert">${rare} of them have fewer than 10 examples.
-       A label the model barely saw will score badly however good the run is.</p>` : ""}
-    <h4>How many labels survive a threshold</h4>
+    <h3>${t("datasetDetail.summary", { rows: body.total_samples, labels: body.unique_labels })}</h3>
+    ${rare ? `<p class="error" role="alert">${t("datasetDetail.rareWarning", { count: rare })}</p>` : ""}
+    <h4>${t("datasetDetail.thresholdHeading")}</h4>
     <div class="table-wrap"><table>
-      <thead><tr><th class="num">min. examples</th><th class="num">labels kept</th><th></th></tr></thead>
+      <thead><tr><th class="num">${t("datasetDetail.table.minExamples")}</th>
+        <th class="num">${t("datasetDetail.table.labelsKept")}</th><th></th></tr></thead>
       <tbody>${thresholdRows(body.label_threshold_analysis, recommended)}</tbody>
     </table></div>
-    <p class="muted">Dropping a label is a decision, not a detail: everything below the
-       value you pick is removed from training and can never be predicted. The marked row
-       is what the size heuristic would choose — it is a starting point, not an answer.</p>
-    <h4>What a run would cost</h4>
+    <p class="muted">${t("datasetDetail.thresholdNote")}</p>
+    <h4>${t("datasetDetail.costHeading")}</h4>
     <div class="table-wrap"><table>
-      <thead><tr><th>Profile</th><th class="num">estimate</th></tr></thead>
+      <thead><tr><th>${t("datasetDetail.table.profile")}</th>
+        <th class="num">${t("datasetDetail.table.estimate")}</th></tr></thead>
       <tbody>${costRows(body.estimated_minutes || {})}</tbody>
     </table></div>
-    <p class="muted"><strong>Estimates.</strong> Scaled from one measured run (156 373 rows
-       on <code>auto</code> in 40 min) and linear in the row count, which is what the row
-       scaling benchmark found. It cannot see your label count or your machine, so treat
-       it as "coffee break or afternoon", not as a schedule.</p>
+    <p class="muted">${t("datasetDetail.costNote")}</p>
   </div>`;
 }
 
@@ -81,12 +83,12 @@ async function runAnalysis(frame) {
   frame.querySelector(".analysis")?.remove();
   if (!textColumns.length) {
     frame.insertAdjacentHTML("beforeend",
-      `<div class="analysis"><p class="error" role="alert">Pick at least one text column.</p></div>`);
+      `<div class="analysis"><p class="error" role="alert">${t("common.error.noTextColumn")}</p></div>`);
     return;
   }
   button.disabled = true;
   const original = button.textContent;
-  button.textContent = "Reading every row …";
+  button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
       dataset_name: analyzeState.name, text_columns: textColumns, label_column: labelColumn,
@@ -103,7 +105,7 @@ async function runAnalysis(frame) {
 
 async function showDatasetDetail(name) {
   const dialog = $("#dataset-detail");
-  dialog.innerHTML = `<div class="detail" tabindex="-1"><p class="muted">Loading …</p></div>`;
+  dialog.innerHTML = `<div class="detail" tabindex="-1"><p class="muted">${t("common.loading")}</p></div>`;
   dialog.showModal();
   const frame = dialog.querySelector(".detail");
   frame.focus();
@@ -113,7 +115,7 @@ async function showDatasetDetail(name) {
     info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
   } catch (err) {
     frame.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>
-      <button type="button" class="ghost" data-close>Close</button>`;
+      <button type="button" class="ghost" data-close>${t("common.close")}</button>`;
     frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
     return;
   }
@@ -124,16 +126,18 @@ async function showDatasetDetail(name) {
   frame.innerHTML = `
     <div class="detail-head">
       <h2 id="dataset-detail-title">${esc(name)}</h2>
-      <button type="button" class="ghost small" data-close aria-label="Close details">Close</button>
+      <button type="button" class="ghost small" data-close
+              aria-label="${esc(t("common.closeDetails"))}">${t("common.close")}</button>
     </div>
-    <p class="muted">${analyzeState.columns.length} columns · first ${sample.length} rows shown</p>
+    <p class="muted">${t("datasetDetail.subtitle", {
+      columns: analyzeState.columns.length, rows: sample.length })}</p>
     <div class="table-wrap"><table>
       <thead><tr>${analyzeState.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
       <tbody>${sample.map((row) => `<tr>${analyzeState.columns.map(
         (c) => `<td>${esc(String(row[c] ?? "")).slice(0, 120)}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
 
-    <h3>Before training on it</h3>
+    <h3>${t("datasetDetail.beforeTraining")}</h3>
     ${columnPickers(analyzeState.columns)}`;
   frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
   frame.querySelector("#ds-analyze").addEventListener("click", () => runAnalysis(frame));

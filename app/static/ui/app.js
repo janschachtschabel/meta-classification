@@ -1,6 +1,6 @@
 /* Admin UI views. Vanilla JS on purpose: no build step, no dependencies.
-   simplify: single-locale admin tool — user-facing strings are inline English
-   (matching the API's own texts); upgrade path is extracting them to a map. */
+   Every user-facing string comes from i18n.js — see there for how German and
+   English are resolved and what `t()` does and does not escape. */
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
@@ -81,7 +81,7 @@ async function onLogin(ev) {
     showApp(false);
   } catch (err) {
     Api.clearKey();
-    showError(errEl, err.status === 401 ? { message: "This key was not accepted." } : err);
+    showError(errEl, err.status === 401 ? { message: t("login.rejected") } : err);
   } finally { btn.disabled = false; }
 }
 

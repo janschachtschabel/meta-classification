@@ -15,9 +15,11 @@ const QUERY_MAX_LINES = 5000;
 const QUERY_TABLE_LIMIT = 200;
 
 const queryMode = () => document.querySelector('input[name="query-mode"]:checked').value;
-// English needs one rule and this UI has no i18n layer (every string in it is literal
-// English, a decision that predates this view). "1 rows" is still wrong.
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// Spelled out rather than built from the mode name: a key that only exists as a
+// template is invisible to the test that proves every string is translated.
+const QUERY_SUBMIT_KEYS = {
+  one: "query.submit.one", many: "query.submit.many", csv: "query.submit.csv",
+};
 
 function onQueryModeChange() {
   const mode = queryMode();
@@ -28,8 +30,11 @@ function onQueryModeChange() {
   // CSV answer has no column for them, and offering a control that does nothing is a
   // small lie the rest of this UI does not tell.
   $("#query-signals").hidden = mode === "csv";
-  $("#query-btn").textContent =
-    { one: "Classify", many: "Classify all", csv: "Classify the file" }[mode];
+  const button = $("#query-btn");
+  // The key travels with the element, so switching language re-reads the label of the
+  // mode that is actually selected rather than resetting it to the first one.
+  button.dataset.i18n = QUERY_SUBMIT_KEYS[mode];
+  button.textContent = t(button.dataset.i18n);
   $("#query-results").innerHTML = "";
 }
 
@@ -38,8 +43,7 @@ async function loadQueryTab() {
   try {
     const names = await Api.get("/models");
     sel.innerHTML = names.map((n) => `<option>${esc(n)}</option>`).join("");
-    if (!names.length) $("#query-results").innerHTML =
-      `<p class="muted">No models yet — train one on the Training tab first.</p>`;
+    if (!names.length) $("#query-results").innerHTML = `<p class="muted">${t("query.noModels")}</p>`;
     else sel.options[0].selected = true;
   } catch (err) { $("#query-results").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
 }
@@ -63,12 +67,10 @@ function selectedModels() {
 function queryErrorHtml(err) {
   // 422 here means the bundle exists but cannot be loaded — in practice a
   // pre-format-2 model. Say what to do about it; the raw message does not.
-  const hint = err.status === 422
-    ? ` This model was trained with an older bundle format and has to be retrained
-        (the Models tab marks it).` : "";
+  const hint = err.status === 422 ? ` ${t("query.staleBundleHint")}` : "";
   // role="alert": the results region is not a live region — announcing a whole table
   // would be noise — so a failure has to carry its own announcement.
-  return `<p class="error" role="alert">${esc(err.message)}${esc(hint)}</p>`;
+  return `<p class="error" role="alert">${esc(err.message)}${hint}</p>`;
 }
 
 /* ---------- one text ---------- */
@@ -77,20 +79,20 @@ function renderPredictions(byModel) {
   return Object.entries(byModel).map(([name, preds]) => `
     <div class="card">
       <div class="detail-head"><h3>${esc(name)}</h3>
-        <button type="button" class="small ghost" data-explain="${esc(name)}">Why?</button>
-        <button type="button" class="small ghost" data-correct="${esc(name)}">Correct</button></div>
+        <button type="button" class="small ghost" data-explain="${esc(name)}">${t("query.explainButton")}</button>
+        <button type="button" class="small ghost" data-correct="${esc(name)}">${t("query.correctButton")}</button></div>
       ${preds.length ? preds.map((p) => `
       <div class="pred${p.above_threshold === false ? " below-t" : ""}">
         <span class="name">${esc(p.label)}</span>
         <span class="bar"><span data-width="${Math.round(p.confidence * 100)}"></span></span>
         <span class="val">${p.confidence.toFixed(3)}${p.baseline_diff !== undefined
-          ? ` <span class="muted">diff ${p.baseline_diff >= 0 ? "+" : ""}${p.baseline_diff.toFixed(3)}</span>` : ""}${
+          ? ` <span class="muted">${t("query.diffTag")} ${p.baseline_diff >= 0 ? "+" : ""}${p.baseline_diff.toFixed(3)}</span>` : ""}${
           // != null covers both: absent when not asked for, null when the bundle
           // carries no score for this label (older or partially scored models).
-          p.label_f1 != null ? ` <span class="muted">F1 ${p.label_f1.toFixed(3)}</span>` : ""}${
-          p.above_threshold === false ? ` <span class="muted">· below threshold</span>` : ""}</span>
+          p.label_f1 != null ? ` <span class="muted">${t("query.f1Tag")} ${p.label_f1.toFixed(3)}</span>` : ""}${
+          p.above_threshold === false ? ` <span class="muted">· ${t("query.belowThreshold")}</span>` : ""}</span>
       </div>`).join("")
-      : `<p class="muted">No label above the model's threshold.</p>`}</div>`).join("");
+      : `<p class="muted">${t("query.noLabelAboveThreshold")}</p>`}</div>`).join("");
 }
 
 async function runSingle(models, out) {
@@ -126,47 +128,54 @@ function bulkCsv(rows) {
 function renderBulkTable(rows, texts, out) {
   const shown = rows.slice(0, QUERY_TABLE_LIMIT);
   const refused = new Set(rows.filter((r) => !r.uri).map((r) => r.row)).size;
+  // Composed from pluralised parts rather than one sentence carrying three counts:
+  // "1 Text" and "2 Texte" differ, so each part has to pick its own form.
+  const counted = [t("query.bulk.texts", { count: texts.length }),
+                   t("query.bulk.labelsAssigned", { count: rows.filter((r) => r.uri).length })];
+  if (refused) counted.push(`<strong>${t("query.bulk.withoutLabel", { count: refused })}</strong>`);
   out.innerHTML = `<div class="card">
-    <h3>${plural(texts.length, "text")} · ${plural(rows.filter((r) => r.uri).length, "label")}
-        assigned${refused ? ` · <strong>${plural(refused, "text")} without a label</strong>` : ""}</h3>
-    <p class="muted">A text the model asserts nothing for is listed with an empty label —
-       "which ones did it refuse" is part of the answer.${
+    <h3>${counted.join(" · ")}</h3>
+    <p class="muted">${t("query.bulk.note")}${
       rows.length > shown.length
-        ? ` Showing the first ${shown.length} of ${rows.length} lines; the download has all.`
+        ? ` ${t("query.bulk.truncated", { shown: shown.length, total: rows.length })}`
         : ""}</p>
-    <button type="button" class="small" id="bulk-download">Download as CSV</button>
+    <button type="button" class="small" id="bulk-download">${t("query.bulk.download")}</button>
     <div class="table-wrap"><table>
-      <thead><tr><th class="num">Row</th><th>Text</th><th>Label</th>
-        <th class="num">Confidence</th></tr></thead>
+      <thead><tr><th class="num">${t("query.table.row")}</th><th>${t("query.table.text")}</th>
+        <th>${t("query.table.label")}</th>
+        <th class="num">${t("query.table.confidence")}</th></tr></thead>
       <tbody>${shown.map((r) => `<tr${r.uri ? "" : ' class="stale"'}>
         <td class="num">${r.row}</td><td>${esc(r.text)}</td>
-        <td>${r.uri ? esc(r.label) : '<span class="muted">no label</span>'}</td>
+        <td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}</td>
         <td class="num">${r.uri ? r.confidence.toFixed(3) : "–"}</td></tr>`).join("")}</tbody>
     </table></div></div>`;
   out.querySelector("#bulk-download").addEventListener("click", () => {
     Api.saveBlob(new Blob([bulkCsv(rows)], { type: "text/csv" }), "predictions.csv");
   });
-  return `Done: ${plural(texts.length, "text")}, ${plural(refused, "text")} without a label.`;
+  return t("query.bulk.done", {
+    texts: t("query.bulk.texts", { count: texts.length }),
+    refused: t("query.bulk.withoutLabel", { count: refused }),
+  });
 }
 
 async function runManyTexts(model, out) {
-  const texts = $("#query-lines").value.split("\n").map((t) => t.trim()).filter(Boolean);
+  const texts = $("#query-lines").value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!texts.length) {
-    out.innerHTML = `<p class="error" role="alert">Enter at least one text.</p>`;
+    out.innerHTML = `<p class="error" role="alert">${t("query.error.noTexts")}</p>`;
     return "";
   }
   if (texts.length > QUERY_MAX_LINES) {
-    out.innerHTML = `<p class="error" role="alert">${texts.length} lines is more than this
-      view holds. Put them in a CSV and use the file mode — it streams instead of
-      collecting every answer in the page.</p>`;
+    out.innerHTML =
+      `<p class="error" role="alert">${t("query.error.tooManyLines", { count: texts.length })}</p>`;
     return "";
   }
   const settings = querySettings();
   const rows = [];
   for (let start = 0; start < texts.length; start += QUERY_BATCH) {
     const slice = texts.slice(start, start + QUERY_BATCH);
-    $("#query-status").textContent =
-      `Classifying ${Math.min(start + slice.length, texts.length)} of ${texts.length} …`;
+    $("#query-status").textContent = t("query.progress", {
+      done: Math.min(start + slice.length, texts.length), total: texts.length,
+    });
     const answer = await Api.post("/predict", { ...settings, model_name: model, texts: slice });
     answer.results.forEach((result, index) => {
       const row = start + index;
@@ -186,19 +195,19 @@ function csvSummary(text, filename) {
   // what the user works with; this is the receipt.
   const covered = new Set(lines.map((line) => line.slice(0, line.indexOf(","))));
   const refused = lines.filter((line) => /^\d+,,,,\r?$/.test(line)).length;
+  const counted = [t("query.csv.inputRows", { count: covered.size }),
+                   t("query.bulk.labelsAssigned", { count: lines.length - refused })];
+  if (refused) counted.push(`<strong>${t("query.csv.rowsWithoutLabel", { count: refused })}</strong>`);
   return `<div class="card">
-    <h3>${esc(filename)} downloaded</h3>
-    <p>${plural(covered.size, "input row")} · ${plural(lines.length - refused, "label")} assigned${
-      refused ? ` · <strong>${plural(refused, "row")} without a label</strong>` : ""}.</p>
-    <p class="muted">Each line carries the number of the input row it came from, so the
-       answers join back onto your own file. Rows the model asserted nothing for are in
-       there too, with the prediction fields empty.</p></div>`;
+    <h3>${t("query.csv.heading", { name: esc(filename) })}</h3>
+    <p>${counted.join(" · ")}.</p>
+    <p class="muted">${t("query.csv.note")}</p></div>`;
 }
 
 async function runCsvFile(model, out) {
   const input = $("#query-file");
   if (!input.files.length) {
-    out.innerHTML = `<p class="error" role="alert">Choose a CSV file first.</p>`;
+    out.innerHTML = `<p class="error" role="alert">${t("common.error.noCsvFile")}</p>`;
     return "";
   }
   const form = new FormData();
@@ -209,11 +218,11 @@ async function runCsvFile(model, out) {
   if (topk !== "") form.append("top_k", topk);
 
   const name = input.files[0].name.replace(/\.csv$/i, "") + "-predictions.csv";
-  $("#query-status").textContent = "Classifying the file — the answer downloads when it is done …";
+  $("#query-status").textContent = t("query.csv.progress");
   const blob = await Api.downloadForm("/predict/csv", form, name);
   const text = await blob.text();
   out.innerHTML = csvSummary(text, name);
-  return `Done: ${name} downloaded.`;
+  return t("query.csv.done", { name });   // textContent: the caller does not re-escape
 }
 
 /* ---------- submit ---------- */
@@ -223,16 +232,15 @@ async function onQuery(ev) {
   const btn = $("#query-btn"), out = $("#query-results"), mode = queryMode();
   const models = selectedModels();
   if (!models.length) {
-    out.innerHTML = `<p class="error" role="alert">Select at least one model.</p>`;
+    out.innerHTML = `<p class="error" role="alert">${t("query.error.noModel")}</p>`;
     return;
   }
   if (mode !== "one" && models.length > 1) {
-    out.innerHTML = `<p class="error" role="alert">Bulk classification runs one model at a
-      time — select a single model.</p>`;
+    out.innerHTML = `<p class="error" role="alert">${t("query.error.oneModelOnly")}</p>`;
     return;
   }
   btn.disabled = true;
-  $("#query-status").textContent = "Classifying …";
+  $("#query-status").textContent = t("query.progressStart");
   try {
     let done = "";
     if (mode === "one") await runSingle(models, out);

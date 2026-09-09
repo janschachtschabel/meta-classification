@@ -10,8 +10,10 @@ async function loadTrainingTab() {
   const dsSel = $("#train-dataset");
   try {
     const [datasets, profiles] = await Promise.all([Api.get("/datasets"), Api.get("/train/profiles")]);
-    dsSel.innerHTML = `<option value="">— choose —</option>` +
+    dsSel.innerHTML = `<option value="">${esc(t("train.dataset.choose"))}</option>` +
       datasets.map((d) => `<option>${esc(d.name)}</option>`).join("");
+    // The profile descriptions are server configuration (config.yaml), not UI text:
+    // they are shown as the deployment wrote them rather than translated here.
     $("#train-profile").innerHTML = profiles.profiles.map((p) =>
       `<option value="${esc(p.name)}" ${p.name === profiles.default_profile ? "selected" : ""}>${esc(p.name)} — ${esc(p.description)}</option>`).join("");
     // Pre-fill the field weights with the server's configured default instead of a
@@ -54,14 +56,14 @@ const textColPicker = createPillPicker({
   pills: document.querySelector("#textcol-pills"),
   input: document.querySelector("#textcol-input"),
   datalist: document.querySelector("#textcol-options"),
-  emptyHint: "Select a dataset first.",
+  emptyHintKey: "train.pills.emptyHint",
   onChange: (cols) => renderTextColWeights(cols),
 });
 const labelPicker = createPillPicker({
   pills: document.querySelector("#labelcol-pills"),
   input: document.querySelector("#labelcol-input"),
   datalist: document.querySelector("#labelcol-options"),
-  emptyHint: "Select a dataset first.",
+  emptyHintKey: "train.pills.emptyHint",
   onChange: () => renderNamePreview(),
 });
 
@@ -90,8 +92,8 @@ function renderNamePreview() {
   const el = $("#train-names-preview");
   const plan = plannedModels();
   if (plan.length <= 1) { el.textContent = ""; return; }
-  el.textContent = `Will create ${plan.length} models, trained one after another `
-    + `on the server: ${plan.map((p) => p.name).join(", ")}`;
+  el.textContent = t("train.namePreview",
+                     { count: plan.length, names: plan.map((p) => p.name).join(", ") });
 }
 
 async function onTrainStart(ev) {
@@ -99,9 +101,9 @@ async function onTrainStart(ev) {
   const errEl = $("#train-error"), btn = $("#train-btn");
   errEl.hidden = true;
   const textCols = textColPicker.values();
-  if (!textCols.length) { showError(errEl, { message: "Pick at least one text column." }); return; }
+  if (!textCols.length) { showError(errEl, { message: t("common.error.noTextColumn") }); return; }
   const plan = plannedModels();
-  if (!plan.length) { showError(errEl, { message: "Enter a model name and pick at least one label field." }); return; }
+  if (!plan.length) { showError(errEl, { message: t("train.error.noPlan") }); return; }
   const shared = {
     dataset_name: $("#train-dataset").value,
     text_columns: textCols,
@@ -136,11 +138,11 @@ async function onTrainStart(ev) {
     }
     const queued = accepted.filter((a) => a.status === "queued").length;
     toast(queued
-      ? `Training "${bodies[0].model_name}" started — ${queued} more queued on the server.`
-      : `Training "${bodies[0].model_name}" started.`);
+      ? t("train.startedQueued", { name: bodies[0].model_name, count: queued })
+      : t("train.started", { name: bodies[0].model_name }));
   } catch (err) {
     // Some may already be queued: say so rather than implying nothing happened.
-    showError(errEl, { message: `${err.message} Runs accepted before this one are queued.` });
+    showError(errEl, { message: t("train.partialFailure", { message: err.message }) });
   } finally { btn.disabled = false; }
 }
 
@@ -155,13 +157,12 @@ async function runPreflight() {
   const textColumns = textColPicker.values();
   const labelFields = labelPicker.values();
   if (!dataset || !textColumns.length || !labelFields.length) {
-    box.innerHTML = `<p class="error" role="alert">Pick a dataset, at least one text column
-      and a label field first.</p>`;
+    box.innerHTML = `<p class="error" role="alert">${t("train.error.preflightInputs")}</p>`;
     return;
   }
   button.disabled = true;
   const original = button.textContent;
-  button.textContent = "Reading every row …";
+  button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
       dataset_name: dataset, text_columns: textColumns, label_column: labelFields[0],
@@ -174,7 +175,7 @@ async function runPreflight() {
     box.querySelector("[data-use-threshold]")?.addEventListener("click", (ev) => {
       $("#train-minsamples").value = ev.target.dataset.useThreshold;
       ev.target.closest("p").textContent =
-        `Threshold set to ${ev.target.dataset.useThreshold}.`;
+        t("train.preflight.thresholdSet", { value: Number(ev.target.dataset.useThreshold) });
     });
   } catch (err) {
     box.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`;
@@ -190,18 +191,18 @@ function preflightSummary(body, labelFields) {
   const current = Number($("#train-minsamples").value);
   const kept = body.label_threshold_analysis[`labels_with_${current}+_samples`];
   const recommended = body.recommended_min_samples_per_label;
-  const cost = minutes == null ? "no estimate for this profile"
-    : minutes < 1 ? "under a minute"
-    : minutes < 90 ? `about ${minutes.toFixed(0)} minutes`
-    : `about ${(minutes / 60).toFixed(1)} hours`;
-  return `<p><strong>${fmtInt(body.total_samples)} rows, ${body.unique_labels} labels.</strong>
-      On <code>${esc(profile)}</code> that is ${esc(cost)}${labelFields.length > 1
-        ? ` — per model, and you planned ${labelFields.length}` : ""}.</p>
-    <p>Your threshold of ${current} keeps ${kept === undefined
-      ? "an unknown number of"
-      : `<strong>${kept}</strong> of ${body.unique_labels}`} labels.${current === recommended ? ""
-      : ` The size heuristic would pick ${recommended}.
-          <button type="button" class="small" data-use-threshold="${recommended}">Use ${recommended}</button>`}</p>
-    <p class="muted">Checked against <code>${esc(labelFields[0])}</code>${labelFields.length > 1
-      ? " — the first of your label fields; the others may differ" : ""}.</p>`;
+  const cost = minutes == null ? t("train.preflight.noEstimate") : costLabel(minutes);
+  return `<p><strong>${t("train.preflight.size", {
+      rows: body.total_samples, labels: body.unique_labels })}</strong>
+      ${t("train.preflight.onProfile", { profile: esc(profile), cost })}${labelFields.length > 1
+        ? t("train.preflight.perModel", { count: labelFields.length }) : ""}.</p>
+    <p>${kept === undefined
+      ? t("train.preflight.keepsUnknown", { threshold: current })
+      : t("train.preflight.keeps", { threshold: current, kept, total: body.unique_labels })}${
+      current === recommended ? ""
+      : ` ${t("train.preflight.heuristicPicks", { recommended })}
+          <button type="button" class="small" data-use-threshold="${recommended}">${
+            t("train.preflight.useValue", { value: recommended })}</button>`}</p>
+    <p class="muted">${t("train.preflight.checkedAgainst", { field: esc(labelFields[0]) })}${
+      labelFields.length > 1 ? t("train.preflight.firstFieldOnly") : ""}.</p>`;
 }

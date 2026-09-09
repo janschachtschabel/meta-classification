@@ -23,23 +23,17 @@ function evaluationRows(runs) {
 
 function evaluationsSection(model) {
   const runs = (model.metadata && model.metadata.evaluations) || [];
-  if (!runs.length) {
-    return `<p class="muted">Not scored against any dataset yet. Comparing two models is
-      only a statement if both were measured on the same rows — that is what this is for.</p>`;
-  }
+  if (!runs.length) return `<p class="muted">${t("evaluate.none")}</p>`;
   const uncovered = runs.filter((r) => r.rows_without_a_known_label > 0);
   return `<div class="table-wrap"><table>
-      <thead><tr><th>Dataset</th><th class="num">Rows</th><th class="num">Labels hit</th>
-        <th class="num">F1 macro</th><th class="num">F1 micro</th><th>When</th></tr></thead>
+      <thead><tr><th>${t("evaluate.table.dataset")}</th><th class="num">${t("evaluate.table.rows")}</th>
+        <th class="num">${t("evaluate.table.labelsHit")}</th>
+        <th class="num">${t("evaluate.table.f1Macro")}</th>
+        <th class="num">${t("evaluate.table.f1Micro")}</th><th>${t("evaluate.table.when")}</th></tr></thead>
       <tbody>${evaluationRows(runs)}</tbody>
     </table></div>
-    <p class="muted"><strong>Labels hit</strong> is how many of this model's labels the
-       dataset actually exercises. <strong>F1 macro averages over all of them</strong>, so a
-       dataset touching a handful of a large label space drags it down for reasons that have
-       nothing to do with quality — read it against the same dataset on another model, never
-       across datasets.${uncovered.length ? ` ${plural(uncovered.length, "run")} had rows whose
-       labels this model never learned; those rows were excluded, not counted as failures.`
-    : ""}</p>`;
+    <p class="muted">${t("evaluate.note")}${uncovered.length
+      ? ` ${t("evaluate.uncovered", { count: uncovered.length })}` : ""}</p>`;
 }
 
 /* ---------- starting one ---------- */
@@ -55,24 +49,22 @@ async function openEvaluateForm(name, frame) {
     return;
   }
   if (!datasets.length) {
-    frame.insertAdjacentHTML("beforeend", `<div class="evaluate-form"><p class="muted">
-      No datasets to score against — upload one on the Datasets tab first.</p></div>`);
+    frame.insertAdjacentHTML("beforeend",
+      `<div class="evaluate-form"><p class="muted">${t("evaluate.noDatasets")}</p></div>`);
     return;
   }
   frame.insertAdjacentHTML("beforeend", `<div class="evaluate-form">
-    <label for="ev-dataset">Score against</label>
+    <label for="ev-dataset">${t("evaluate.scoreAgainst")}</label>
     <select id="ev-dataset">${datasets.map((d) =>
       `<option>${esc(d.name)}</option>`).join("")}</select>
     <div class="row">
-      <div><label for="ev-text-cols">Text columns (Ctrl-click for several)</label>
+      <div><label for="ev-text-cols">${t("common.textColumnsMulti")}</label>
         <select id="ev-text-cols" multiple size="5"></select></div>
-      <div><label for="ev-label-col">Label column</label>
+      <div><label for="ev-label-col">${t("common.labelColumn")}</label>
         <select id="ev-label-col"></select></div>
     </div>
-    <button type="button" class="small" id="ev-start">Start evaluation</button>
-    <p class="muted">Runs on the server as a background job, behind any training already
-       going. Assemble the text the way the model was trained — the panel above lists its
-       columns and their weights.</p>
+    <button type="button" class="small" id="ev-start">${t("evaluate.start")}</button>
+    <p class="muted">${t("evaluate.formNote")}</p>
     <p id="ev-message" role="alert"></p>
   </div>`);
   const box = frame.querySelector(".evaluate-form");
@@ -93,7 +85,7 @@ async function startEvaluation(name, box) {
   const message = box.querySelector("#ev-message");
   if (!textColumns.length) {
     message.className = "error";
-    message.textContent = "Pick at least one text column.";
+    message.textContent = t("common.error.noTextColumn");
     return;
   }
   const button = box.querySelector("#ev-start");
@@ -106,8 +98,8 @@ async function startEvaluation(name, box) {
     });
     message.className = "ok";
     message.textContent = answer.status === "queued"
-      ? `Queued on the server, ${plural(answer.queue_position, "run")} ahead of it. Watch it on the Training tab.`
-      : "Started. Watch it on the Training tab; the result appears here when it is done.";
+      ? t("evaluate.queued", { runs: t("evaluate.runsAhead", { count: answer.queue_position }) })
+      : t("evaluate.started");
   } catch (err) {
     message.className = "error";
     message.textContent = err.message;

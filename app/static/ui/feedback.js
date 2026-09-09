@@ -29,20 +29,18 @@ async function openCorrection(modelName, predicted, card, button) {
 }
 
 function correctionHtml(modelName, predicted, labels) {
-  const sorted = [...labels].sort((a, b) => a.label.localeCompare(b.label));
+  const sorted = [...labels].sort((a, b) => a.label.localeCompare(b.label, I18n.locale()));
   const said = predicted.length
     ? predicted.map((p) => esc(p.label)).join(", ")
-    : "nothing";
+    : t("feedback.nothing");
   return `<div class="correction">
-    <p>The model said <strong>${said}</strong>. What should it have said?</p>
-    <label for="fb-labels">Correct labels for this text</label>
+    <p>${t("feedback.modelSaid", { labels: said })}</p>
+    <label for="fb-labels">${t("feedback.labelsLabel")}</label>
     <select id="fb-labels" multiple size="8">${sorted.map((l) =>
       `<option value="${esc(l.uri)}">${esc(l.label)}</option>`).join("")}</select>
-    <p class="muted">Ctrl-click for several. <strong>Select nothing</strong> to say that
-       none of them apply — that is recorded too, and left out of the training export,
-       because a row without a label is not something a run can learn from.</p>
-    <button type="button" class="small" data-send>Save correction</button>
-    <button type="button" class="small ghost" data-cancel>Cancel</button>
+    <p class="muted">${t("feedback.note")}</p>
+    <button type="button" class="small" data-send>${t("feedback.save")}</button>
+    <button type="button" class="small ghost" data-cancel>${t("common.cancel")}</button>
     <p class="fb-message" role="alert"></p>
   </div>`;
 }
@@ -61,12 +59,13 @@ async function sendCorrection(modelName, predicted, box) {
       corrected,
       source: "ui",
     });
+    const collected = t("feedback.corrections", { count: answer.collected });
     message.className = "fb-message ok";
     message.textContent = corrected.length
-      ? `Saved. ${plural(answer.collected, "correction")} collected so far.`
-      : `Saved as "none of these apply". ${plural(answer.collected, "correction")} collected so far.`;
+      ? t("feedback.saved", { collected })
+      : t("feedback.savedNone", { collected });
     box.querySelector("select").disabled = true;
-    send.textContent = "Saved";
+    send.textContent = t("feedback.savedButton");
   } catch (err) {
     message.className = "fb-message error";
     message.textContent = err.message;

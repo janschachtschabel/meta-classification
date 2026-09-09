@@ -12,7 +12,9 @@ const Api = (() => {
 
   class ApiError extends Error {
     constructor(status, detail) {
-      super(detail || `Request failed (${status})`);
+      // `detail` is the server's own wording and stays as it came: it names the
+      // specific thing that was wrong, which a generic translated line cannot.
+      super(detail || t("errors.requestFailed", { status }));
       this.status = status;
     }
   }
@@ -32,13 +34,13 @@ const Api = (() => {
     if (res.status === 401) {
       clearKey();
       window.dispatchEvent(new Event("apiv3-unauthorized"));
-      throw new ApiError(401, "API key invalid or expired — please sign in again.");
+      throw new ApiError(401, t("errors.unauthorized"));
     }
     if (!res.ok) {
       let detail = "";
       try { detail = (await res.json()).detail; } catch { /* non-JSON error body */ }
-      if (res.status === 403) detail = detail || "This action needs the admin API key.";
-      if (res.status === 429) detail = detail || "Rate limit reached — please wait a moment.";
+      if (res.status === 403) detail = detail || t("errors.adminRequired");
+      if (res.status === 429) detail = detail || t("errors.rateLimited");
       throw new ApiError(res.status, detail);
     }
     const type = res.headers.get("content-type") || "";

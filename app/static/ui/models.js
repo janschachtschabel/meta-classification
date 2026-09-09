@@ -22,10 +22,10 @@ const isServable = (m) => (m.format_version ?? 1) >= CURRENT_BUNDLE_FORMAT;
    bundle-controlled data, so every value goes through esc() — an imported archive
    can put arbitrary text in metrics.json. */
 const INFO_FIELDS = [
-  ["author", "Author / contact", "text", "e.g. Redaktion WLO <redaktion@example.org>"],
-  ["description", "Purpose and limits", "textarea", "What is this model for — and what is it NOT for?"],
-  ["data_source", "Where the data came from", "text", "e.g. WLO prod export 2026-07-26, school disciplines"],
-  ["license", "License / terms", "text", "e.g. CC BY-SA 4.0"],
+  ["author", "models.info.author", "models.info.author.hint", "text"],
+  ["description", "models.info.description", "models.info.description.hint", "textarea"],
+  ["data_source", "models.info.dataSource", "models.info.dataSource.hint", "text"],
+  ["license", "models.info.license", "models.info.license.hint", "text"],
 ];
 
 async function editModelInfo(name) {
@@ -37,23 +37,22 @@ async function editModelInfo(name) {
   const vocab = model.label_vocabulary;
   box.innerHTML = `
     <div class="card">
-      <strong>Documentation for "${esc(name)}"</strong>
-      <p class="muted">Travels inside the exported bundle. Everything else in the model's
-         metadata is measured; these are your statements. Editable any time — no retrain.</p>
-      <dl class="train-status"><dt>Label vocabulary</dt><dd>${vocab
-        ? esc(vocab) + ` <span class="muted">(derived from the labels, not editable)</span>`
-        : `<span class="muted">none — the labels share no namespace</span>`}</dd></dl>
+      <strong>${t("models.info.heading", { name: esc(name) })}</strong>
+      <p class="muted">${t("models.info.note")}</p>
+      <dl class="train-status"><dt>${t("models.info.vocabulary")}</dt><dd>${vocab
+        ? esc(vocab) + ` <span class="muted">${t("models.info.vocabularyDerived")}</span>`
+        : `<span class="muted">${t("models.info.vocabularyNone")}</span>`}</dd></dl>
       <form id="info-form">
-        ${INFO_FIELDS.map(([key, label, kind, hint]) => `
-          <label for="info-${key}">${esc(label)}</label>
+        ${INFO_FIELDS.map(([key, labelKey, hintKey, kind]) => `
+          <label for="info-${key}">${t(labelKey)}</label>
           ${kind === "textarea"
             ? `<textarea id="info-${key}" name="${key}" rows="3" maxlength="4000"
-                 placeholder="${esc(hint)}">${esc(info[key] || "")}</textarea>`
+                 placeholder="${esc(t(hintKey))}">${esc(info[key] || "")}</textarea>`
             : `<input id="info-${key}" name="${key}" type="text" maxlength="${key === "data_source" ? 1000 : 200}"
-                 placeholder="${esc(hint)}" value="${esc(info[key] || "")}">`}`).join("")}
+                 placeholder="${esc(t(hintKey))}" value="${esc(info[key] || "")}">`}`).join("")}
         <p id="info-error" class="error" role="alert" hidden></p>
-        <button type="submit" id="info-save">Save</button>
-        <button type="button" class="ghost small" data-close>Close</button>
+        <button type="submit" id="info-save">${t("common.save")}</button>
+        <button type="button" class="ghost small" data-close>${t("common.close")}</button>
       </form>
     </div>`;
   box.querySelector("[data-close]").addEventListener("click", () => { box.innerHTML = ""; });
@@ -70,7 +69,7 @@ async function editModelInfo(name) {
     }
     try {
       await Api.put(`/models/${encodeURIComponent(name)}/info`, body);
-      toast("Documentation saved.");
+      toast(t("models.info.saved"));
       box.innerHTML = "";
     } catch (err) { showError(errEl, err); }
   });
@@ -79,27 +78,29 @@ async function editModelInfo(name) {
 
 async function loadModels() {
   const el = $("#models-list");
-  el.innerHTML = `<p class="muted">Loading …</p>`;
+  el.innerHTML = `<p class="muted">${t("common.loading")}</p>`;
   try {
     const names = await Api.get("/models");
-    if (!names.length) { el.innerHTML = `<p class="muted">No models yet — start a training run first.</p>`; return; }
+    if (!names.length) { el.innerHTML = `<p class="muted">${t("models.empty")}</p>`; return; }
     const infos = await Promise.all(names.map((n) => Api.get(`/models/${encodeURIComponent(n)}`)));
     el.innerHTML = `<div class="card table-wrap"><table>
-      <thead><tr><th>Name</th><th>Task</th><th class="num">Labels</th><th class="num">F1 macro</th>
-      <th class="num">F1 micro</th><th>Evaluation</th><th>Actions</th></tr></thead><tbody>` +
+      <thead><tr><th>${t("models.table.name")}</th><th>${t("models.table.task")}</th>
+      <th class="num">${t("models.table.labels")}</th><th class="num">${t("models.table.f1Macro")}</th>
+      <th class="num">${t("models.table.f1Micro")}</th><th>${t("models.table.evaluation")}</th>
+      <th>${t("common.actions")}</th></tr></thead><tbody>` +
       infos.map((m) => `<tr${isServable(m) ? "" : ' class="stale"'}>
         <td><button type="button" class="linkish" data-detail="${esc(m.name)}">${esc(m.name)}</button>${isServable(m) ? "" :
-          ` <span class="badge-stale">needs retraining</span>`}</td><td>${esc(m.task_type)}</td>
+          ` <span class="badge-stale">${t("models.needsRetraining")}</span>`}</td><td>${esc(m.task_type)}</td>
         <td class="num">${esc(m.metadata.n_labels ?? "–")}</td>
         <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_macro))}</td>
         <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_micro))}</td>
         <td>${isServable(m) ? esc(m.metadata.evaluation || "–")
-          : `Old bundle format ${esc(m.format_version ?? 1)} — cannot be loaded for classification.`}</td>
+          : t("models.oldFormat", { version: esc(String(m.format_version ?? 1)) })}</td>
         <td class="actions">
-          <button class="small" data-export="${esc(m.name)}">Download</button>
-          <button class="small" data-info="${esc(m.name)}">Info</button>
-          <button class="small" data-share="${esc(m.name)}">Share link</button>
-          <button class="small danger" data-delete="${esc(m.name)}">Delete</button>
+          <button class="small" data-export="${esc(m.name)}">${t("common.download")}</button>
+          <button class="small" data-info="${esc(m.name)}">${t("models.action.info")}</button>
+          <button class="small" data-share="${esc(m.name)}">${t("common.shareLink")}</button>
+          <button class="small danger" data-delete="${esc(m.name)}">${t("common.delete")}</button>
         </td></tr>`).join("") + `</tbody></table></div>`;
     el.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () =>
       Api.download(`/models/${encodeURIComponent(b.dataset.export)}/export`, `${b.dataset.export}.zip`)
@@ -111,8 +112,8 @@ async function loadModels() {
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>
       shareResource("models", b.dataset.share, "#models-share")));
     el.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm(`Delete model "${b.dataset.delete}"? This cannot be undone.`)) return;
-      try { await Api.del(`/models/${encodeURIComponent(b.dataset.delete)}`); toast("Model deleted."); loadModels(); }
+      if (!confirm(t("models.deleteConfirm", { name: b.dataset.delete }))) return;
+      try { await Api.del(`/models/${encodeURIComponent(b.dataset.delete)}`); toast(t("models.deleted")); loadModels(); }
       catch (err) { toast(err.message); }
     }));
   } catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
@@ -126,7 +127,7 @@ async function onImportModel(ev) {
   ev.preventDefault();
   const errEl = $("#import-error"), btn = $("#import-btn"), fileInput = $("#import-file");
   errEl.hidden = true;
-  if (!fileInput.files.length) { showError(errEl, { message: "Choose a model ZIP first." }); return; }
+  if (!fileInput.files.length) { showError(errEl, { message: t("models.import.noFile") }); return; }
   const form = new FormData();
   form.append("file", fileInput.files[0]);
   const newName = $("#import-name").value.trim();
@@ -134,7 +135,7 @@ async function onImportModel(ev) {
   btn.disabled = true;
   try {
     await Api.postForm("/models/import", form);
-    toast("Model imported.");
+    toast(t("models.imported"));
     fileInput.value = "";
     $("#import-name").value = "";
     loadModels();

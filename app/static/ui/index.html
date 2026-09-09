@@ -1,335 +1,268 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MetaClassify — Admin</title>
+<!-- Text-free markup on purpose: every word lives in strings-de.js / strings-en.js
+     and is written in by i18n.js, so a string exists in exactly one place and the
+     two languages cannot drift from the page. The title keeps the product name as
+     its pre-script value so the tab is never blank. -->
+<title data-i18n="shell.title">MetaClassify</title>
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="/favicon.ico" type="image/svg+xml">
 <!-- Self-contained on purpose: no CDN fonts/scripts (GDPR: no third-party IP leak). -->
 </head>
 <body>
-<a class="skip-link" href="#main">Skip to content</a>
+<a class="skip-link" href="#main" data-i18n="shell.skipToContent"></a>
 
 <div id="app">
   <!-- ======= Login: slim bar at the top edge (shown until a key is verified) ======= -->
   <section id="view-login" hidden>
     <form id="login-form" class="login-bar" novalidate>
-      <h1 class="brand">MetaClassify</h1>
-      <label for="api-key">API key</label>
+      <h1 class="brand" data-i18n="shell.brand"></h1>
+      <label for="api-key" data-i18n="login.apiKey"></label>
       <input id="api-key" name="api-key" type="password" autocomplete="off"
              required aria-describedby="login-error login-hint">
-      <button type="submit" id="login-btn">Sign in</button>
+      <button type="submit" id="login-btn" data-i18n="login.signIn"></button>
+      <!-- Also on the login bar: someone who cannot read the language yet is
+           exactly the person who needs the switch, and the app shell behind the
+           key may be a screen they never reach. -->
+      <label class="lang-switch">
+        <span class="visually-hidden" data-i18n="shell.language"></span>
+        <select class="lang-select">
+          <option value="de" data-i18n="shell.language.de"></option>
+          <option value="en" data-i18n="shell.language.en"></option>
+        </select>
+      </label>
       <p id="login-error" class="error" role="alert" hidden></p>
     </form>
-    <p id="login-hint" class="muted login-hint">Enter an API key to manage datasets,
-       training and models. Readonly keys can classify; management actions need the admin key.</p>
+    <p id="login-hint" class="muted login-hint" data-i18n="login.hint"></p>
   </section>
 
   <!-- ======= App shell ======= -->
   <div id="view-app" hidden>
     <header class="topbar">
-      <span class="brand">MetaClassify <span class="muted">admin</span></span>
-      <nav aria-label="Sections" role="tablist">
-        <button class="tab" data-tab="query"    id="tab-btn-query"    role="tab" aria-controls="tab-query"    aria-selected="true"  tabindex="0">Query</button>
-        <button class="tab" data-tab="training" id="tab-btn-training" role="tab" aria-controls="tab-training" aria-selected="false" tabindex="-1">Training</button>
-        <button class="tab" data-tab="models"   id="tab-btn-models"   role="tab" aria-controls="tab-models"   aria-selected="false" tabindex="-1">Models</button>
-        <button class="tab" data-tab="datasets" id="tab-btn-datasets" role="tab" aria-controls="tab-datasets" aria-selected="false" tabindex="-1">Datasets</button>
+      <span class="brand" data-i18n-html="shell.brandWithRole"></span>
+      <nav data-i18n-aria-label="shell.sections" role="tablist">
+        <button class="tab" data-tab="query"    id="tab-btn-query"    role="tab" aria-controls="tab-query"    aria-selected="true"  tabindex="0"  data-i18n="shell.tab.query"></button>
+        <button class="tab" data-tab="training" id="tab-btn-training" role="tab" aria-controls="tab-training" aria-selected="false" tabindex="-1" data-i18n="shell.tab.training"></button>
+        <button class="tab" data-tab="models"   id="tab-btn-models"   role="tab" aria-controls="tab-models"   aria-selected="false" tabindex="-1" data-i18n="shell.tab.models"></button>
+        <button class="tab" data-tab="datasets" id="tab-btn-datasets" role="tab" aria-controls="tab-datasets" aria-selected="false" tabindex="-1" data-i18n="shell.tab.datasets"></button>
       </nav>
-      <button id="train-chip" class="chip" hidden
-              title="Training status — click for details"></button>
-      <span id="auth-off-badge" class="muted" hidden>auth disabled — full access</span>
-      <button id="logout-btn" class="ghost" title="Forget the API key in this tab">Sign out</button>
+      <button id="train-chip" class="chip" hidden data-i18n-title="shell.trainChip"></button>
+      <span id="auth-off-badge" class="muted" hidden data-i18n="shell.authDisabled"></span>
+      <label class="lang-switch">
+        <span class="visually-hidden" data-i18n="shell.language"></span>
+        <select class="lang-select">
+          <option value="de" data-i18n="shell.language.de"></option>
+          <option value="en" data-i18n="shell.language.en"></option>
+        </select>
+      </label>
+      <button id="logout-btn" class="ghost" data-i18n-title="shell.signOutHint" data-i18n="shell.signOut"></button>
     </header>
 
     <main id="main">
       <!-- ---- Query ---- -->
       <section id="tab-query" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-query" tabindex="0">
-        <h2>Test queries</h2>
+        <h2 data-i18n="query.heading"></h2>
         <form id="query-form" class="card">
           <fieldset class="modes">
-            <legend>What do you want to classify?</legend>
+            <legend data-i18n="query.mode.legend"></legend>
             <label class="check"><input type="radio" name="query-mode" value="one" checked>
-              One text</label>
+              <span data-i18n-html="query.mode.one"></span></label>
             <label class="check"><input type="radio" name="query-mode" value="many">
-              Many texts <span class="muted">(one per line)</span></label>
+              <span data-i18n-html="query.mode.many"></span></label>
             <label class="check"><input type="radio" name="query-mode" value="csv">
-              A CSV file <span class="muted">(the columns the model was trained on)</span></label>
+              <span data-i18n-html="query.mode.csv"></span></label>
           </fieldset>
 
           <div id="query-input-one">
-            <label for="query-text">Text to classify</label>
-            <textarea id="query-text" rows="3"
-                      placeholder="e.g. Der Satz des Pythagoras im rechtwinkligen Dreieck"></textarea>
+            <label for="query-text" data-i18n="query.text.label"></label>
+            <textarea id="query-text" rows="3" data-i18n-placeholder="query.text.placeholder"></textarea>
           </div>
           <div id="query-input-many" hidden>
-            <label for="query-lines">Texts, one per line</label>
+            <label for="query-lines" data-i18n="query.lines.label"></label>
             <textarea id="query-lines" rows="8" aria-describedby="query-lines-hint"
-                      placeholder="Der Satz des Pythagoras&#10;Photosynthese der Pflanzen&#10;Der Wiener Kongress"></textarea>
-            <p id="query-lines-hint" class="muted">Blank lines are skipped. Sent in batches;
-               the answers arrive as a table you can download as CSV.</p>
+                      data-i18n-placeholder="query.lines.placeholder"></textarea>
+            <p id="query-lines-hint" class="muted" data-i18n="query.lines.hint"></p>
           </div>
           <div id="query-input-csv" hidden>
-            <label for="query-file">CSV file</label>
+            <label for="query-file" data-i18n="query.file.label"></label>
             <input id="query-file" type="file" accept=".csv,text/csv" aria-describedby="query-file-hint">
-            <p id="query-file-hint" class="muted">The file needs the text columns the model was
-               trained on — the server reads which ones, and how often each counts, out of the
-               model itself. You get a CSV back: one line per predicted label, with the number
-               of the input row it belongs to.</p>
-            <label for="query-separator">Column separator</label>
+            <p id="query-file-hint" class="muted" data-i18n="query.file.hint"></p>
+            <label for="query-separator" data-i18n="query.separator.label"></label>
             <input id="query-separator" type="text" value=";" size="3" maxlength="1">
           </div>
 
           <div class="row">
             <div>
-              <label for="query-models">Models (Ctrl-click for several)</label>
+              <label for="query-models" data-i18n="query.models.label"></label>
               <select id="query-models" multiple size="4" required></select>
             </div>
             <div class="opts">
-              <label for="query-topk">Top-k
-                <span class="muted">(blank = model decides via its tuned thresholds ·
-                N = show the N most probable, entries below their threshold appear dimmed)</span></label>
+              <label for="query-topk" data-i18n-html="query.topk.label"></label>
               <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
               <div id="query-signals">
                 <label class="check"><input id="query-diff" type="checkbox" checked>
-                  Show baseline diff <span class="muted">(text signal vs. base rate)</span></label>
+                  <span data-i18n-html="query.diff.label"></span></label>
                 <label class="check"><input id="query-f1" type="checkbox" checked>
-                  Show label F1 <span class="muted">(how reliable this label is at all)</span></label>
+                  <span data-i18n-html="query.f1.label"></span></label>
               </div>
             </div>
           </div>
-          <button type="submit" id="query-btn">Classify</button>
+          <button type="submit" id="query-btn" data-i18n="query.submit.one"></button>
         </form>
-        <details class="help">
-          <summary>What do the results mean?</summary>
-          <p>The model reads your text and estimates for <em>every</em> label how well it fits —
-             a number between 0 and 1 (the <strong>confidence</strong>, shown as bar + number).</p>
-          <ul>
-            <li><strong>Top-k empty:</strong> you only get labels the model actually stands
-                behind — everything above its learned decision line. One label can be the
-                honest answer; several labels are fine too (e.g. a text about both physics
-                and electronics).</li>
-            <li><strong>Top-k = N:</strong> you always see the N most likely labels, even weak
-                ones. Dimmed entries marked <em>below threshold</em> are guesses the model
-                would <em>not</em> claim on its own.</li>
-            <li><strong>diff:</strong> how much of the confidence comes from <em>your text</em>
-                rather than from the label simply being common. Near zero = the model is
-                guessing, not reading.</li>
-            <li>First query after a server start can take ~30&nbsp;seconds — the model is being
-                loaded from disk. After that, answers come in milliseconds.</li>
-          </ul>
-        </details>
+        <details class="help" data-i18n-html="query.help"></details>
         <div id="query-status" aria-live="polite"></div>
         <div id="query-results"></div>
       </section>
 
       <!-- ---- Training ---- -->
       <section id="tab-training" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-training" tabindex="0" hidden>
-        <h2>Training</h2>
+        <h2 data-i18n="train.heading"></h2>
         <div class="card" id="train-status-card">
-          <h3>Status</h3>
+          <h3 data-i18n="train.status.heading"></h3>
           <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
                NOT be a live region — SRs would re-announce it continuously. Phase
                transitions are announced via the dedicated SR-only element below. -->
           <div id="train-status" class="train-status">
-            <p class="muted">Loading status …</p>
+            <p class="muted" data-i18n="train.status.loading"></p>
           </div>
           <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
           <p id="train-queue" class="muted" aria-live="polite" hidden></p>
         </div>
         <form id="train-form" class="card">
-          <h3>Start a training run <span class="muted">(admin)</span></h3>
+          <h3 data-i18n-html="train.form.heading"></h3>
           <div class="row">
             <div>
-              <label for="train-dataset">Dataset</label>
+              <label for="train-dataset" data-i18n="train.dataset.label"></label>
               <select id="train-dataset" required></select>
             </div>
             <div>
-              <label for="train-name">Model name</label>
+              <label for="train-name" data-i18n="train.name.label"></label>
               <!-- No client-side pattern: the char class safe_name enforces is not
                    expressible as a v-flag-valid pattern; the server's crafted 400
                    (name rules) is the single source of truth. -->
-              <input id="train-name" required placeholder="e.g. subjects_v1">
+              <input id="train-name" required data-i18n-placeholder="train.name.placeholder">
             </div>
           </div>
           <fieldset>
-            <legend>Text columns</legend>
+            <legend data-i18n="train.textColumns.legend"></legend>
             <div class="pillbox">
               <span id="textcol-pills"></span>
               <input id="textcol-input" type="text" list="textcol-options" disabled
-                     aria-label="Add text column" aria-describedby="textcol-help"
-                     placeholder="Select a dataset first.">
+                     data-i18n-aria-label="train.textColumns.add" aria-describedby="textcol-help"
+                     data-i18n-placeholder="train.pills.emptyHint">
               <datalist id="textcol-options"></datalist>
             </div>
-            <p id="textcol-help" class="muted">Type to filter the columns and pick a suggestion —
-               Enter adds it as a pill, Backspace removes the last one.</p>
+            <p id="textcol-help" class="muted" data-i18n="train.textColumns.help"></p>
             <div id="textcol-weights" hidden>
-              <p class="muted" id="textcol-weights-help">
-                <strong>Field weight</strong> — how often a field is repeated in the training
-                text. A title or a keyword list carries far more signal per word than a long
-                description, but the description supplies more words and drowns it out;
-                repeating a field gives it that weight back. <strong>1 = unchanged</strong>
-                (the default). Repetition is damped logarithmically, so 2 is worth about
-                1.7×, not 2×.
-                <br><strong>Note:</strong> a model trained this way expects input built the same
-                way — assemble the text you later send to <code>/predict</code> with the same
-                repetitions, otherwise its tuned thresholds sit on a different distribution.
-              </p>
+              <p class="muted" id="textcol-weights-help" data-i18n-html="train.weights.help"></p>
               <div id="textcol-weights-fields" class="weights"></div>
             </div>
           </fieldset>
           <fieldset>
-            <legend>Label fields <span class="muted">(one model per field)</span></legend>
+            <legend data-i18n-html="train.labelFields.legend"></legend>
             <div class="pillbox">
               <span id="labelcol-pills"></span>
               <input id="labelcol-input" type="text" list="labelcol-options" disabled
-                     aria-label="Add label field" aria-describedby="train-names-preview"
-                     placeholder="Select a dataset first.">
+                     data-i18n-aria-label="train.labelFields.add" aria-describedby="train-names-preview"
+                     data-i18n-placeholder="train.pills.emptyHint">
               <datalist id="labelcol-options"></datalist>
             </div>
             <p id="train-names-preview" class="muted" aria-live="polite"></p>
           </fieldset>
           <div class="row">
             <div>
-              <label for="train-profile">Profile</label>
+              <label for="train-profile" data-i18n="train.profile.label"></label>
               <select id="train-profile"></select>
             </div>
           </div>
           <div class="row">
             <div>
-              <label for="train-filter">Label filter <span class="muted">(substring, optional)</span></label>
-              <input id="train-filter" placeholder="e.g. vocabs/discipline/">
+              <label for="train-filter" data-i18n-html="train.filter.label"></label>
+              <input id="train-filter" data-i18n-placeholder="train.filter.placeholder">
             </div>
             <div>
-              <label for="train-cv">Evaluation</label>
+              <label for="train-cv" data-i18n="train.cv.label"></label>
               <select id="train-cv">
-                <option value="">Profile default</option>
-                <option value="0">Train/val/test split</option>
-                <option value="3">3-fold cross-validation</option>
-                <option value="5">5-fold cross-validation</option>
-                <option value="10">10-fold cross-validation</option>
+                <option value="" data-i18n="train.cv.profileDefault"></option>
+                <option value="0" data-i18n="train.cv.holdout"></option>
+                <option value="3" data-i18n="train.cv.folds3"></option>
+                <option value="5" data-i18n="train.cv.folds5"></option>
+                <option value="10" data-i18n="train.cv.folds10"></option>
               </select>
             </div>
             <div>
-              <label for="train-minsamples">Min. samples per label
-                <span class="muted">(rarer labels are dropped)</span></label>
+              <label for="train-minsamples" data-i18n-html="train.minSamples.label"></label>
               <input id="train-minsamples" type="number" min="1" step="1" value="20"
                      aria-describedby="train-minsamples-help">
-              <p id="train-minsamples-help" class="muted">Lower this for small datasets —
-                 if no label reaches it, training stops with "not enough data".</p>
+              <p id="train-minsamples-help" class="muted" data-i18n="train.minSamples.help"></p>
             </div>
           </div>
-          <button type="button" class="small ghost" id="train-preflight">Check before training</button>
-          <p class="muted">Reads every row of the dataset and reports how many labels survive
-             your threshold and roughly what the run will cost. On a large export this takes
-             a moment — which is exactly the moment worth spending before an hour of CPU.</p>
+          <button type="button" class="small ghost" id="train-preflight" data-i18n="train.preflight.button"></button>
+          <p class="muted" data-i18n="train.preflight.help"></p>
           <div id="train-preflight-out" aria-live="polite"></div>
           <details>
-            <summary>Vocabulary caps <span class="muted">(advanced — RAM vs. quality)</span></summary>
-            <p class="muted" id="train-caps-help">
-              How many word / character n-grams the TF-IDF vocabulary may keep. Leave
-              blank for the profile's value. A model whose <code>n_features</code> equals
-              the sum of its caps had its vocabulary <strong>truncated</strong> — raising
-              the caps can recover signal, at a proportional cost in RAM, bundle size and
-              cold-load time. Character n-grams are ignored by word-only profiles.
-            </p>
+            <summary data-i18n-html="train.caps.summary"></summary>
+            <p class="muted" id="train-caps-help" data-i18n-html="train.caps.help"></p>
             <div class="row">
               <div>
-                <label for="train-maxword">Max. word features</label>
+                <label for="train-maxword" data-i18n="train.maxWord.label"></label>
                 <input id="train-maxword" type="number" min="1000" max="2000000" step="1000"
-                       placeholder="profile default" aria-describedby="train-caps-help">
+                       data-i18n-placeholder="train.caps.placeholder" aria-describedby="train-caps-help">
               </div>
               <div>
-                <label for="train-maxchar">Max. character features</label>
+                <label for="train-maxchar" data-i18n="train.maxChar.label"></label>
                 <input id="train-maxchar" type="number" min="1000" max="2000000" step="1000"
-                       placeholder="profile default" aria-describedby="train-caps-help">
+                       data-i18n-placeholder="train.caps.placeholder" aria-describedby="train-caps-help">
               </div>
             </div>
           </details>
           <p id="train-error" class="error" role="alert" hidden></p>
-          <button type="submit" id="train-btn">Start training</button>
+          <button type="submit" id="train-btn" data-i18n="train.submit"></button>
         </form>
-        <details class="help">
-          <summary>How does training work?</summary>
-          <p>The system learns from the examples in your CSV: it reads the text columns and
-             learns which label values belong to which kind of text. Afterwards it can label
-             new texts on its own.</p>
-          <ul>
-            <li><strong>Text columns:</strong> what the system reads — title, description and
-                keywords together usually work best.</li>
-            <li><strong>Label fields:</strong> the column(s) holding the correct answers.
-                Several fields = one separate model per field, trained one after another.</li>
-            <li><strong>Profile:</strong> <em>fast</em> = quick test, not for deployment ·
-                <em>auto</em> = recommended · <em>best</em> = most accurate evaluation,
-                about 1.9&times; the time of <em>auto</em>.</li>
-            <li><strong>Evaluation:</strong> how quality is measured honestly. The
-                <em>split</em> keeps part of the data aside as an unseen exam — which
-                means the delivered model never gets to learn from that part.
-                <em>Cross-validation</em> lets every row be both study material and exam,
-                so the delivered model is trained on 100% of your data; it costs several
-                times the compute. More folds = the exam models see more data.</li>
-            <li><strong>Label filter:</strong> keep only labels containing this text — e.g.
-                restrict training to one vocabulary.</li>
-            <li>A running training slows nothing down for others: it is limited to ~60% of
-                the machine and can be stopped at any time.</li>
-          </ul>
-        </details>
+        <details class="help" data-i18n-html="train.help"></details>
       </section>
 
       <!-- ---- Models ---- -->
       <section id="tab-models" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-models" tabindex="0" hidden>
-        <h2>Models</h2>
+        <h2 data-i18n="models.heading"></h2>
         <form id="import-form" class="card">
-          <h3>Import model <span class="muted">(exported ZIP, admin)</span></h3>
+          <h3 data-i18n-html="models.import.heading"></h3>
           <div class="row">
             <div>
-              <label for="import-file">Model ZIP</label>
+              <label for="import-file" data-i18n="models.import.file"></label>
               <input id="import-file" type="file" accept=".zip" required>
             </div>
             <div>
-              <label for="import-name">New name <span class="muted">(optional)</span></label>
-              <input id="import-name" placeholder="defaults to the file name">
+              <label for="import-name" data-i18n-html="models.import.name"></label>
+              <input id="import-name" data-i18n-placeholder="models.import.namePlaceholder">
             </div>
           </div>
           <p id="import-error" class="error" role="alert" hidden></p>
-          <button type="submit" id="import-btn">Import</button>
+          <button type="submit" id="import-btn" data-i18n="models.import.submit"></button>
         </form>
-        <details class="help">
-          <summary>How to read the scores</summary>
-          <p><strong>F1</strong> (0–1) says how well the model's answers matched the correct
-             answers on data it never learned from — 1.0 would be perfect, ~0.8 is very
-             usable in practice. <strong>micro</strong> is the overall hit rate (frequent
-             labels count more); <strong>macro</strong> treats rare labels as equally
-             important and is therefore usually lower. <strong>Share link</strong> creates a
-             download link that works without an API key and expires after 24&nbsp;hours;
-             <strong>Download</strong>/<strong>Import</strong> move a model between servers
-             as a ZIP file.</p>
-        </details>
+        <details class="help" data-i18n-html="models.help"></details>
         <div id="models-share" aria-live="polite"></div>
         <div id="models-links"></div>
-        <div id="models-list" aria-live="polite"><p class="muted">Loading …</p></div>
+        <div id="models-list" aria-live="polite"><p class="muted" data-i18n="common.loading"></p></div>
       </section>
 
       <!-- ---- Datasets ---- -->
       <section id="tab-datasets" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-datasets" tabindex="0" hidden>
-        <h2>Datasets</h2>
+        <h2 data-i18n="datasets.heading"></h2>
         <form id="upload-form" class="card">
-          <h3>Upload CSV <span class="muted">(admin)</span></h3>
-          <label for="upload-file">CSV file <span class="muted">(.csv or .csv.gz)</span></label>
+          <h3 data-i18n-html="datasets.upload.heading"></h3>
+          <label for="upload-file" data-i18n-html="datasets.upload.file"></label>
           <input id="upload-file" type="file" accept=".csv,.csv.gz,.gz" required>
           <p id="upload-error" class="error" role="alert" hidden></p>
-          <button type="submit" id="upload-btn">Upload</button>
+          <button type="submit" id="upload-btn" data-i18n="datasets.upload.submit"></button>
         </form>
-        <details class="help">
-          <summary>What belongs in the CSV?</summary>
-          <p>One row per item. Text columns (title, description, …) plus at least one column
-             with the correct labels — several labels in one cell are separated by commas.
-             Semicolon-separated, UTF-8. Duplicate texts are removed automatically before
-             training, so the row count used for training can be lower than the file's.</p>
-        </details>
+        <details class="help" data-i18n-html="datasets.help"></details>
         <div id="datasets-share" aria-live="polite"></div>
         <div id="datasets-links"></div>
-        <div id="datasets-list" aria-live="polite"><p class="muted">Loading …</p></div>
+        <div id="datasets-list" aria-live="polite"><p class="muted" data-i18n="common.loading"></p></div>
       </section>
     </main>
   </div>
@@ -337,6 +270,11 @@
   <div id="toast" role="status" aria-live="polite" hidden></div>
 </div>
 
+<!-- The string maps come first: every module below may call t() while it loads,
+     and the pill pickers in training.js do exactly that at construction time. -->
+<script src="strings-de.js"></script>
+<script src="strings-en.js"></script>
+<script src="i18n.js"></script>
 <script src="api.js"></script>
 <script src="pills.js"></script>
 <script src="query.js"></script>

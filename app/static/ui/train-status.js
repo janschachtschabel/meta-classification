@@ -36,6 +36,19 @@ function stopStatusPolling() { clearInterval(pollTimer); pollTimer = null; }
 
 let lastAnnouncedState = "";
 
+/* The job's status is a closed set (see jobs.py), so it can be said in the reader's
+   language; `phase` is free-form prose the training pipeline writes and is shown as it
+   came. Spelled out rather than built from the value: a key that exists only as a
+   template is invisible to the test that proves every string is translated. */
+const STATE_KEYS = {
+  idle: "trainStatus.state.idle",
+  running: "trainStatus.state.running",
+  completed: "trainStatus.state.completed",
+  error: "trainStatus.state.error",
+  stopped: "trainStatus.state.stopped",
+};
+const stateLabel = (status) => (STATE_KEYS[status] ? t(STATE_KEYS[status]) : status);
+
 /* Announce only STATE TRANSITIONS to screen readers: the status card itself
    re-renders every 2.5s (elapsed/ETA tick up), so making it a live region would
    re-announce the whole card for the entire duration of a training. */
@@ -45,10 +58,15 @@ function announceTrainState(s) {
   lastAnnouncedState = key;
   const el = $("#train-announce");
   if (!el) return;
-  if (s.status === "running") el.textContent = `Training ${s.model_name || ""}: ${s.phase || "starting"}.`;
-  else if (s.status === "completed") el.textContent = `Training ${s.model_name || ""} completed.`;
-  else if (s.status === "error") el.textContent = `Training failed: ${s.message || "see status"}.`;
-  else if (s.status === "stopped") el.textContent = "Training stopped.";
+  const name = s.model_name || "";
+  if (s.status === "running") {
+    el.textContent = t("trainStatus.announce.running",
+                       { name, phase: s.phase || t("trainStatus.phaseStarting") });
+  } else if (s.status === "completed") el.textContent = t("trainStatus.announce.completed", { name });
+  else if (s.status === "error") {
+    el.textContent = t("trainStatus.announce.failed",
+                       { message: s.message || t("trainStatus.seeStatus") });
+  } else if (s.status === "stopped") el.textContent = t("trainStatus.announce.stopped");
   else el.textContent = "";
 }
 
@@ -57,21 +75,25 @@ function renderTrainStatus(s) {
   announceTrainState(s);
   renderQueueLine(s.queued || []);
   const el = $("#train-status");
-  const rows = [["Status", s.status], ["Phase", s.phase || "–"], ["Detail", s.phase_detail || "–"],
-                ["Model", s.model_name || "–"], ["Elapsed", s.elapsed_seconds != null ? `${s.elapsed_seconds}s` : "–"],
-                ["ETA", s.eta_seconds != null ? `~${Math.round(s.eta_seconds)}s` : "–"]];
+  const rows = [
+    [t("trainStatus.row.status"), stateLabel(s.status)],
+    [t("trainStatus.row.phase"), s.phase || "–"],
+    [t("trainStatus.row.detail"), s.phase_detail || "–"],
+    [t("trainStatus.row.model"), s.model_name || "–"],
+    [t("trainStatus.row.elapsed"), s.elapsed_seconds != null ? t("common.seconds", { count: s.elapsed_seconds }) : "–"],
+    [t("trainStatus.row.eta"), s.eta_seconds != null ? `~${t("common.seconds", { count: Math.round(s.eta_seconds) })}` : "–"],
+  ];
   let html = `
     <div class="progress" role="progressbar" aria-valuenow="${s.progress}" aria-valuemin="0"
-         aria-valuemax="100" aria-label="Training progress"><span data-width="${s.progress}"></span></div>
-    <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+         aria-valuemax="100" aria-label="${esc(t("trainStatus.progressLabel"))}"><span data-width="${s.progress}"></span></div>
+    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
   // elapsed keeps growing even when the thread is dead — only a stale heartbeat
   // (no progress signal from the training thread) reveals a silent stall.
   if (s.status === "running" && s.seconds_since_heartbeat > 120)
-    html += `<p class="warn">No progress signal for ${Math.round(s.seconds_since_heartbeat)}s —
-      the training thread may be stalled (large save steps can crawl under memory pressure).</p>`;
+    html += `<p class="warn">${t("trainStatus.stalled", { seconds: Math.round(s.seconds_since_heartbeat) })}</p>`;
   if (s.status === "running")
-    html += `<button class="small danger" id="train-stop">Stop training</button>`;
-  if (s.status === "error") html += `<p class="error">${esc(s.message || "Training failed.")}</p>`;
+    html += `<button class="small danger" id="train-stop">${t("trainStatus.stop")}</button>`;
+  if (s.status === "error") html += `<p class="error">${esc(s.message || t("trainStatus.failed"))}</p>`;
   if (s.status === "completed" && s.results) {
     // An EVALUATION can finish with no metrics at all — when the dataset shares no
     // labels with the model, the server answers `null` rather than a made-up 0.0.
@@ -79,17 +101,17 @@ function renderTrainStatus(s) {
     // simply froze on the previous state instead of showing the finished run.
     const scores = s.results.metrics || {};
     html += Number.isFinite(scores.f1_macro)
-      ? `<p class="ok">Done: ${esc(s.results.model_name)} — F1 macro ${scores.f1_macro.toFixed(3)},
-         micro ${scores.f1_micro.toFixed(3)} (${s.results.n_labels} labels)</p>`
-      : `<p class="ok">Done: ${esc(s.results.model_name)} — nothing comparable to score.
-         The model panel says which labels the dataset did not share.</p>`;
+      ? `<p class="ok">${t("trainStatus.doneWithScores", {
+           name: esc(s.results.model_name), macro: scores.f1_macro.toFixed(3),
+           micro: scores.f1_micro.toFixed(3), labels: s.results.n_labels })}</p>`
+      : `<p class="ok">${t("trainStatus.doneNoScores", { name: esc(s.results.model_name) })}</p>`;
   }
   el.innerHTML = html;
   applyBarWidths(el);
   const stop = $("#train-stop");
   if (stop) stop.addEventListener("click", async () => {
     // The server clears the queue as part of stopping; the next poll shows it gone.
-    try { await Api.post("/train/stop"); toast("Stop requested — queue cleared."); }
+    try { await Api.post("/train/stop"); toast(t("trainStatus.stopRequested")); }
     catch (err) { toast(err.message); }
   });
 }
@@ -100,7 +122,7 @@ function renderQueueLine(queued) {
   const el = $("#train-queue");
   el.hidden = !queued.length;
   el.textContent = queued.length
-    ? `Queued on the server: ${queued.join(", ")}`
+    ? t("trainStatus.queuedOnServer", { names: queued.join(", ") })
     : "";
 }
 
@@ -110,18 +132,19 @@ function renderTrainChip(s) {
   const chip = $("#train-chip");
   chip.classList.remove("done", "failed");
   if (s.status === "running") {
-    const eta = s.eta_seconds != null ? ` · ~${Math.round(s.eta_seconds)}s left` : "";
+    const eta = s.eta_seconds != null
+      ? ` · ${t("trainStatus.chip.etaLeft", { seconds: Math.round(s.eta_seconds) })}` : "";
     chip.innerHTML = `<span class="mini-bar"><span data-width="${s.progress}"></span></span>
-      ${esc(s.model_name || "training")} ${s.progress}%${esc(eta)}`;
+      ${esc(s.model_name || t("trainStatus.chip.fallbackName"))} ${s.progress}%${esc(eta)}`;
     applyBarWidths(chip);
     chip.hidden = false;
   } else if (s.status === "completed" && s.model_name) {
     chip.classList.add("done");
-    chip.textContent = `✓ ${s.model_name} done`;
+    chip.textContent = t("trainStatus.chip.done", { name: s.model_name });
     chip.hidden = false;
   } else if (s.status === "error") {
     chip.classList.add("failed");
-    chip.textContent = `✗ training failed`;
+    chip.textContent = t("trainStatus.chip.failed");
     chip.hidden = false;
   } else {
     chip.hidden = true; // idle/stopped: no noise in the topbar
