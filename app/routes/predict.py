@@ -148,11 +148,17 @@ async def predict(request: Request, body: PredictRequest, _: str = Depends(requi
     return await _predict(body)
 
 
-@router.post("/predict/batch", summary="Classify multiple texts (batch)")
+@router.post("/predict/batch", summary="Classify texts (deprecated alias of /predict)",
+             deprecated=True)
 @limiter.limit(predict_limit)
 async def predict_batch(request: Request, body: PredictRequest, _: str = Depends(require_role("readonly"))) -> dict:
-    """Like `POST /predict` — also takes a list of `texts` and is intended for larger
-    batches. **Auth:** readonly."""
+    """**Deprecated — use `POST /predict`, which is the same endpoint.**
+
+    Same body, same auth, same rate limit, same code. `/predict` has always taken a
+    list of `texts` (up to 1000), so this never offered a batching capability the
+    other one lacked; the old summary implied it did. Kept so existing callers keep
+    working. **Auth:** readonly.
+    """
     return await _predict(body)
 
 

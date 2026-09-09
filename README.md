@@ -250,7 +250,7 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
 ## Endpoints (excerpt)
 
 - **Training:** `POST /train`, `GET /train/status`, `POST /train/stop`, `GET /train/profiles`
-- **Classification:** `POST /predict`, `POST /predict/batch`, `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
+- **Classification:** `POST /predict` (takes up to 1000 texts; `POST /predict/batch` is a deprecated alias of it), `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
   - `baseline_diff` (`include_baseline_diff=true`) — confidence minus the model's empty-text prediction. A high confidence with a diff near zero means the label fires for almost anything, not for this text.
   - `label_f1` (`include_label_f1=true`) — this label's F1 from the training evaluation. Confidence says how sure the model is *here*, `label_f1` how much that is worth: `Politik 0.95` on a label scoring 0.68 deserves a human look, `Mathematik 0.95` on a label scoring 0.95 does not. `null` for labels the bundle has no score for.
 - **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`

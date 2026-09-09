@@ -587,6 +587,23 @@ def test_predict_ignores_removed_use_auto_settings_field(trained_model):
     assert r.status_code == 200, r.text
 
 
+def test_predict_batch_is_an_alias_and_says_so(trained_model):
+    """`/predict/batch` takes the same body, applies the same auth and rate limit and
+    calls the same code as `/predict`, which already accepts a list of texts — its
+    summary ("intended for larger batches") suggested a capability that does not
+    exist. It stays for callers that use it, but the schema marks it deprecated so
+    nobody picks it expecting different behaviour."""
+    body = {"texts": ["Bruchrechnung üben", "Der Zweite Weltkrieg"], "model_name": "api_model"}
+    plain = client.post("/predict", json=body, headers=RO)
+    batch = client.post("/predict/batch", json=body, headers=RO)
+    assert plain.status_code == batch.status_code == 200
+    assert plain.json() == batch.json(), "an alias must not drift from what it aliases"
+
+    schema = client.get("/openapi.json").json()["paths"]
+    assert schema["/predict/batch"]["post"].get("deprecated") is True
+    assert schema["/predict"]["post"].get("deprecated") is not True
+
+
 def test_predict_multi_one_call_several_target_fields(trained_model):
     """/predict/multi classifies each text with several models (= target fields)
     in one call; each model applies its OWN tuned thresholds and evaluation stays
