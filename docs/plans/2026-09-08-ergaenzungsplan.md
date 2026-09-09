@@ -133,9 +133,10 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
 ### A1 · Split `data.py` (S, 1 h)
 - Move `_rejoin_split_names`, `_pair_names` and `label_vocabulary` to
   `app/label_names.py`; behaviour-preserving, tests move with them.
-- `registry.py` crossed the ~300-line guideline (306) when `update_info` landed. It
-  now owns cache, disk locks, atomic publish **and** zip import/export — the archive
-  half is the natural seam. Noted here rather than bundled into a feature commit.
+- ~~`registry.py` crossed the ~300-line guideline~~ **done 2026-09-09**: the archive
+  half moved to `app/model_archive.py` (pure byte functions) when the card and manifest
+  pushed the file to 343 lines. Registry is back to 279 and keeps only what needs the
+  disk and the locks; the same 207 tests passed unchanged before and after.
 
 Effort: 7–8 person-days. Risk: P1 is the only item that can change numbers, and it is
 gated.

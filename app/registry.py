@@ -7,46 +7,21 @@ orchestrates *where* and *when* those run (cache, disk locks, atomic publish).
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import shutil
 import threading
-import zipfile
 from collections import OrderedDict
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
-from . import model_card
+from . import model_archive
 from .classifier import ClassifierModel
 from .data import label_vocabulary
-from .model_io import (
-    CARD_FILE,
-    MANIFEST_FILE,
-    UnsafeModelError,
-    _read_bundle,
-    _write_bundle,
-    build_manifest,
-    verify_manifest,
-)
+from .model_io import CARD_FILE, MANIFEST_FILE, UnsafeModelError, _read_bundle, _write_bundle
 from .settings import get_settings
 
-# Every api_v3 bundle contains all three; requiring them lets a truncated/crafted
-# archive be rejected cleanly (400) instead of crashing later in _read_bundle.
-_REQUIRED_FILES = {"config.json", "head.skops", "vectorizer.skops", "vocabulary.json"}
-# Import guards. skops stores its members uncompressed, so legitimate exports
-# deflate well (~16x measured on a tiny bundle) — a ratio alone would misfire.
-# Reject only archives that are BOTH large in absolute terms (> floor) and
-# inflate far beyond the upload size (memory-DoS via zip bomb). The guard covers
-# the outer envelope only; the skops members are parsed by skops itself during
-# validation — acceptable residual risk since import is admin-only + rate-limited.
-_MAX_DECOMPRESSION_RATIO = 20
-_DECOMPRESSION_FLOOR_BYTES = 64 * 1024 * 1024
-# Bundles contain exactly these files. Allowlisting member names (instead of
-# pattern-blocking bad ones) also kills dotfiles and Windows drive-relative
-# names like "C:evil" that slip past character blocklists.
-_ALLOWED_MEMBERS = _REQUIRED_FILES | {"metrics.json", MANIFEST_FILE, CARD_FILE}
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
 _BACKUP_SUFFIX = ".prebackup"
@@ -247,93 +222,54 @@ class Registry:
                 self._cache.pop(name, None)
 
     def export_zip(self, name: str) -> bytes:
-        """Pack a bundle, plus a generated model card and a checksum manifest.
+        """Read a bundle from disk and pack it (card + manifest added by ``model_archive``).
 
-        Both are transport artifacts: regenerated on every export so they always
-        describe THIS archive, and never stored in the bundle directory (see the
-        rationale on ``build_manifest``).
+        The transport artifacts are never read from disk: they are regenerated per
+        export, so a stale copy could otherwise ship beside the fresh one.
         """
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
-            directory = self._path(name)
             members = {
                 file.name: file.read_bytes()
-                for file in sorted(directory.iterdir())
+                for file in sorted(self._path(name).iterdir())
                 if file.is_file() and file.name not in (MANIFEST_FILE, CARD_FILE)
             }
-            config = json.loads(members["config.json"])
-            metadata = json.loads(members["metrics.json"]) if "metrics.json" in members else {}
-
-        card = model_card.render(name, config, metadata, label_vocabulary(config.get("classes") or []))
-        members[CARD_FILE] = card.encode("utf-8")
-        manifest = build_manifest(name, members, metadata)
-
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for member, payload in sorted(members.items()):
-                archive.writestr(member, payload)
-            archive.writestr(MANIFEST_FILE, json.dumps(manifest, ensure_ascii=False, indent=2))
-        return buffer.getvalue()
+        return model_archive.pack(name, members)
 
     def import_zip(self, name: str, data: bytes) -> dict:
-        """Validate and install a model archive. Rejects unsafe content."""
+        """Validate an uploaded archive (``model_archive.unpack``) and install it."""
         if self.exists(name):
             raise FileExistsError(name)
-        try:
-            archive_file = zipfile.ZipFile(io.BytesIO(data))
-        except zipfile.BadZipFile as exc:
-            raise UnsafeModelError(f"Not a valid zip archive: {exc}") from exc
-        with archive_file as archive:
-            members = archive.namelist()
-            unexpected = set(members) - _ALLOWED_MEMBERS
-            if unexpected:
-                raise UnsafeModelError(f"Unexpected archive members: {sorted(unexpected)}")
-            if not _REQUIRED_FILES.issubset(set(members)):
-                raise UnsafeModelError(f"Archive missing required files: {sorted(_REQUIRED_FILES)}")
-            # The upload cap bounds only the COMPRESSED size; refuse archives that
-            # inflate far beyond it (zip bomb -> memory DoS) before extracting.
-            total_uncompressed = sum(info.file_size for info in archive.infolist())
-            if total_uncompressed > max(_DECOMPRESSION_FLOOR_BYTES, _MAX_DECOMPRESSION_RATIO * len(data)):
-                raise UnsafeModelError(
-                    f"Archive decompresses to {total_uncompressed} bytes from a "
-                    f"{len(data)}-byte upload; refusing (possible zip bomb)."
-                )
-            # Stage + validate in a hidden tmp dir; publish only complete bundles.
-            # Under the disk lock so a concurrent load/save/delete can never observe
-            # the tmp dir or the exists()->replace window mid-flight.
-            with self._disk_lock:
-                tmp = self._tmp_path(name)
-                if tmp.exists():
-                    shutil.rmtree(tmp)
-                tmp.mkdir(parents=True)
-                try:
-                    payloads = {member: archive.read(member) for member in members}
-                    if MANIFEST_FILE in payloads:
-                        # Absent for bundles exported before 3.2: verification applies
-                        # when a manifest is there, its absence is not an error.
-                        verify_manifest(
-                            json.loads(payloads[MANIFEST_FILE]),
-                            {m: p for m, p in payloads.items() if m != MANIFEST_FILE},
-                        )
-                    for member, payload in payloads.items():
-                        if member not in (MANIFEST_FILE, CARD_FILE):
-                            (tmp / member).write_bytes(payload)
-                    _read_bundle(tmp)  # validates config + skops safety; raises if unsafe
-                except Exception as exc:
-                    shutil.rmtree(tmp, ignore_errors=True)
-                    if isinstance(exc, KeyError | zipfile.BadZipFile):
-                        # Malformed config / corrupt inner container = invalid input (400).
-                        raise UnsafeModelError(f"Invalid model bundle: {exc!r}") from exc
-                    raise
-                try:
-                    os.replace(tmp, self._path(name))
-                except OSError:
-                    shutil.rmtree(tmp, ignore_errors=True)
-                    if self.exists(name):
-                        # Lost a same-name import race; report it as the usual conflict.
-                        raise FileExistsError(name) from None
-                    raise
+        payloads = model_archive.unpack(data)
+        # Stage + validate in a hidden tmp dir; publish only complete bundles.
+        # Under the disk lock so a concurrent load/save/delete can never observe
+        # the tmp dir or the exists()->replace window mid-flight.
+        with self._disk_lock:
+            tmp = self._tmp_path(name)
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            tmp.mkdir(parents=True)
+            try:
+                for member, payload in payloads.items():
+                    (tmp / member).write_bytes(payload)
+                _read_bundle(tmp)  # validates config + skops safety; raises if unsafe
+            except Exception as exc:
+                shutil.rmtree(tmp, ignore_errors=True)
+                if isinstance(exc, KeyError):
+                    # Malformed config = invalid input (400), not a server fault.
+                    # BadZipFile no longer reaches here: the archive is fully read
+                    # and validated by model_archive.unpack before this point.
+                    raise UnsafeModelError(f"Invalid model bundle: {exc!r}") from exc
+                raise
+            try:
+                os.replace(tmp, self._path(name))
+            except OSError:
+                shutil.rmtree(tmp, ignore_errors=True)
+                if self.exists(name):
+                    # Lost a same-name import race; report it as the usual conflict.
+                    raise FileExistsError(name) from None
+                raise
         return self.info(name)  # outside the disk lock: info() re-acquires it sequentially
 
 
