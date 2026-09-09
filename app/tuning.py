@@ -106,6 +106,7 @@ def cross_val_evaluate(
     task_type: str = "multilabel",
     matrix=None,
     tol: float | None = None,
+    select_on_tuned_thresholds: bool = False,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
@@ -125,6 +126,12 @@ def cross_val_evaluate(
     entirely, since serving never reads thresholds there. Returns ``(best_c,
     global_threshold, per_label_thresholds, metrics)`` (the caller then fits the
     deploy model on 100% of the data).
+
+    ``select_on_tuned_thresholds`` changes WHICH candidate wins: instead of ranking the
+    candidates at a flat 0.5 cut and tuning only the winner, each is scored under
+    thresholds tuned for itself and the (C, thresholds) pair is chosen together. No
+    extra fits — every candidate's out-of-fold probabilities are already in memory. See
+    ``Profile.select_c_on_tuned_thresholds`` for why it is off by default.
 
     ``on_step(done, total, detail)`` fires after EVERY head fit (k x |grid| of
     them), so the caller can show real progress across a run that takes minutes.
@@ -179,14 +186,44 @@ def cross_val_evaluate(
             done += 1
             if on_step is not None:
                 on_step(done, total_fits, f"Fold {fold}/{k}: C={c} ({done}/{total_fits} fits)")
-    best_c = max(c_grid, key=lambda c: macro_f1(y, _default_decision(oof[c], task_type)))
-    proba = oof[best_c]
-    if tune_threshold and not is_single_label(task_type):
-        global_t, per_label_t = tune_thresholds(y, proba, classes, per_label=per_label)
+    thresholds_apply = tune_threshold and not is_single_label(task_type)
+    if select_on_tuned_thresholds and thresholds_apply:
+        best_c, global_t, columns = _best_under_own_thresholds(
+            y, oof, c_grid, per_label=per_label
+        )
+        # The winner's thresholds ARE the ones it was selected on; re-deriving them
+        # would repeat the same search for the same answer.
+        per_label_t = name_threshold_columns(columns, classes) if per_label else {}
     else:
-        global_t, per_label_t = 0.5, {}
-    metrics = compute_metrics(y, proba, classes, global_t, per_label_t, task_type=task_type)
+        best_c = max(c_grid, key=lambda c: macro_f1(y, _default_decision(oof[c], task_type)))
+        if thresholds_apply:
+            global_t, per_label_t = tune_thresholds(y, oof[best_c], classes, per_label=per_label)
+        else:
+            global_t, per_label_t = 0.5, {}
+    metrics = compute_metrics(y, oof[best_c], classes, global_t, per_label_t, task_type=task_type)
     return best_c, global_t, per_label_t, metrics
+
+
+def _best_under_own_thresholds(
+    y_true: np.ndarray,
+    proba_by_c: dict[float, np.ndarray],
+    c_grid: list[float],
+    *,
+    per_label: bool,
+) -> tuple[float, float, np.ndarray]:
+    """The (C, global threshold, threshold columns) triple with the best macro F1,
+    every candidate judged under thresholds tuned for itself.
+
+    Ranking at a flat 0.5 cut and tuning only afterwards eliminates a candidate whose
+    probabilities are ranked well but scaled low, before its thresholds ever exist.
+    """
+    best_c, best_f1 = c_grid[0], -1.0
+    best_global, best_columns = 0.5, np.full(y_true.shape[1], 0.5)
+    for c in c_grid:
+        score, global_t, columns = _tuned_score(y_true, proba_by_c[c], per_label=per_label)
+        if score > best_f1:
+            best_f1, best_c, best_global, best_columns = score, c, global_t, columns
+    return best_c, best_global, best_columns
 
 
 def tune_threshold_columns(
@@ -234,6 +271,24 @@ def tune_threshold_columns(
     return best_global, columns
 
 
+def _tuned_score(
+    y_true: np.ndarray, proba: np.ndarray, *, per_label: bool
+) -> tuple[float, float, np.ndarray]:
+    """Macro F1 a candidate reaches under thresholds tuned for ITSELF, and those
+    thresholds.
+
+    One vectorised comparison against a per-column vector — the same decision
+    ``apply_thresholds`` makes once the columns carry names.
+    """
+    global_t, columns = tune_threshold_columns(y_true, proba, per_label=per_label)
+    return macro_f1(y_true, (proba >= columns).astype(int)), global_t, columns
+
+
+def name_threshold_columns(columns: np.ndarray, classes: list[str]) -> dict[str, float]:
+    """Attach label URIs to threshold columns — the form a bundle persists."""
+    return {uri: float(t) for uri, t in zip(classes, columns, strict=False)}
+
+
 def tune_thresholds(
     y_val: np.ndarray,
     proba: np.ndarray,
@@ -251,7 +306,7 @@ def tune_thresholds(
     best_global, columns = tune_threshold_columns(y_val, proba, per_label=per_label, grid=grid)
     if not per_label:
         return best_global, {}
-    return best_global, {uri: float(t) for uri, t in zip(classes, columns, strict=False)}
+    return best_global, name_threshold_columns(columns, classes)
 
 
 def apply_thresholds(

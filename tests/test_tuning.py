@@ -454,3 +454,99 @@ def test_a_profile_can_pick_c_on_tuned_thresholds_and_defaults_not_to(tmp_path):
         encoding="utf-8",
     )
     assert load_training_config(config_file).get("tuned").select_c_on_tuned_thresholds is True
+
+
+class _ScriptedHead:
+    """A head whose probabilities are read from a table instead of learned.
+
+    The tests below pin down a SELECTION RULE, so the probabilities have to be an
+    input to the test rather than an output of a solver — with real fits the answer
+    would depend on how well two Cs happen to separate toy data. Row identity travels
+    in column 0 of the feature matrix, which is what lets a CV fold's slice look its
+    own rows up again.
+    """
+
+    def __init__(self, table: np.ndarray) -> None:
+        self.table = table
+
+    def fit(self, x, y):
+        return self
+
+    def predict_proba(self, x):
+        return self.table[np.asarray(x)[:, 0].astype(int)]
+
+
+def _selection_disagreement_case():
+    """Two candidates the flat cut and tuned thresholds disagree about.
+
+    C=1 is well scaled but misses row 0 of label 0: macro F1 0.929, and no threshold
+    can rescue it because the missed row scores exactly what the negatives score.
+    C=2 ranks every row perfectly but compresses the scores below 0.5 — the flat cut
+    predicts nothing and scores it 0.0, a tuned cut scores it 1.0.
+
+    So selecting on the flat 0.5 cut throws away the candidate that wins once its
+    thresholds are set, which is the whole of plan item C1.
+    """
+    y = np.zeros((8, 2), dtype=int)
+    y[:4, 0] = 1
+    y[4:, 1] = 1
+    well_scaled = np.array([[0.1, 0.1]] + [[0.9, 0.1]] * 3 + [[0.1, 0.9]] * 4)
+    compressed = np.array([[0.4, 0.05]] * 4 + [[0.05, 0.4]] * 4)
+    row_ids = np.arange(8, dtype=float).reshape(-1, 1)
+    return row_ids, y, {1.0: well_scaled, 2.0: compressed}
+
+
+def _script_the_heads(monkeypatch, tables):
+    monkeypatch.setattr(tuning, "make_head", lambda c, **kwargs: _ScriptedHead(tables[c]))
+
+
+def test_cross_val_evaluate_picks_the_c_that_wins_under_its_own_thresholds(monkeypatch):
+    """With the flag on, each candidate is scored under thresholds tuned for itself
+    and the (C, thresholds) pair is chosen together; off, today's flat 0.5 cut decides.
+    The grid puts the tuned winner FIRST so a rule that kept the last candidate's
+    thresholds could not pass by accident."""
+    row_ids, y, tables = _selection_disagreement_case()
+    _script_the_heads(monkeypatch, tables)
+    classes = ["c0", "c1"]
+
+    best_c, global_t, per_label, metrics = tuning.cross_val_evaluate(
+        TfidfBackend, [""] * 8, y, classes, matrix=row_ids, k=2, c_grid=[2.0, 1.0],
+    )
+    assert best_c == 1.0, "the flat cut scores the compressed candidate 0.0"
+    assert metrics["f1_macro"] == pytest.approx(6 / 7 / 2 + 0.5, abs=1e-3)
+
+    best_c, global_t, per_label, metrics = tuning.cross_val_evaluate(
+        TfidfBackend, [""] * 8, y, classes, matrix=row_ids, k=2, c_grid=[2.0, 1.0],
+        select_on_tuned_thresholds=True,
+    )
+    assert best_c == 2.0, "under its own thresholds the compressed candidate is perfect"
+    assert metrics["f1_macro"] == 1.0
+    assert global_t == pytest.approx(0.1)
+    assert per_label == {"c0": pytest.approx(0.1), "c1": pytest.approx(0.1)}
+
+
+def test_cross_val_evaluate_ignores_the_tuned_rule_when_thresholds_are_off(monkeypatch):
+    """`tune_threshold=False` means the bundle ships no thresholds, so selecting on
+    thresholds it will not keep would optimize for a rule serving never applies."""
+    row_ids, y, tables = _selection_disagreement_case()
+    _script_the_heads(monkeypatch, tables)
+
+    best_c, global_t, per_label, _ = tuning.cross_val_evaluate(
+        TfidfBackend, [""] * 8, y, ["c0", "c1"], matrix=row_ids, k=2, c_grid=[2.0, 1.0],
+        tune_threshold=False, select_on_tuned_thresholds=True,
+    )
+    assert (best_c, global_t, per_label) == (1.0, 0.5, {})
+
+
+def test_cross_val_evaluate_ignores_the_tuned_rule_for_single_label_tasks(monkeypatch):
+    """binary/multiclass serving is argmax and reads no threshold; tuning one to
+    select on would optimize for a rule that never runs."""
+    row_ids, y, tables = _selection_disagreement_case()
+    _script_the_heads(monkeypatch, tables)
+
+    best_c, global_t, per_label, _ = tuning.cross_val_evaluate(
+        TfidfBackend, [""] * 8, y, ["c0", "c1"], matrix=row_ids, k=2, c_grid=[2.0, 1.0],
+        task_type="multiclass", select_on_tuned_thresholds=True,
+    )
+    assert (global_t, per_label) == (0.5, {})
+    assert best_c in (1.0, 2.0)
