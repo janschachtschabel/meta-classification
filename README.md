@@ -564,8 +564,8 @@ above is the right form for everything at once.
 ```bash
 pip install -r requirements.txt -c requirements.lock
 pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
-python -m pytest tests -q                          # 198 tests
-python -m ruff check app tests                     # lint
+python -m pytest tests -q                          # 313 tests
+python -m ruff check app tests scripts             # lint
 python -m mypy app --config-file pyproject.toml    # types
 ```
 
