@@ -94,6 +94,7 @@ def select_on_split(
         tol=profile.selection_tol,
         select_on_tuned_thresholds=profile.select_c_on_tuned_thresholds and thresholds_apply,
         threshold_per_label=profile.threshold_per_label,
+        threshold_shrink_k=profile.threshold_shrinkage_k,
         # Distribute the C search across 55->75% so progress (and thus the ETA
         # derived from it) keeps moving through the longest phase.
         on_step=lambda i, total, c, f: on_progress(
@@ -117,7 +118,8 @@ def select_on_split(
         on_progress(phase="threshold", progress=75,
                     message="Tuning per-label classification thresholds (on validation)...")
         global_t, per_label = tune_thresholds(
-            y_val, head.predict_proba(x_va), classes, per_label=profile.threshold_per_label
+            y_val, head.predict_proba(x_va), classes, per_label=profile.threshold_per_label,
+            shrink_k=profile.threshold_shrinkage_k,
         )
 
     on_progress(phase="evaluating", progress=85,
@@ -189,6 +191,7 @@ def fit_evaluate_deploy(
                 tune_threshold=profile.tune_threshold, per_label=profile.threshold_per_label,
                 tol=profile.selection_tol,
                 select_on_tuned_thresholds=profile.select_c_on_tuned_thresholds,
+                threshold_shrink_k=profile.threshold_shrinkage_k,
                 should_stop=should_stop, task_type=prep.task_type,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).

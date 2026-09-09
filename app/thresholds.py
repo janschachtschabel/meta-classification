@@ -29,6 +29,7 @@ def tune_threshold_columns(
     *,
     per_label: bool = True,
     grid: np.ndarray | None = None,
+    shrink_k: float | None = None,
 ) -> tuple[float, np.ndarray]:
     """The global threshold, and one threshold per COLUMN of ``proba``.
 
@@ -39,6 +40,12 @@ def tune_threshold_columns(
 
     With ``per_label=False`` every column carries the global value: an array has no way
     to say "absent", and the global cut is what the absent entry would have meant.
+
+    ``shrink_k`` blends each label's own cut toward the global one by how much that cut
+    can be trusted: weight ``n_pos / (n_pos + shrink_k)``, where ``n_pos`` is the label's
+    positives in ``y_val``. A cut fitted on four positives is mostly noise and a cut
+    fitted on six hundred is not, and the F1-argmax rule cannot tell the difference on
+    its own. ``None`` disables it, which is what every caller did before it existed.
     """
     grid = _DEFAULT_GRID if grid is None else grid
 
@@ -52,10 +59,12 @@ def tune_threshold_columns(
     if per_label:
         for col in range(proba.shape[1]):
             truth = y_val[:, col]
-            if truth.sum() == 0:
+            n_pos = int(truth.sum())
+            if n_pos == 0:
                 # No positives to tune on: every threshold scores f1=0, and the
                 # ">" update would hand the label the grid MINIMUM (0.05) —
-                # near-zero threshold, fires on everything. Keep the global.
+                # near-zero threshold, fires on everything. Keep the global. Under
+                # ``shrink_k`` this is the same rule at weight 0, not a second case.
                 continue
             scores = proba[:, col]
             best_t, best_f1 = best_global, -1.0
@@ -63,13 +72,16 @@ def tune_threshold_columns(
                 score = f1_score(truth, (scores >= threshold).astype(int), zero_division=0)
                 if score > best_f1:
                     best_f1, best_t = score, float(threshold)
+            if shrink_k is not None:
+                trust = n_pos / (n_pos + shrink_k)
+                best_t = trust * best_t + (1 - trust) * best_global
             columns[col] = best_t
 
     return best_global, columns
 
 
 def tuned_score(
-    y_true: np.ndarray, proba: np.ndarray, *, per_label: bool
+    y_true: np.ndarray, proba: np.ndarray, *, per_label: bool, shrink_k: float | None = None
 ) -> tuple[float, float, np.ndarray]:
     """Macro F1 a candidate reaches under thresholds tuned for ITSELF, and those
     thresholds.
@@ -77,7 +89,8 @@ def tuned_score(
     One vectorised comparison against a per-column vector — the same decision
     ``apply_thresholds`` makes once the columns carry names.
     """
-    global_t, columns = tune_threshold_columns(y_true, proba, per_label=per_label)
+    global_t, columns = tune_threshold_columns(
+        y_true, proba, per_label=per_label, shrink_k=shrink_k)
     return macro_f1(y_true, (proba >= columns).astype(int)), global_t, columns
 
 
@@ -93,6 +106,7 @@ def tune_thresholds(
     *,
     per_label: bool = True,
     grid: np.ndarray | None = None,
+    shrink_k: float | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Find the global (and optionally per-label) threshold maximizing F1 on val.
 
@@ -100,7 +114,8 @@ def tune_thresholds(
     dict means "every label decides at the global cut", which is what ``per_label=False``
     produces and what ``apply_thresholds`` falls back to.
     """
-    best_global, columns = tune_threshold_columns(y_val, proba, per_label=per_label, grid=grid)
+    best_global, columns = tune_threshold_columns(
+        y_val, proba, per_label=per_label, grid=grid, shrink_k=shrink_k)
     if not per_label:
         return best_global, {}
     return best_global, name_threshold_columns(columns, classes)

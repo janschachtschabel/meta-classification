@@ -118,3 +118,55 @@ def test_fit_evaluate_deploy_passes_the_profile_flag_into_the_cv_search(
     assert fitted.best_c == 2.0
     assert fitted.global_threshold == pytest.approx(0.1)
     assert fitted.metrics["f1_macro"] == 1.0
+
+
+def test_both_paths_hand_the_profile_shrinkage_to_the_threshold_search(
+    scripted_c_search, monkeypatch
+):
+    """The mechanism is proved in tests/test_thresholds.py; what this pins down is that
+    the profile's value reaches it. A knob defined on the profile and never passed on is
+    the failure this file exists for — it has already happened once here, when
+    `cross_val_evaluate` grew a parameter that `fit_evaluate_deploy` never handed over.
+    """
+    seen: dict[str, object] = {}
+
+    def spy(name, real):
+        def wrapper(*args, **kwargs):
+            seen[name] = kwargs.get("threshold_shrink_k", "NOT PASSED")
+            return real(*args, **kwargs)
+        return wrapper
+
+    monkeypatch.setattr(deploy, "select_c", spy("holdout", deploy.select_c))
+    monkeypatch.setattr(deploy, "cross_val_evaluate",
+                        spy("cv", deploy.cross_val_evaluate))
+    monkeypatch.setattr(deploy, "TfidfBackend", lambda **kwargs: _RowIdVectorizer())
+
+    profile = Profile("t", c_grid=[2.0, 1.0], cv_folds=2, threshold_shrinkage_k=10.0)
+    prep = _prepared(scripted_c_search.y)
+    deploy.select_on_split(_RowIdVectorizer, prep, Settings(), profile,
+                           should_stop=lambda: False, on_progress=lambda **k: None)
+    deploy.fit_evaluate_deploy(prep, Settings(), profile, cv_folds=2,
+                               on_progress=lambda **k: None, should_stop=lambda: False)
+
+    assert seen == {"holdout": 10.0, "cv": 10.0}
+
+
+def test_shrinkage_reaches_the_threshold_tuning_a_profile_falls_back_to(
+    scripted_c_search, monkeypatch
+):
+    """`select_on_split` only calls `tune_thresholds` when a profile turns C1's
+    selection rule off, so the default configuration never exercises that call site —
+    and a shrinkage wired into the other two but not this one would look fully wired.
+    """
+    seen: list[object] = []
+    real = deploy.tune_thresholds
+    monkeypatch.setattr(deploy, "tune_thresholds",
+                        lambda *a, **kw: (seen.append(kw.get("shrink_k", "NOT PASSED")),
+                                          real(*a, **kw))[1])
+
+    profile = Profile("t", c_grid=[2.0, 1.0], threshold_shrinkage_k=10.0,
+                      select_c_on_tuned_thresholds=False)
+    deploy.select_on_split(_RowIdVectorizer, _prepared(scripted_c_search.y), Settings(),
+                           profile, should_stop=lambda: False, on_progress=lambda **k: None)
+
+    assert seen == [10.0]

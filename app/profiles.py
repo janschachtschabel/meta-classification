@@ -110,6 +110,14 @@ class Profile:
     # model. `fast` therefore carries the flag for consistency — it exists to predict what
     # `auto` will do — at a measured cost of nothing rather than an assumed one.
     select_c_on_tuned_thresholds: bool = True
+    # Pull each label's tuned threshold toward the GLOBAL one by how much that label's
+    # own cut can be trusted: weight ``n_pos / (n_pos + k)`` over its validation
+    # positives. A cut fitted on four positives is mostly noise, one fitted on six
+    # hundred is not, and the F1-argmax rule cannot tell them apart. ``None`` = off.
+    # ⚪ UNMEASURED, hence off: plan item B4, gated by benchmark_threshold_shrinkage.py
+    # on the same two conditions as C1 — macro F1 up by >= 0.002 AND
+    # `predicted_labels_per_row` no more than 10% above the baseline.
+    threshold_shrinkage_k: float | None = None
 
 
 @dataclass
@@ -177,6 +185,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             refit_vectorizer_per_fold=raw.get("refit_vectorizer_per_fold", True),
             selection_tol=raw.get("selection_tol"),
             select_c_on_tuned_thresholds=raw.get("select_c_on_tuned_thresholds", True),
+            threshold_shrinkage_k=raw.get("threshold_shrinkage_k"),
         )
     if not profiles:
         profiles = dict(_DEFAULTS)
