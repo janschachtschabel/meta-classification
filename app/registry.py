@@ -19,6 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .classifier import ClassifierModel
+from .data import label_vocabulary
 from .model_io import UnsafeModelError, _read_bundle, _write_bundle
 from .settings import get_settings
 
@@ -191,8 +192,37 @@ class Registry:
             metadata = (
                 json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
             )
+        classes = config.get("classes") or []
         config.pop("uri_to_label", None)  # potentially large; not needed for info
-        return {"name": name, **config, "metadata": metadata}
+        # Derived, never stored: it follows from the labels, so it stays correct for
+        # bundles trained before this existed and cannot be typed in wrong.
+        vocabulary = label_vocabulary(classes)
+        return {"name": name, **config, "label_vocabulary": vocabulary, "metadata": metadata}
+
+    def update_info(self, name: str, info: dict) -> dict:
+        """Replace the author-supplied ``info`` block of an existing bundle.
+
+        Documentation is presentation-only data — nothing in the serving path reads
+        it, and the cached model object does not carry it — so correcting an author
+        name or a license must not cost a retrain. Written the same way the share
+        store writes: tmp file plus rename, under the disk lock, so a crash mid-write
+        cannot leave a metrics.json that no longer parses.
+
+        An empty mapping removes the block. Returns what is now stored.
+        """
+        with self._disk_lock:
+            if not self.exists(name):
+                raise FileNotFoundError(name)
+            path = self._path(name) / "metrics.json"
+            metadata = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if info:
+                metadata["info"] = info
+            else:
+                metadata.pop("info", None)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, path)
+        return info
 
     def delete(self, name: str) -> None:
         # Pop the cache INSIDE the disk-lock section, AFTER the rmtree: popping

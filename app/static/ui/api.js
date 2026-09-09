@@ -58,6 +58,7 @@ const Api = (() => {
     getKey, setKey, clearKey, ApiError, download,
     get: (p) => request(p),
     post: (p, json) => request(p, { method: "POST", json }),
+    put: (p, json) => request(p, { method: "PUT", json }),
     postForm: (p, form) => request(p, { method: "POST", form }),
     del: (p) => request(p, { method: "DELETE" }),
   };

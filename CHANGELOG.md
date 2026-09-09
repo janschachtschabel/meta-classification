@@ -2,6 +2,26 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased]
+
+### Added — model documentation that travels with the bundle
+
+- `PUT /models/{name}/info` stores `author`, `description` (purpose **and** limits),
+  `data_source` and `license` in the bundle; `/train` accepts the same block up front.
+  These are the facts the pipeline cannot measure, and they matter at exactly one
+  moment: handing a model to a third party, where `dataset: "data_300k.csv"` says
+  nothing about where that file came from. They live in `metrics.json`, so they travel
+  inside the exported archive, and they are editable at any time — documentation is
+  presentation-only, so correcting an author name costs no retrain.
+- `GET /models/{name}` reports **`label_vocabulary`**, derived from the class URIs
+  rather than typed in: a vocabulary is the direct parent of every concept id, which
+  is what tells one vocabulary from the common ancestor of two. 🟢 Verified against
+  all 14 bundles of the local model store (discipline, educationalContext,
+  hochschulfaechersystematik); a mixed label set correctly reports none.
+- Admin UI: an **Info** button per model opens the form and shows the derived
+  vocabulary read-only. Free text is escaped on render — `metrics.json` arrives
+  inside importable archives.
+
 ## [3.1.0] — 2026-09-09
 
 First release since the torch-free rewrite. It carries the whole July development

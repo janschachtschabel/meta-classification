@@ -127,6 +127,9 @@ async def train(
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
 
     req = {key: getattr(body, key) for key in _REQ_KEYS}
+    # Not in _REQ_KEYS: it is a nested model, and the pipeline stores plain JSON.
+    # exclude_none keeps the bundle from claiming fields the caller left unset.
+    req["info"] = body.info.model_dump(exclude_none=True) if body.info else None
     try:
         # The singleton registry is injected so the training save shares its disk
         # lock with every API-side registry operation.

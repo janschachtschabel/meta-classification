@@ -1249,6 +1249,56 @@ def test_text_column_weights_are_anchored_in_the_bundle(tmp_path):
     assert meta["text_column_weights"] == {"properties.cclom:title": 2}
 
 
+def test_bundle_carries_the_authored_info_and_the_derived_vocabulary(tmp_path):
+    """Everything else in the metadata is MEASURED; these four fields are what only
+    the person training the model knows — who made it, what for, where the data came
+    from, on what terms. They matter when a bundle is handed to a third party, where
+    `dataset: "data_300k.csv"` means nothing. Kept in their own `info` block so a
+    reader can tell an assertion by a human from a fact by the pipeline.
+
+    The vocabulary is NOT among them: it is derived from the class URIs, so it cannot
+    be typed in wrongly."""
+    settings = _settings(tmp_path)
+    config = _config()
+    info = {
+        "author": "Redaktion WLO <redaktion@example.org>",
+        "description": "Subject classifier for school material. Not for grading learners.",
+        "data_source": "WLO prod export 2026-07-26, filtered to school disciplines",
+        "license": "CC BY-SA 4.0",
+    }
+    run_training(
+        {**_request(), "info": info}, settings, config, config.get("fast"),
+        _registry(settings), on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+
+    bundle = Registry(settings.models_dir, 2).info("tiny_model")
+    assert bundle["metadata"]["info"] == info
+    # Always reported, even when there is nothing to report: the fixture's labels are
+    # bare tokens ("uri:math"), not URIs, so no namespace can be derived. The
+    # derivation itself is pinned by the unit test below, on real vocabulary URIs.
+    assert bundle["label_vocabulary"] is None
+
+
+def test_label_vocabulary_is_only_reported_when_the_classes_agree(tmp_path):
+    """A single shared namespace is a statement worth making; a mixed label set is
+    not. Measured across the local model store, all 14 bundles had one common prefix
+    — but a CSV mixing two vocabularies must report none rather than a misleading
+    fragment of a URI."""
+    from app.data import label_vocabulary
+
+    assert label_vocabulary([
+        "http://w3id.org/openeduhub/vocabs/discipline/380",
+        "http://w3id.org/openeduhub/vocabs/discipline/120",
+    ]) == "http://w3id.org/openeduhub/vocabs/discipline/"
+    # Two vocabularies: the common prefix ".../vocabs/" names neither of them.
+    assert label_vocabulary([
+        "http://w3id.org/openeduhub/vocabs/discipline/380",
+        "http://w3id.org/openeduhub/vocabs/educationalContext/sekundarstufe_1",
+    ]) is None
+    assert label_vocabulary(["mathematics", "physics"]) is None
+    assert label_vocabulary([]) is None
+
+
 def test_metadata_records_the_searched_c_grid(tmp_path):
     """best_C alone is not interpretable: a value sitting at the EDGE of the grid
     means the search ran out of candidates, not that it found an optimum. Persist

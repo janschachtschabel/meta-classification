@@ -22,7 +22,7 @@ from .. import data as data_mod
 from ..jobs import training_job
 from ..limiter import default_limit, export_limit, limiter
 from ..registry import UnsafeModelError, get_registry
-from ..schemas import ExportRequest
+from ..schemas import ExportRequest, ModelInfo
 from ..security import read_upload_capped, require_role, safe_name
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
@@ -57,6 +57,36 @@ async def model_info(model_name: str, _: str = Depends(require_role("readonly"))
         return get_registry().info(model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+
+
+@router.put("/models/{model_name}/info", summary="Set the model's documentation")
+@limiter.limit(default_limit)
+async def set_model_info(
+    request: Request,
+    model_name: str,
+    body: ModelInfo,
+    _: str = Depends(require_role("admin")),
+) -> dict:
+    """Store author, purpose, data provenance and license in the model bundle.
+
+    These are the facts the pipeline cannot measure, and they matter when the model is
+    handed to a third party: the metadata records the training file's NAME, not where
+    that file came from. They travel inside the exported archive.
+
+    **Replaces** the whole block — send every field you want kept; `{}` clears it.
+    Editable at any time because documentation is presentation-only: nothing in the
+    serving path reads it, so correcting an author name costs no retrain.
+    The label vocabulary is deliberately not settable here — `GET /models/{name}`
+    derives it from the class URIs. **Auth:** admin · rate limit active.
+    """
+    safe_name(model_name, "model name")
+    try:
+        stored = await asyncio.to_thread(
+            get_registry().update_info, model_name, body.model_dump(exclude_none=True)
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+    return {"status": "updated", "model_name": model_name, "info": stored}
 
 
 @router.delete("/models/{model_name}", summary="Delete a model")

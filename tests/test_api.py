@@ -121,6 +121,64 @@ def test_export_import_roundtrip_via_api(trained_model):
     assert "api_copy" in client.get("/models", headers=RO).json()
 
 
+def test_model_info_can_be_set_after_training_and_travels_with_the_bundle(trained_model):
+    """The point of the info block is the moment a model is handed to someone else:
+    the bundle records what was measured, but not who made it, what for, or where the
+    data came from. It is editable after training — fixing a typo in an author name
+    by retraining a model would be absurd — and it must survive export/import, or it
+    would be lost exactly where it is needed."""
+    info = {
+        "author": "Redaktion WLO <redaktion@example.org>",
+        "description": "Subject classifier for school material. Not for grading learners.",
+        "data_source": "WLO prod export 2026-07-26",
+        "license": "CC BY-SA 4.0",
+    }
+    stored = client.put("/models/api_model/info", json=info, headers=ADMIN)
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["info"] == info
+    assert client.get("/models/api_model", headers=RO).json()["metadata"]["info"] == info
+
+    # PUT replaces: a second call with fewer fields leaves no remnants of the first.
+    replaced = client.put("/models/api_model/info", json={"author": "Someone else"}, headers=ADMIN)
+    assert replaced.status_code == 200
+    assert replaced.json()["info"] == {"author": "Someone else"}
+
+    client.put("/models/api_model/info", json=info, headers=ADMIN)
+    export = client.post("/models/api_model/export", headers=ADMIN)
+    files = {"file": ("m.zip", export.content, "application/zip")}
+    assert client.post("/models/import", files=files,
+                       data={"new_name": "api_shared"}, headers=ADMIN).status_code == 200
+    assert client.get("/models/api_shared", headers=RO).json()["metadata"]["info"] == info
+
+
+def test_train_stores_the_info_block_given_up_front():
+    """Documentation supplied WITH the training request has to survive the route.
+    `_REQ_KEYS` is an explicit allowlist of the fields that reach run_training, so a
+    new body field is silently dropped until it is listed there — the bundle then
+    comes out undocumented and nothing says why."""
+    body = {
+        **TRAIN_BODY,
+        "model_name": "documented_model",
+        "info": {"author": "Redaktion", "license": "CC BY-SA 4.0"},
+    }
+    assert client.post("/train", json=body, headers=ADMIN).status_code == 202
+    assert _wait_for_training()["status"] == "completed"
+    stored = client.get("/models/documented_model", headers=RO).json()["metadata"]["info"]
+    assert stored == {"author": "Redaktion", "license": "CC BY-SA 4.0"}
+
+
+def test_model_info_is_admin_only_and_bounded(trained_model):
+    """Free text from a client that ends up rendered in the admin UI and shipped
+    inside an exported bundle: bound it at the trust boundary, and keep writing it
+    an admin action like every other model mutation."""
+    assert client.put("/models/api_model/info", json={"author": "x"}, headers=RO).status_code == 403
+    assert client.put("/models/ghost/info", json={"author": "x"}, headers=ADMIN).status_code == 404
+    too_long = client.put("/models/api_model/info", json={"author": "x" * 500}, headers=ADMIN)
+    assert too_long.status_code == 422, too_long.text
+    unknown = client.put("/models/api_model/info", json={"nickname": "x"}, headers=ADMIN)
+    assert unknown.status_code == 422, "an unknown field is a typo, not something to drop silently"
+
+
 def test_import_garbage_zip_returns_400():
     """Uploading bytes that are not a zip yields a clean 400, not a 500."""
     files = {"file": ("evil.zip", b"this is not a zip archive", "application/zip")}

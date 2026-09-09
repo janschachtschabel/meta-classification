@@ -147,6 +147,31 @@ python scripts/patch_bundle_labels.py --apply
 
 See [`docs/configuration.md`](docs/configuration.md#datalabel_namesjson--authoritative-label-display-names-optional) for the details.
 
+### Model documentation (`PUT /models/{name}/info`)
+
+A bundle records what the pipeline *measured* — dataset file name, columns, profile,
+`C`, folds, rows, metrics, training time. It cannot know what only the person training
+it knows, and that is exactly what a recipient of a shared model needs:
+
+| Field | For |
+|---|---|
+| `author` | who trained it, and how to reach them |
+| `description` | what it is for — and what it is **not** for |
+| `data_source` | where the data came from (`dataset` is only a file name, meaningless elsewhere) |
+| `license` | terms, for models that leave the house |
+
+All optional and length-bounded, stored inside `metrics.json` so they travel in the
+exported ZIP, and settable either at training time (`info` in the `/train` body) or
+afterwards — documentation is presentation-only, so fixing a typo costs no retrain.
+The admin UI has an **Info** button per model.
+
+**The label vocabulary is not among them**, on purpose: it is derived from the class
+URIs and reported as `label_vocabulary` by `GET /models/{name}`. A typed-in value can
+be wrong; a derived one cannot. 🟢 Checked against the 14 bundles of the local model
+store — every one resolved to a single namespace (`…/vocabs/discipline/`,
+`…/vocabs/educationalContext/`, `…/vocabs/hochschulfaechersystematik/`), and a model
+mixing two vocabularies correctly reports none.
+
 ### Container labels are dropped, not learned
 
 A label value ending in `/` names a namespace rather than a concept and never becomes a
@@ -228,7 +253,7 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
 - **Classification:** `POST /predict`, `POST /predict/batch`, `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
   - `baseline_diff` (`include_baseline_diff=true`) — confidence minus the model's empty-text prediction. A high confidence with a diff near zero means the label fires for almost anything, not for this text.
   - `label_f1` (`include_label_f1=true`) — this label's F1 from the training evaluation. Confidence says how sure the model is *here*, `label_f1` how much that is worth: `Politik 0.95` on a label scoring 0.68 deserves a human look, `Mathematik 0.95` on a label scoring 0.95 does not. `null` for labels the bundle has no score for.
-- **Models:** `GET /models`, `GET /models/{name}`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`, `GET /share/{id}`
+- **Models:** `GET /models`, `GET /models/{name}`, `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`, `GET /share/{id}`
 - **Datasets:** `GET /datasets`, `GET /datasets/{name}`, `POST /datasets/analyze`, `POST /datasets/{name}/validate`, import/export/delete
 - **System:** `GET /health`, `GET /config`, `GET /metrics` (Prometheus text format, public — operational gauges only: uptime, model counts, training status)
 

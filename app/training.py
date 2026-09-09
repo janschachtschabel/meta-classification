@@ -84,6 +84,9 @@ def _build_metadata(
         "n_labels": len(prep.classes),
         "metrics": fitted.metrics,
         "training_time_seconds": round(elapsed, 1),
+        # Author-supplied documentation, kept in its own block so a reader can tell a
+        # human assertion from a measured fact. Omitted entirely when nothing was given.
+        **({"info": req["info"]} if req.get("info") else {}),
     }
 
 

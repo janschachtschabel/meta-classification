@@ -131,8 +131,11 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   recorded in `metrics.json`.
 
 ### A1 · Split `data.py` (S, 1 h)
-- Move `_rejoin_split_names`, `_pair_names` to `app/label_names.py`; behaviour-preserving,
-  tests move with them.
+- Move `_rejoin_split_names`, `_pair_names` and `label_vocabulary` to
+  `app/label_names.py`; behaviour-preserving, tests move with them.
+- `registry.py` crossed the ~300-line guideline (306) when `update_info` landed. It
+  now owns cache, disk locks, atomic publish **and** zip import/export — the archive
+  half is the natural seam. Noted here rather than bundled into a feature commit.
 
 Effort: 7–8 person-days. Risk: P1 is the only item that can change numbers, and it is
 gated.

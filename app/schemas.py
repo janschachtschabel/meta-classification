@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, field_validator
 
 
 def _empty_to_none(value: object) -> object:
@@ -15,6 +15,45 @@ def _empty_to_none(value: object) -> object:
 
 # A blank string (common from Swagger form fields) collapses to None.
 OptionalFilter = Annotated[str | None, BeforeValidator(_empty_to_none)]
+
+
+class ModelInfo(BaseModel):
+    """What only the person training a model knows, carried inside the bundle.
+
+    Everything else in a model's metadata is measured by the pipeline. These four are
+    assertions by a human, kept in their own block so a reader can tell the two apart
+    — and they exist for one moment in particular: handing the model to someone else,
+    where `dataset: "data_300k.csv"` says nothing about where the data came from.
+
+    Deliberately NOT here: the label vocabulary. It follows from the class URIs
+    (`GET /models/{name}` reports `label_vocabulary`), so it cannot be typed in wrong.
+
+    All fields optional and length-bounded: this is free text from a client that ends
+    up rendered in the admin UI and shipped inside an exportable archive.
+    """
+
+    model_config = ConfigDict(extra="forbid")  # an unknown key is a typo worth a 422
+
+    author: str | None = Field(
+        None, max_length=200, examples=["Redaktion WLO <redaktion@example.org>"],
+        description="Who trained the model, and how to reach them.",
+    )
+    description: str | None = Field(
+        None, max_length=4_000,
+        examples=["Subject classifier for school material. Not for grading learners."],
+        description="What the model is for — and, more usefully, what it is NOT for.",
+    )
+    data_source: str | None = Field(
+        None, max_length=1_000, examples=["WLO prod export 2026-07-26, school disciplines only"],
+        description=(
+            "Where the training data came from. The bundle records the file NAME, which "
+            "is meaningless on another machine; this is the provenance behind it."
+        ),
+    )
+    license: str | None = Field(
+        None, max_length=200, examples=["CC BY-SA 4.0"],
+        description="Terms the model may be used under, for models that leave the house.",
+    )
 
 
 class TrainRequest(BaseModel):
@@ -114,6 +153,14 @@ class TrainRequest(BaseModel):
     # /train it would hang the training thread outside any stop checkpoint.
     csv_separator: str = Field(";", min_length=1, max_length=1)
     label_separator: str = ","
+    info: ModelInfo | None = Field(
+        None,
+        description=(
+            "Optional documentation to store in the bundle: author, purpose and limits, "
+            "data provenance, license. Editable afterwards via `PUT /models/{name}/info`, "
+            "so a typo never costs a retrain."
+        ),
+    )
 
     @field_validator("text_column_weights")
     @classmethod
