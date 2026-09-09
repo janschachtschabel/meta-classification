@@ -302,8 +302,9 @@ class Registry:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if isinstance(exc, KeyError):
                     # Malformed config = invalid input (400), not a server fault.
-                    # BadZipFile no longer reaches here: the archive is fully read
-                    # and validated by model_archive.unpack before this point.
+                    # Archive-level damage is already mapped by model_archive.unpack,
+                    # which runs before this block; what can still fail here is
+                    # writing the members and _read_bundle's own validation.
                     raise UnsafeModelError(f"Invalid model bundle: {exc!r}") from exc
                 raise
             try:

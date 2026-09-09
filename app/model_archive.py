@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+import zlib
 
 from . import model_card
 from .data import label_vocabulary
@@ -43,6 +44,8 @@ ALLOWED_MEMBERS = REQUIRED_FILES | {"metrics.json", MANIFEST_FILE, CARD_FILE}
 # validation — acceptable residual risk since import is admin-only + rate-limited.
 _MAX_DECOMPRESSION_RATIO = 20
 _DECOMPRESSION_FLOOR_BYTES = 64 * 1024 * 1024
+# What a damaged archive actually raises, measured rather than assumed (see unpack).
+_DAMAGED = (zipfile.BadZipFile, zlib.error, EOFError, ValueError)
 
 
 def pack(name: str, members: dict[str, bytes]) -> bytes:
@@ -97,13 +100,22 @@ def unpack(data: bytes) -> dict[str, bytes]:
                 f"Archive decompresses to {total_uncompressed} bytes from a "
                 f"{len(data)}-byte upload; refusing (possible zip bomb)."
             )
-        payloads = {member: archive.read(member) for member in names}
+        try:
+            payloads = {member: archive.read(member) for member in names}
+        except _DAMAGED as exc:
+            # Damage in transit is the normal failure for a 50-180 MB download, and
+            # it must read as "your file is broken", not as a server fault. Measured
+            # on a real archive: a mangled member name raises BadZipFile, a flipped
+            # data byte — the likeliest damage — raises zlib.error, and a truncated
+            # stream raises ValueError or EOFError depending on where it was cut.
+            raise UnsafeModelError(f"Archive member could not be read: {exc!r}") from exc
 
     if MANIFEST_FILE in payloads:
         # Absent for bundles exported before 3.2: verification applies when a
         # manifest is there, its absence is not an error.
-        verify_manifest(
-            json.loads(payloads[MANIFEST_FILE]),
-            {m: p for m, p in payloads.items() if m != MANIFEST_FILE},
-        )
+        try:
+            manifest = json.loads(payloads[MANIFEST_FILE])
+        except ValueError as exc:
+            raise UnsafeModelError(f"{MANIFEST_FILE} is not valid JSON: {exc!r}") from exc
+        verify_manifest(manifest, {m: p for m, p in payloads.items() if m != MANIFEST_FILE})
     return {m: p for m, p in payloads.items() if m not in (MANIFEST_FILE, CARD_FILE)}

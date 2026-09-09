@@ -1488,6 +1488,49 @@ def test_import_rejects_a_tampered_member(tmp_path):
     assert "tampered_copy" not in registry.list()
 
 
+def test_import_rejects_every_way_an_archive_arrives_damaged(tmp_path):
+    """A bundle travels as a 50-180 MB download, so damage in transit is the normal
+    failure, not an exotic one — and it must read as "your file is broken" (400), not
+    as a server fault (500).
+
+    The corruption modes were measured on a real archive rather than assumed: a
+    mangled member name raises `zipfile.BadZipFile`, but a flipped data byte — the
+    likeliest damage of all — raises `zlib.error`, which is neither `BadZipFile` nor
+    `UnsafeModelError` and escaped straight into the 500 handler."""
+    import io
+    import zipfile
+
+    import pytest
+
+    from app.registry import UnsafeModelError
+
+    registry, _ = _trained_registry(tmp_path)
+    original = registry.export_zip("tiny_model")
+
+    def mangled_member_name() -> bytes:
+        raw = bytearray(original)
+        index = raw.find(b"vocabulary.json")
+        raw[index + 5] ^= 0x80
+        return bytes(raw)
+
+    def flipped_data_byte() -> bytes:
+        raw = bytearray(original)
+        with zipfile.ZipFile(io.BytesIO(original)) as archive:
+            offset = archive.getinfo("head.skops").header_offset
+        raw[offset + 200] ^= 0xFF
+        return bytes(raw)
+
+    def truncated() -> bytes:
+        return original[: len(original) // 2] + original[-2000:]
+
+    for name, make in (("mangled name", mangled_member_name),
+                       ("flipped byte", flipped_data_byte),
+                       ("truncated", truncated)):
+        with pytest.raises(UnsafeModelError):
+            registry.import_zip(f"damaged_{name.replace(' ', '_')}", make())
+    assert registry.list() == ["tiny_model"], "no half-installed bundle may survive"
+
+
 def test_import_still_accepts_an_archive_without_a_manifest(tmp_path):
     """Bundles exported by 3.1.0 carry no manifest. Verification applies when one is
     present; its absence is not an error, or every model shared before this release
