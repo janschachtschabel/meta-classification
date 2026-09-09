@@ -61,6 +61,14 @@ class Profile:
     # >=2 = k-fold CV). None -> fall back to the config-wide `split.cv_folds`.
     # A request's own `cv_folds` still wins over both.
     cv_folds: int | None = None
+    # Refit the vectorizer per CV fold (no feature leakage), or fit one matrix over all
+    # rows and slice it (one pass instead of k). 🟢 Measured 2026-09-09 on data_30k_ai
+    # (26 450 rows x 48 labels, `auto` shape): sharing scored macro 0.7337 against 0.7320
+    # refitting — +0.00171, inside the 0.002 gate but 86% of its budget, and in exactly
+    # the direction leakage predicts. It saved 6.1% of the CV phase. The plan's gate asks
+    # for a second target (university subjects) whose source export is not on this
+    # machine, so the default stays the leak-free one until that can be measured.
+    refit_vectorizer_per_fold: bool = True
 
 
 @dataclass
@@ -125,6 +133,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             max_word_features=raw.get("max_word_features"),
             max_char_features=raw.get("max_char_features"),
             cv_folds=raw.get("cv_folds"),
+            refit_vectorizer_per_fold=raw.get("refit_vectorizer_per_fold", True),
         )
     if not profiles:
         profiles = dict(_DEFAULTS)

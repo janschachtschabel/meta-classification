@@ -252,3 +252,83 @@ def test_cross_val_evaluate_rejects_more_folds_than_rows():
             lambda: TfidfBackend(use_char=False, max_word_features=50),
             texts, y, ["a", "b"], k=5, c_grid=[1.0],
         )
+
+
+def _tiny_corpus(n: int = 60):
+    """Two separable topics, enough rows for a 3-fold split."""
+    texts = [f"bruchrechnung gleichung mathematik {i}" if i % 2 else
+             f"photosynthese pflanze biologie {i}" for i in range(n)]
+    y = np.zeros((n, 2), dtype=np.int8)
+    y[1::2, 0] = 1
+    y[0::2, 1] = 1
+    return texts, y, ["uri:math", "uri:bio"]
+
+
+def test_cross_validation_can_reuse_one_vectorization_instead_of_k():
+    """The vectorizer is refit per fold so no fold's test rows influence its vocabulary
+    or IDF. That costs k passes over the corpus — at 156 k rows, 2.3 min each. Passing a
+    prefitted matrix trades that isolation for one pass; whether the trade is acceptable
+    is what `scripts/benchmark_shared_vectorizer.py` measures.
+
+    What this pins is the mechanism: given a matrix, the fold loop must NOT vectorize
+    again, or the saving is imaginary.
+    """
+    texts, y, classes = _tiny_corpus()
+    fits = []
+
+    def make_vectorizer():
+        fits.append(1)
+        return TfidfBackend()
+
+    shared = TfidfBackend()
+    matrix = shared.fit_transform(texts)
+
+    result = tuning.cross_val_evaluate(
+        make_vectorizer, texts, y, classes, k=3, c_grid=[1.0], matrix=matrix,
+    )
+
+    assert result is not None
+    best_c, global_t, per_label_t, metrics = result
+    assert best_c == 1.0
+    assert metrics["n_labels"] == 2
+    assert fits == [], "a prefitted matrix means the fold loop vectorizes nothing"
+
+
+def test_the_refit_path_still_vectorizes_once_per_fold():
+    """The counterpart, so the saving above is measured against something real."""
+    texts, y, classes = _tiny_corpus()
+    fits = []
+
+    def make_vectorizer():
+        fits.append(1)
+        return TfidfBackend()
+
+    tuning.cross_val_evaluate(make_vectorizer, texts, y, classes, k=3, c_grid=[1.0])
+
+    assert len(fits) == 3, "one vectorizer per fold"
+
+
+def test_a_matrix_that_does_not_match_the_labels_is_refused():
+    """The dangerous failure: fold indices slice both the matrix and `y`, so a matrix
+    built from different rows would line row i of one up against row j of the other and
+    still produce a plausible-looking number. Refuse it instead."""
+    texts, y, classes = _tiny_corpus()
+    shared = TfidfBackend()
+    matrix = shared.fit_transform(texts[:40])
+
+    with pytest.raises(ValueError, match="rows"):
+        tuning.cross_val_evaluate(
+            lambda: TfidfBackend(), texts, y, classes, k=3, c_grid=[1.0], matrix=matrix,
+        )
+
+
+def test_a_profile_can_ask_for_the_shared_matrix_and_defaults_to_not():
+    """The flag is the mechanism's on-switch. It defaults to refitting because the gate
+    asks for two targets and only one is measurable on this machine — see the constant's
+    comment in profiles.py for the numbers."""
+    from app.profiles import Profile, load_training_config
+    from app.settings import get_settings
+
+    assert Profile("x").refit_vectorizer_per_fold is True
+    for profile in load_training_config(get_settings().config_file).profiles.values():
+        assert profile.refit_vectorizer_per_fold is True, "no shipped profile shares yet"

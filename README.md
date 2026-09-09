@@ -396,6 +396,17 @@ many labels that value keeps — the two numbers worth having *before* starting 
 `app/profiles.estimated_minutes` is the one implementation, anchored on the measured run
 above; a test pins it to reproduce the published figures.
 
+**Shared vectorizer across CV folds** (`refit_vectorizer_per_fold: false` on a profile):
+one vectorization pass instead of k, at the cost of the fold's test rows shaping the
+vocabulary and IDF. 🟢 Measured 2026-09-09 on `data_30k_ai.csv` (26 450 rows × 48 labels,
+`auto` shape): **macro 0.7337 shared vs 0.7320 refit (+0.00171), 6.1 % of the CV phase
+saved**. The delta sits inside the 0.002 gate but uses 86 % of its budget and points in
+exactly the direction leakage predicts, and the gate asks for a **second** target
+(university subjects) whose source export is not on this machine — so **every shipped
+profile still refits per fold**. `scripts/benchmark_shared_vectorizer.py` reproduces the
+run. The measured saving covers the CV phase only; the deploy fit still vectorizes
+separately, which is a further saving with its own measurement to make.
+
 **Recommendation by size:** `auto` up to a few hundred thousand rows — it delivered the
 run above in 40 min while still training the shipped model on 100 % of the data. At
 600 k it is a half-day job rather than a coffee break, so plan it as one. `best` is

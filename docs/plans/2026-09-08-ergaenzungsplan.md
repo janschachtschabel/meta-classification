@@ -137,7 +137,7 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   unscored labels last in both directions, 360 px without horizontal scrolling,
   every target ≥ 24×24, dark mode via the tokens, no console/CSP errors.
 
-### P1 · Shared-vectorizer cross-validation (S–M, 1 day incl. benchmark) — **blocked: needs the owner's go-ahead**
+### P1 · Shared-vectorizer cross-validation (S–M, 1 day incl. benchmark) — **measured 2026-09-09; default unchanged**
 - `cross_val_evaluate` accepts a prefitted matrix: `fit_transform` once over all rows,
   slice per fold, reuse for the deploy fit. Profile flag `refit_vectorizer_per_fold`
   (default decided by the benchmark). `scripts/benchmark_shared_vectorizer.py` reports
@@ -148,6 +148,19 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   which is fine — P1's gate measures on 25–30 k rows by design. Nothing else depends on
   it: the flag only changes a default, and today's default is the measured-safe one
   (refit per fold).
+- 🟢 **Measured on `data_30k_ai.csv`** (26 450 rows × 48 labels, `auto` shape): shared
+  macro **0.7337** vs refit **0.7320** (+0.00171), **6.1 %** of the CV phase saved. The
+  delta is inside the gate but uses 86 % of its budget, in the direction leakage predicts.
+- ⛔ **The second target could not be measured and the default therefore stands.**
+  `data_30k*.csv` carries ONE row with a `hochschulfaechersystematik` label, and the
+  300 k export the university models were trained from is not on this machine. The gate
+  says *both* targets; half the evidence is not the gate.
+- Delivered: the mechanism (`cross_val_evaluate(matrix=...)`), the profile flag
+  `refit_vectorizer_per_fold` (True everywhere), the benchmark script. To adopt: obtain
+  the university export, rerun the script, flip the flag in `config.yaml`.
+- Note: the measured 6.1 % covers the CV phase only. Reusing the shared matrix for the
+  deploy fit as well — the rest of the plan's ~17 % estimate — is a further change with
+  its own measurement to make.
 - **Gate:** adopt as default only if |Δ macro F1| < 0.002 on both; expected saving
   ≈ 17 % (`auto`) / 20 % (`best`) at 156 k rows (README: 2.3 min per pass).
 - Files: `app/tuning.py`, `app/deploy.py`, `app/profiles.py`, `config.yaml`, README

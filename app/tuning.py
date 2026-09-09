@@ -101,11 +101,20 @@ def cross_val_evaluate(
     should_stop: Callable[[], bool] | None = None,
     on_step: Callable[[int, int, str], None] | None = None,
     task_type: str = "multilabel",
+    matrix=None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
-    Every row is predicted exactly once by a model that did not train on it; the
-    vectorizer is refit per fold, so there is no feature leakage. ``C`` is picked by
+    Every row is predicted exactly once by a model that did not train on it; by default
+    the vectorizer is refit per fold, so there is no feature leakage.
+
+    ``matrix`` short-circuits that: a matrix already fitted over ALL rows is sliced per
+    fold instead, which turns k vectorization passes into one — 2.3 min each at 156 k
+    rows. The price is that the vocabulary and the IDF weights were computed with the
+    fold's test rows in view, so the out-of-fold metric carries a mild optimism. Whether
+    that optimism is material at this scale is a measurement, not an opinion:
+    ``scripts/benchmark_shared_vectorizer.py`` reports both modes, and the caller
+    decides. The heads are still fit only on the training rows either way. ``C`` is picked by
     OOF macro-F1, thresholds are tuned on the OOF probabilities, and the metrics are
     computed on them. Selection and metrics use the decision rule serving applies
     for ``task_type`` — for binary/multiclass (argmax) threshold tuning is skipped
@@ -129,6 +138,14 @@ def cross_val_evaluate(
     n, n_labels = y.shape
     if k > n:
         raise TrainingInputError(f"cv_folds={k} exceeds the {n} usable rows; reduce cv_folds.")
+    if matrix is not None and matrix.shape[0] != n:
+        # Fold indices slice the matrix and `y` together, so a matrix built from a
+        # different row set would line row i of one up against row j of the other and
+        # still produce a plausible number. Refuse rather than mis-measure.
+        raise ValueError(
+            f"matrix has {matrix.shape[0]} rows but the labels have {n}; they must be "
+            "the same rows in the same order."
+        )
     folds = list(KFold(n_splits=k, shuffle=True, random_state=seed).split(np.arange(n)))
     # OOF probabilities per C, each row filled exactly once (float32 bounds RAM).
     oof = {c: np.zeros((n, n_labels), dtype=np.float32) for c in c_grid}
@@ -137,9 +154,12 @@ def cross_val_evaluate(
     for fold, (tr, te) in enumerate(folds, start=1):
         if should_stop is not None and should_stop():
             return None
-        vec = make_vectorizer()
-        x_tr = vec.fit_transform([texts[i] for i in tr])
-        x_te = vec.transform([texts[i] for i in te])
+        if matrix is None:
+            vec = make_vectorizer()
+            x_tr = vec.fit_transform([texts[i] for i in tr])
+            x_te = vec.transform([texts[i] for i in te])
+        else:
+            x_tr, x_te = matrix[tr], matrix[te]
         for c in c_grid:
             # Checked per C candidate (not only per fold) so /train/stop keeps its
             # "between the C fits" promise in CV mode as well.

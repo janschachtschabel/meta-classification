@@ -4,6 +4,20 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — a profile can share one vectorization across CV folds (measured, off by default)
+
+- Cross-validation refits the vectorizer per fold so no fold's test rows shape its
+  vocabulary or IDF. `refit_vectorizer_per_fold: false` on a profile trades that for one
+  pass instead of k. `scripts/benchmark_shared_vectorizer.py` measures the trade.
+- 🟢 On `data_30k_ai.csv` (26 450 rows × 48 labels, `auto` shape): **macro 0.7337 shared
+  vs 0.7320 refit — +0.00171 — and 6.1 % of the CV phase saved.** Inside the 0.002 gate,
+  but at 86 % of its budget and pointing exactly the way leakage predicts.
+- **The default does not change.** The gate asks for two targets; the second (university
+  subjects) is not measurable here — `data_30k*.csv` carries a single row with that
+  label and the 300 k export those models came from is not on this machine. A number
+  half-measured is not a number to change a default on.
+
+
 ### Added — corrections feed back into training (`POST /feedback`)
 
 - **The recognition rate improves with use, or it improves only when somebody produces

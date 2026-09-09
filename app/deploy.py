@@ -160,10 +160,20 @@ def fit_evaluate_deploy(
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):
         if cv_folds >= 2:
+            shared_matrix = None
+            if not profile.refit_vectorizer_per_fold:
+                # One pass instead of k, at the cost of the fold's test rows shaping the
+                # vocabulary and IDF. Off for every shipped profile — see the flag's
+                # comment in profiles.py for what was measured. The deploy fit still
+                # vectorizes on its own; folding that in too is a further saving with its
+                # own measurement to make.
+                on_progress(phase="features", progress=40,
+                            message="Vectorizing once for all folds (shared matrix)...")
+                shared_matrix = new_vectorizer().fit_transform(texts.tolist())
             on_progress(phase="cross-validating", progress=45,
                         message=f"{cv_folds}-fold cross-validation (all rows train + validate)...")
             selected = cross_val_evaluate(
-                new_vectorizer, texts.tolist(), y_all, prep.classes,
+                new_vectorizer, texts.tolist(), y_all, prep.classes, matrix=shared_matrix,
                 k=cv_folds, c_grid=profile.c_grid, seed=settings.random_seed,
                 n_jobs=n_jobs, solver=settings.solver,
                 tune_threshold=profile.tune_threshold, per_label=profile.threshold_per_label,
