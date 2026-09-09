@@ -1,7 +1,7 @@
 """Remove container labels from a trained bundle -- no retraining needed.
 
 A label value ending in ``/`` names a namespace, not a concept (see
-``app.data.is_container_label``). Bundles trained before that guard existed carry one as an
+``app.label_names.is_container_label``). Bundles trained before that guard existed carry one as an
 ordinary class: measured, ``…/vocabs/discipline/`` sat on 522 rows at F1 0.4096.
 
 This drops the class from the OneVsRest head. In multilabel mode ``predict_proba`` stacks
@@ -31,7 +31,7 @@ import numpy as np
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from app.data import is_container_label  # noqa: E402
+from app.label_names import is_container_label  # noqa: E402
 from app.model_io import UnsafeModelError  # noqa: E402
 from app.registry import _BACKUP_SUFFIX, Registry  # noqa: E402
 

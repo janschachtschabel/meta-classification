@@ -32,7 +32,7 @@ from skops.io import load as skops_load
 from . import __version__
 from .bundle_meta import per_label_f1
 from .classifier import ClassifierModel
-from .data import is_container_label
+from .label_names import is_container_label
 from .vectorizers import TfidfBackend
 
 logger = logging.getLogger(__name__)

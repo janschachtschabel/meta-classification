@@ -138,9 +138,17 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   (measured table). Tests: both modes produce identical OOF shapes; the flag is
   recorded in `metrics.json`.
 
-### A1 · Split `data.py` (S, 1 h)
+### A1 · Split `data.py` (S, 1 h) — **done 2026-09-09**
 - Move `_rejoin_split_names`, `_pair_names` and `label_vocabulary` to
   `app/label_names.py`; behaviour-preserving, tests move with them.
+- `is_container_label` went with them (not in the original list): it reasons about the
+  same "/" structure as `label_vocabulary`, and `model_io` + the repair script were
+  already importing it *through* `data`, pulling pandas and sklearn behind it.
+  `_pair_names` became public `pair_names` — it is now `data`'s dependency, and
+  importing an underscored name across modules is not an interface.
+- data.py: 395 → 309. Still a hair over the ~300 guideline and deliberately left there:
+  what remains (load, clean, targets, split) is one responsibility, and cutting it
+  again to satisfy a number is what the guideline warns against. 222 tests unchanged.
 - ~~`registry.py` crossed the ~300-line guideline~~ **done 2026-09-09**: the archive
   half moved to `app/model_archive.py` (pure byte functions) when the card and manifest
   pushed the file to 343 lines. Registry was back to 279 and keeps only what needs the

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Optional sidecar in the data directory: {"<label uri>": "<display name>"}. Authoritative
 # where present, because a CSV that separates both URIs and display names with the same
-# character cannot be fully repaired from itself (see data._pair_names).
+# character cannot be fully repaired from itself (see label_names.pair_names).
 # Generate with `python scripts/fetch_vocab_labels.py`.
 LABEL_NAMES_FILE = "label_names.json"
 

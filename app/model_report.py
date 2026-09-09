@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 from .bundle_meta import as_count, as_mapping, as_names, per_label_f1
-from .data import label_vocabulary
+from .label_names import label_vocabulary
 
 
 def read_documents(directory: Path) -> tuple[dict, dict]:

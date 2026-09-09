@@ -2,7 +2,7 @@
 
 ``uri_to_label`` is plain JSON inside a bundle's ``config.json`` and is used for
 presentation only: the classifier keys everything off label URIs. So a bundle whose names
-were mangled by the comma-in-display-name export defect (see ``app/data._pair_names``) can
+were mangled by the comma-in-display-name export defect (see ``app/label_names.pair_names``) can
 be corrected after the fact.
 
 Only names are touched. ``classes``, thresholds and both skops members stay byte-identical,

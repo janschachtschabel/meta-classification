@@ -1285,7 +1285,7 @@ def test_label_vocabulary_is_only_reported_when_the_classes_agree(tmp_path):
     not. Measured across the local model store, all 14 bundles had one common prefix
     — but a CSV mixing two vocabularies must report none rather than a misleading
     fragment of a URI."""
-    from app.data import label_vocabulary
+    from app.label_names import label_vocabulary
 
     assert label_vocabulary([
         "http://w3id.org/openeduhub/vocabs/discipline/380",

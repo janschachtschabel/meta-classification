@@ -21,7 +21,7 @@ import zlib
 
 from . import model_card
 from .bundle_meta import as_mapping
-from .data import label_vocabulary
+from .label_names import label_vocabulary
 from .model_io import (
     CARD_FILE,
     MANIFEST_FILE,
