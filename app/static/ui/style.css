@@ -258,15 +258,15 @@ button.linkish {
   color: var(--accent); font-weight: 600; text-decoration: underline; text-align: left;
   overflow-wrap: anywhere;
 }
-#model-detail {
+#model-detail, #dataset-detail {
   width: min(820px, calc(100vw - var(--s-4)));
   max-height: calc(100vh - var(--s-5));
   padding: var(--s-5);
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); color: var(--text);
 }
-#model-detail::backdrop { background: rgb(0 0 0 / 0.5); }
-#model-detail .detail:focus-visible { outline: none; }  /* the frame takes focus for screen readers only */
+#model-detail::backdrop, #dataset-detail::backdrop { background: rgb(0 0 0 / 0.5); }
+#model-detail .detail:focus-visible, #dataset-detail .detail:focus-visible { outline: none; }  /* the frame takes focus for screen readers only */
 .detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-4); }
 .detail-head h2 { margin: 0; overflow-wrap: anywhere; }
 /* A vocabulary URI is one long unbreakable token; without this it pushes the whole
@@ -319,3 +319,10 @@ input[type="file"] { min-height: 24px; padding: var(--s-1) 0; }
    muted bar and the "−" in the number — because colour alone is not a signal. */
 .chip-word.against { border-style: dashed; }
 .chip-word.against .chip-bar span { background: var(--muted); }
+
+/* ---- dataset analysis ---- */
+.analysis { margin-top: var(--s-4); border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.analysis h4 { margin: var(--s-4) 0 var(--s-2); font-size: 0.95rem; }
+/* The recommended threshold, marked by weight and a word in its own column — never by
+   the background alone, which says nothing to anyone who cannot see it. */
+tr.recommended { font-weight: 600; background: var(--bar-bg); }

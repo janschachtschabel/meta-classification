@@ -11,7 +11,9 @@ async function loadDatasets() {
     if (!list.length) { el.innerHTML = `<p class="muted">No datasets yet — upload a CSV above.</p>`; return; }
     el.innerHTML = `<div class="card table-wrap"><table>
       <thead><tr><th>Name</th><th class="num">Rows</th><th class="num">Size</th><th>Actions</th></tr></thead><tbody>` +
-      list.map((d) => `<tr><td>${esc(d.name)}</td><td class="num">${d.rows}</td>
+      list.map((d) => `<tr>
+        <td><button type="button" class="linkish" data-dsdetail="${esc(d.name)}">${esc(d.name)}</button></td>
+        <td class="num">${d.rows}</td>
         <td class="num">${esc(d.size_human)}</td>
         <td class="actions">
           <button class="small" data-dl="${esc(d.name)}">Download</button>
@@ -19,6 +21,8 @@ async function loadDatasets() {
           <button class="small danger" data-delds="${esc(d.name)}">Delete</button>
         </td></tr>`).join("") +
       `</tbody></table></div>`;
+    el.querySelectorAll("[data-dsdetail]").forEach((b) => b.addEventListener("click", () =>
+      showDatasetDetail(b.dataset.dsdetail)));
     el.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () =>
       Api.download(`/datasets/${encodeURIComponent(b.dataset.dl)}/export`, b.dataset.dl)
         .catch((err) => toast(err.message))));

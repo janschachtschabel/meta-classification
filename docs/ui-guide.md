@@ -102,6 +102,26 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
 Bei einem einzelnen Wort gibt es keine Wort-Zuordnung — weglassen braucht mindestens
 zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
 
+## Einen Datensatz prüfen, bevor man ihn trainiert (Datasets-Tab)
+
+Ein Klick auf den Dateinamen zeigt die Spalten und die ersten Zeilen. Darunter wählt man
+Textspalten und Label-Spalte und drückt **Analyze** — das liest jede Zeile, dauert bei
+einem großen Export also einen Moment.
+
+Was dann dasteht, sind die zwei Zahlen, die vor einem Lauf zählen:
+
+- **Wie viele Labels eine Schwelle überleben.** Alles unterhalb des gewählten
+  `min_samples_per_label` fliegt aus dem Training und kann nie vorhergesagt werden — das
+  ist eine Entscheidung, keine Nebensache. Die markierte Zeile ist der Vorschlag der
+  Größenheuristik, ein Startpunkt, keine Antwort.
+- **Was ein Lauf kostet**, je Profil. Hochgerechnet aus *einem* gemessenen Lauf
+  (156 373 Zeilen mit `auto` in 40 Minuten) und linear in der Zeilenzahl. Die Schätzung
+  kennt weder die Anzahl der Labels noch die Maschine — sie beantwortet „Kaffeepause oder
+  Nachmittag", keinen Termin.
+
+Eine Warnung erscheint, wenn Labels mit weniger als 10 Beispielen dabei sind: die werden
+schlecht abschneiden, egal wie gut der Lauf ist.
+
 ## Viele Texte auf einmal (Query-Tab)
 
 Der Query-Tab kennt drei Modi — die Auswahl steht oben im Formular:

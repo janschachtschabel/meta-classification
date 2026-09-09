@@ -4,6 +4,19 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — a dataset inspector in the Datasets tab
+
+- Clicking a dataset name shows its columns and first rows, and offers **Analyze**:
+  how many labels survive each threshold, what a run costs per profile, and a warning
+  when labels with fewer than ten examples are in the set.
+- The recommended threshold is marked three ways — bold, a background, and the word
+  "recommended" in its own column — never by colour alone.
+- The cost table says "under a minute" where the model rounds to 0.0: at 36 rows a model
+  anchored at 156 373 has nothing precise to say, and "0.0 min" would imply it does.
+- Analysis runs on demand, not on open: it parses every row, which is a 195 MB job on a
+  real export.
+
+
 ### Added — analyze says what a run will cost, before you start it
 
 - `POST /datasets/analyze` now answers with `recommended_min_samples_per_label` and
