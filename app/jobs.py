@@ -220,6 +220,15 @@ class JobRunner:
         while True:
             with self._lock:
                 if not self._queue:
+                    # No successor — and this thread is about to exit while still
+                    # reporting alive, which `_busy_locked` reads as busy. A submit
+                    # landing in that gap would queue behind a dispatcher that has
+                    # already left and never run. Retire from the busy check here, under
+                    # the SAME lock submit() takes, so such a submit sees an idle runner
+                    # and starts the run itself. Guarded on identity so a newer thread's
+                    # registration is never clobbered.
+                    if self._thread is threading.current_thread():
+                        self._thread = None
                     return
                 target, args, model_name, request, kind = self._queue.popleft()
             try:

@@ -92,6 +92,11 @@ async def predict_csv(
     leaves as it is produced. Size limit and rate limit as for the other uploads.
     **Auth:** readonly.
     """
+    if len(separator) != 1:
+        # pandas treats a multi-char sep as a regex (python engine) -> ReDoS, and this
+        # route is reachable with a readonly key on a single worker. Same guard, same
+        # reason as GET /datasets/{name}.
+        raise HTTPException(400, "separator must be a single character.")
     model = await asyncio.to_thread(load_model, model_name)
     columns, weights = _text_columns_for(model_name, text_columns)
 

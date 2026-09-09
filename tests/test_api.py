@@ -1220,6 +1220,33 @@ def test_a_whole_csv_can_be_classified_in_one_call(trained_model):
     assert 0.0 <= float(rows[1][3]) <= 1.0
 
 
+def test_classifying_a_csv_refuses_a_multi_character_separator(trained_model):
+    """pandas treats a multi-character `sep` as a REGEX and falls back to its python
+    engine, so the separator becomes attacker-supplied pattern code running over the
+    whole file. `/datasets/{name}` already refuses this for exactly that reason; this
+    route dropped the guard — and it is reachable with a readonly key, on a
+    single-worker server, where one upload can pin the CPU for hours.
+    """
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    refused = client.post("/predict/csv", files=files, headers=RO,
+                          data={"model_name": "api_model", "separator": "(a+)+$"})
+    assert refused.status_code == 400, refused.text
+    assert "single character" in refused.text
+
+
+def test_evaluating_refuses_a_dataset_name_that_escapes_the_data_directory(trained_model):
+    """`/train` runs safe_name on the dataset name; this route did not, so the name went
+    straight into a path join. An admin key could make the server read any parseable file
+    on the box — and its column headers came back in the error and were written into the
+    job history."""
+    escaping = client.post("/models/api_model/evaluate", headers=ADMIN,
+                           json={**EVAL_BODY, "dataset_name": "../secrets.csv"})
+    assert escaping.status_code == 400, escaping.text
+    absolute = client.post("/models/api_model/evaluate", headers=ADMIN,
+                           json={**EVAL_BODY, "dataset_name": "C:/Windows/win.ini"})
+    assert absolute.status_code == 400, absolute.text
+
+
 def test_classifying_a_csv_refuses_a_file_without_the_trained_columns(trained_model):
     """A streaming response cannot report a failure — the status line is already 200 —
     so the header is checked while a 400 is still possible."""

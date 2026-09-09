@@ -299,6 +299,10 @@ async def evaluate_model(
     in `/train/history` with `kind: "evaluation"`. **Auth:** admin.
     """
     safe_name(model_name, "model name")
+    # The name is joined onto data_dir below; without this it escapes the directory and
+    # the server reads whatever it is pointed at. /train guards its dataset name the
+    # same way — this route was the one that did not.
+    safe_name(body.dataset_name, "dataset name")
     registry = get_registry()
     if not registry.exists(model_name):
         raise HTTPException(404, f"Model '{model_name}' not found.")

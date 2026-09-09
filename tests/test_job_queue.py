@@ -124,3 +124,42 @@ def test_a_name_that_is_already_running_or_queued_is_refused():
     with pytest.raises(RuntimeError, match="already"):
         job.submit(lambda **_: None, model_name="other")
     release.set()
+
+
+def test_a_run_accepted_while_the_last_thread_winds_down_still_runs():
+    """The window an independent review found, reproduced here.
+
+    `_dispatch_next` is the finishing thread's last act. When it finds the queue empty it
+    returns — but the thread object stays alive for a moment afterwards, and
+    `_busy_locked` calls that busy. A submit landing in exactly that gap is QUEUED behind
+    a dispatcher that has already left: accepted with a position, shown in the status,
+    and never run.
+
+    The pause below sits at the precise existing state (after the real dispatch has
+    returned) and changes no logic — it only holds the window open long enough to submit
+    into it.
+    """
+    at_the_gap, may_exit = threading.Event(), threading.Event()
+
+    class PausingRunner(JobRunner):
+        def _dispatch_next(self):
+            super()._dispatch_next()
+            at_the_gap.set()
+            may_exit.wait(5)
+
+    job = PausingRunner()
+    done: list[str] = []
+    job.submit(_finished_target(done, "first"), model_name="first")
+    assert at_the_gap.wait(5), "the finishing thread reached the gap"
+
+    position = job.submit(_finished_target(done, "second"), model_name="second")
+    may_exit.set()
+
+    for _ in range(500):
+        if "second" in done:
+            break
+        threading.Event().wait(0.01)
+    assert done == ["first", "second"], (
+        f"a run accepted at position {position} must still run, not strand in the queue"
+    )
+    assert job.snapshot()["queued"] == []
