@@ -426,3 +426,31 @@ def test_tune_threshold_columns_without_per_label_repeats_the_global():
     global_t, columns = tuning.tune_threshold_columns(y, proba, per_label=False)
     assert np.all(columns == global_t)
     assert tuning.tune_thresholds(y, proba, ["a", "b"], per_label=False) == (global_t, {})
+
+
+def test_a_profile_can_pick_c_on_tuned_thresholds_and_defaults_not_to(tmp_path):
+    """C1's on-switch. Off for every shipped profile until the benchmark's gate is
+    met, so the mechanism can be measured without changing what anyone trains today.
+
+    The yaml half is not decoration: every shipped profile omits the key, so a
+    forgotten line in the parser would still read back the code default and let an
+    assertion about the defaults pass while `config.yaml` was silently ignored.
+    """
+    from app.profiles import Profile, load_training_config
+    from app.settings import get_settings
+
+    assert Profile("x").select_c_on_tuned_thresholds is False
+    for profile in load_training_config(get_settings().config_file).profiles.values():
+        assert profile.select_c_on_tuned_thresholds is False, (
+            "no shipped profile picks C on tuned thresholds yet"
+        )
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "profiles:\n"
+        "  tuned:\n"
+        "    C_grid: [1.0]\n"
+        "    select_c_on_tuned_thresholds: true\n",
+        encoding="utf-8",
+    )
+    assert load_training_config(config_file).get("tuned").select_c_on_tuned_thresholds is True

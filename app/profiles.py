@@ -81,6 +81,18 @@ class Profile:
     # vectorization passes, scoring, the threshold search. Kept as a knob because the
     # ratio changes with row count and fold count, and re-measuring is one flag away.
     selection_tol: float | None = None
+    # Score every C candidate under thresholds tuned for THAT candidate, instead of
+    # under a flat 0.5 cut, so the pair (C, thresholds) is chosen together. Today a
+    # candidate that would win with its own cuts can be eliminated before it is ever
+    # tried, and only the winner's thresholds are tuned. Costs no extra model fits: in
+    # CV mode every candidate's out-of-fold probabilities are already in memory.
+    # Multilabel only — binary/multiclass serving is argmax and reads no threshold.
+    # ⚪ UNMEASURED, hence off: plan item C1 keeps it behind this flag until
+    # benchmark_selection_rule.py shows macro F1 up by >= 0.002 AND
+    # `predicted_labels_per_row` no more than 10% above the baseline. A threshold rule
+    # can always buy macro F1 by asserting more labels per row, which is a different
+    # product rather than a better model.
+    select_c_on_tuned_thresholds: bool = False
 
 
 @dataclass
@@ -147,6 +159,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             cv_folds=raw.get("cv_folds"),
             refit_vectorizer_per_fold=raw.get("refit_vectorizer_per_fold", True),
             selection_tol=raw.get("selection_tol"),
+            select_c_on_tuned_thresholds=raw.get("select_c_on_tuned_thresholds", False),
         )
     if not profiles:
         profiles = dict(_DEFAULTS)
