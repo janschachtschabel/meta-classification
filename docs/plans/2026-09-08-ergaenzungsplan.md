@@ -302,7 +302,7 @@ Every item ships as a benchmark script first; adoption needs the stated gate.
 | B5 | **Per-label calibration** (isotonic on OOF probabilities) so `confidence` reads as a probability; `class_weight="balanced"` inflates positives today | Better `confidence`/`baseline_diff` semantics for the UI; decisions unchanged | Brier/ECE improve; F1 unchanged | S–M, 1–2 days |
 | B2 ✅ **2026-09-09** (merge tool excepted — it belongs to the data-prep app, not here) | **Feedback loop**: `POST /feedback` (text, model, predicted, corrected, source) → JSONL; `GET /feedback/export` → training-compatible CSV; UI "correct this" on results; ~~merge tool into the dataset workflow~~ | The recognition rate improves with use instead of only with re-exports | Manual: a 200-row correction set retrains to a higher F1 on a fixed holdout | M, 3 days |
 | B6 | **Label hierarchy**: persist SKOS `broader` in `label_names.json` (fetch script) and in the bundle; `/predict` can return the broader concept, UI groups by parent | Fewer "wrong sibling" errors visible to editors; hierarchy-consistent output | Owner review on 50 predictions | M, 2–3 days |
-| D6 **approved 2026-09-09** (owner: "englisch und deutsch umschaltbar mit i18n support") | **DE/EN UI** via a JSON string map, toggle in the top bar; language resolved as stored choice → browser preference → German; `docs/ui-guide.md` stays the German manual | The audience reads German | Every string in the map; no hardcoded text (grep test) | M, 2 days |
+| ✅ D6 **done 2026-09-09** | **DE/EN UI**: `strings-de.js` / `strings-en.js` (strict JSON in a one-line assignment, loaded as scripts), toggle in the top bar and on the login bar, language resolved as stored choice → browser preference → German; `docs/ui-guide.md` relabelled to the German UI | The audience reads German | ✅ 330 keys, both maps identical; `tests/test_ui_i18n.py` fails on a missing key, an orphan key, prose left in `index.html`, or a sentence-shaped literal in a UI module | M, done |
 | B7 | Train school subjects on the combined 426 k export with `best` (~1.7 h) and evaluate against `faecher_300k_auto` via B1 | Data is the biggest lever left | B1 comparison on the same holdout | S (compute) |
 
 **Owner decisions, 2026-09-09.** Training: **short benchmark runs allowed** (≈30 k rows,
@@ -319,8 +319,9 @@ Effort: ~15 person-days spread over the period; each item independent.
 - **Multi-worker / external queue / database:** the single-worker design is a feature
   (one PVC, no shared state); the Phase-2 queue stays in-process and persisted to disk.
 - **CV10 anywhere:** measured knee at 5 folds; stays request-only.
-- **A JS framework or build step:** the vanilla UI is 1,240 lines and CSP-clean apart
-  from F1; splitting into per-tab files keeps it that way.
+- **A JS framework or build step:** the vanilla UI is ~1,650 lines of code plus ~660
+  lines of string map, CSP-clean apart from F1; splitting into per-tab files keeps it
+  that way. D6 added i18n without one — two script tags and a `t()`, no bundler.
 
 ## Verification plan (applies to every phase)
 

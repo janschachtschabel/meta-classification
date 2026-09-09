@@ -4,8 +4,10 @@
 > developer documentation stays in English.*
 
 Die Oberfläche erreichst du im Browser unter **`http://<server>:8000/ui/`**.
-Jeder Bereich hat dort zusätzlich eine aufklappbare Hilfe („What do the results
-mean?" usw.) — dieser Leitfaden erklärt alles im Zusammenhang.
+Sie spricht Deutsch und Englisch; oben rechts steht ein Umschalter, und die Wahl
+bleibt für den nächsten Besuch gespeichert. Dieser Leitfaden nennt die **deutschen**
+Beschriftungen. Jeder Bereich hat zusätzlich eine aufklappbare Hilfe („Was bedeuten
+die Ergebnisse?" usw.) — dieser Leitfaden erklärt alles im Zusammenhang.
 
 ## Anmeldung
 
@@ -16,10 +18,10 @@ Du bekommst vom Admin einen **API-Schlüssel** (eine Art Passwort). Es gibt zwei
 | **Readonly** | Texte klassifizieren, Status ansehen, Listen ansehen |
 | **Admin** | zusätzlich: trainieren, hochladen, löschen, exportieren |
 
-Den Schlüssel einmal oben eintippen → **Sign in**. Er gilt nur in diesem
+Den Schlüssel einmal oben eintippen → **Anmelden**. Er gilt nur in diesem
 Browser-Tab und ist nach dem Schließen wieder weg (bewusst, aus Sicherheitsgründen).
 Läuft der Server ohne Anmeldepflicht (lokaler Betrieb), erscheint statt der
-Anmeldung direkt die Oberfläche mit dem Hinweis „auth disabled".
+Anmeldung direkt die Oberfläche mit dem Hinweis „Auth deaktiviert".
 
 ## Der Grundgedanke in einem Satz
 
@@ -29,7 +31,7 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
 
 ## Schritt für Schritt: das erste Modell
 
-1. **Datasets** → CSV-Datei hochladen. Eine Zeile pro Material; Textspalten
+1. **Datensätze** → CSV-Datei hochladen. Eine Zeile pro Material; Textspalten
    (Titel, Beschreibung, …) und mindestens eine Spalte mit den richtigen Labels
    (mehrere Labels in einer Zelle durch Komma getrennt).
 2. **Training** → Dataset auswählen → bei *Text columns* die Spalten antippen,
@@ -53,15 +55,15 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
      das ausgelieferte Modell wird auf **100 %** der Daten trainiert, und
      bewertet wird über alle Zeilen statt über eine Stichprobe. Kostet ein
      Mehrfaches an Rechenzeit; mehr Folds = die Prüfungsmodelle sehen mehr Daten.
-5. **Start training** → der Fortschrittsbalken (auch oben als kleine Anzeige auf
+5. **Training starten** → der Fortschrittsbalken (auch oben als kleine Anzeige auf
    jedem Tab sichtbar) zeigt Phase, Prozent und Restzeit. Ein Training auf
    ~30.000 Zeilen dauert je nach Einstellung wenige Minuten bis ~1 Stunde; der
    Server bleibt dabei bedienbar (das Training nimmt sich höchstens ~60 % der
    Rechenleistung). **Stop training** bricht sauber ab.
 
-## Ergebnisse lesen (Query-Tab)
+## Ergebnisse lesen (Reiter „Abfrage")
 
-Text eingeben, Modell(e) anhaken, **Classify**.
+Text eingeben, Modell(e) anhaken, **Klassifizieren**.
 
 - **Confidence (Balken + Zahl 0–1):** Wie sicher das Modell ist, dass das Label
   passt. Die Werte der Labels sind unabhängig voneinander — sie müssen sich
@@ -84,9 +86,9 @@ Text eingeben, Modell(e) anhaken, **Classify**.
   dauern (das Modell wird von der Festplatte geladen) — danach kommen Antworten
   in Millisekunden.
 
-## „Correct" — eine falsche Antwort korrigieren
+## „Korrigieren" — eine falsche Antwort richtigstellen
 
-Neben **Warum?** steht **Correct**. Damit hält man fest, was das Modell hätte sagen
+Neben **Warum?** steht **Korrigieren**. Damit hält man fest, was das Modell hätte sagen
 sollen: die Liste zeigt alle Labels des Modells, Mehrfachauswahl per Strg-Klick.
 
 - **Nichts auswählen** heißt „keines davon passt". Das wird ebenfalls gespeichert,
@@ -118,16 +120,16 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
 Bei einem einzelnen Wort gibt es keine Wort-Zuordnung — weglassen braucht mindestens
 zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
 
-## Zwei Modelle vergleichen (Models-Tab)
+## Zwei Modelle vergleichen (Reiter „Modelle")
 
-Im Modell-Detail steht **Evaluate on…**: Datensatz und Spalten wählen, starten. Der Lauf
+Im Modell-Detail steht **Bewerten gegen…**: Datensatz und Spalten wählen, starten. Der Lauf
 geht als Hintergrundjob an den Server — hinter ein laufendes Training, sichtbar auf dem
-Training-Tab. Das Ergebnis landet **neben** den Trainingsmetriken im Bundle, nie darüber.
+Reiter „Training". Das Ergebnis landet **neben** den Trainingsmetriken im Bundle, nie darüber.
 
-In der Tabelle darüber steht dann pro Lauf: Datensatz, gewertete Zeilen, **Labels hit**,
+In der Tabelle darüber steht dann pro Lauf: Datensatz, gewertete Zeilen, **Getroffene Labels**,
 F1 macro und micro.
 
-- **Labels hit** ist entscheidend fürs Lesen: F1 macro mittelt über *alle* Labels des
+- **Getroffene Labels** ist entscheidend fürs Lesen: F1 Makro mittelt über *alle* Labels des
   Modells. Ein Datensatz, der 4 von 59 Labels berührt, drückt den Wert aus Gründen, die
   mit der Qualität nichts zu tun haben — gemessen: macro 0,068 neben micro 0,941.
   **Vergleiche also nur denselben Datensatz auf zwei Modellen**, nie zwei Datensätze.
@@ -150,9 +152,9 @@ enden", nicht „spring zum nächsten".
 Unter *Training* → **history** steht danach, was jeder Lauf ergeben hat — auch die
 gescheiterten, die kein Modell hinterlassen und deren Grund es sonst nirgends mehr gäbe.
 
-## Vor dem Start prüfen (Training-Tab)
+## Vor dem Start prüfen (Reiter „Training")
 
-Unter den Trainingseinstellungen steht **Check before training**. Der Knopf liest den
+Unter den Trainingseinstellungen steht **Vor dem Training prüfen**. Der Knopf liest den
 Datensatz einmal durch und beantwortet die zwei Fragen, die man sonst erst nach dem Lauf
 beantwortet bekommt:
 
@@ -165,10 +167,10 @@ beantwortet bekommt:
 Geprüft wird gegen das **erste** ausgewählte Label-Feld; bei mehreren können sich die
 Zahlen unterscheiden.
 
-## Einen Datensatz prüfen, bevor man ihn trainiert (Datasets-Tab)
+## Einen Datensatz prüfen, bevor man ihn trainiert (Reiter „Datensätze")
 
 Ein Klick auf den Dateinamen zeigt die Spalten und die ersten Zeilen. Darunter wählt man
-Textspalten und Label-Spalte und drückt **Analyze** — das liest jede Zeile, dauert bei
+Textspalten und Label-Spalte und drückt **Analysieren** — das liest jede Zeile, dauert bei
 einem großen Export also einen Moment.
 
 Was dann dasteht, sind die zwei Zahlen, die vor einem Lauf zählen:
@@ -185,9 +187,9 @@ Was dann dasteht, sind die zwei Zahlen, die vor einem Lauf zählen:
 Eine Warnung erscheint, wenn Labels mit weniger als 10 Beispielen dabei sind: die werden
 schlecht abschneiden, egal wie gut der Lauf ist.
 
-## Viele Texte auf einmal (Query-Tab)
+## Viele Texte auf einmal (Reiter „Abfrage")
 
-Der Query-Tab kennt drei Modi — die Auswahl steht oben im Formular:
+Der Reiter kennt drei Modi — die Auswahl steht oben im Formular:
 
 - **Ein Text:** wie bisher, mit Balken, `diff` und Label-F1.
 - **Viele Texte:** ein Text pro Zeile. Läuft in Paketen, zeigt eine Tabelle und lässt
@@ -207,7 +209,7 @@ abgelehnt" gehört zur Antwort dazu.
 Ab ~5000 Zeilen verweist der Textmodus auf die CSV-Variante — die streamt, statt jede
 Antwort im Browser zu sammeln.
 
-## Qualität verstehen (Models-Tab)
+## Qualität verstehen (Reiter „Modelle")
 
 - **F1 (0–1):** Wie gut die Antworten des Modells bei einer ehrlichen Prüfung
   mit ungesehenen Daten waren. 1,0 wäre perfekt; **~0,8 ist in der Praxis sehr
@@ -232,13 +234,13 @@ Antwort im Browser zu sammeln.
 
 ## Teilen & Verschieben
 
-- **Share link** (bei Modellen und Datasets): erzeugt einen Download-Link, der
+- **Freigabelink** (bei Modellen und Datensätzen): erzeugt einen Download-Link, der
   **ohne Schlüssel** funktioniert und nach 24 Stunden erlischt — gut, um jemandem
   etwas zu geben, der keinen Zugang hat. Der Link ist wie ein Schlüssel zu
   behandeln: wer ihn hat, kann herunterladen.
-- **Download / Import:** Ein Modell wandert als ZIP-Datei zwischen Servern:
-  auf Server A herunterladen (oder Share-Link), auf Server B über *Import model*
-  hochladen. Ein direkter „Import per Link" ist **absichtlich** nicht möglich
+- **Herunterladen / Importieren:** Ein Modell wandert als ZIP-Datei zwischen
+  Servern: auf Server A herunterladen (oder Freigabelink), auf Server B über
+  *Modell importieren* hochladen. Ein direkter „Import per Link" ist **absichtlich** nicht möglich
   (Sicherheitsentscheidung — der Server ruft nie selbst fremde Adressen ab).
 
 ## Häufige Fragen

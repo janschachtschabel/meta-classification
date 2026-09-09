@@ -4,6 +4,29 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — the admin UI speaks German and English (plan item D6)
+
+- **The audience reads German; the interface was entirely English.** A toggle in the top
+  bar (and on the login bar, which is the screen someone without a key never gets past)
+  switches between the two. The language is resolved as **stored choice → browser
+  preference → German**, and the choice survives the tab.
+- Every string moved out of the markup and the code into `app/static/ui/strings-de.js` /
+  `strings-en.js`. Those files are strict JSON inside a one-line assignment: the browser
+  loads them with a `<script>` tag (no fetch, no async boot, no half-translated first
+  paint) and `tests/test_ui_i18n.py` reads them as data.
+- **All of it or none of it**, enforced rather than claimed: the suite fails if the two
+  maps disagree on a key, if markup or code asks for a key nobody defined, if the map
+  grows an entry nothing uses, or if prose is left hardcoded in `index.html` or in a UI
+  module. `index.html` now carries structure only — a string exists in exactly one place.
+- Plurals go through `Intl.PluralRules` (`1 Korrektur` / `5 Korrekturen`, not `1 texts`),
+  and numbers and dates through `Intl` with the **UI's** locale rather than the browser's,
+  so a German UI reads `156.373` where an English one reads `156,373`.
+- Known limits: the training **phase** text and the profile descriptions come from the
+  server (free-form prose and `config.yaml`) and are shown as they arrive; output already
+  rendered keeps the language it was rendered in until the next load, which is deliberate
+  — switching language must not throw away a half-filled form or a result table.
+
+
 ### Added — a profile can share one vectorization across CV folds (measured, off by default)
 
 - Cross-validation refits the vectorizer per fold so no fold's test rows shape its
