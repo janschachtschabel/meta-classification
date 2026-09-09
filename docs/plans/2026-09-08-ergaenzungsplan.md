@@ -109,14 +109,22 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
 - Files: `app/tuning.py` (support), `app/routes/models.py`. Test: sorted, complete,
   `support` equals the column sums of the fixture.
 
-### D1 · Model detail view in the UI (M, 2 days)
+### D1 · Model detail view in the UI (M, 2 days) — **done 2026-09-09**
 - Click a model row → panel: metadata (dataset, text columns + weights, profile, C +
   grid with an "edge pick" hint, folds, rows, duration, created), the label table from
   B8 (sortable, weakest first, threshold shown), actions (download, share, delete,
   copy-curl). Format-1 rows show the retrain hint (0.3).
-- Files: `app/static/ui/manage.js` → split into `models.js` + `datasets.js` (both
-  < 200 lines), `index.html`, `style.css`. Acceptance: keyboard-operable panel
-  (focus in/out), no CSP errors, works at 360 px.
+- Files: `app/static/ui/manage.js` → split into `share.js` (75), `models.js` (145),
+  `datasets.js` (51) and `model-detail.js` (185), `index.html`, `style.css`. Four
+  files, not the two planned: share links are used by BOTH tabs, and the detail view
+  is a second view, not more of the list.
+- Deviation: the trigger is the model NAME, not the row. A `<tr>` is not focusable
+  and would fight the action buttons it contains; a button in the name cell is
+  reachable by keyboard and does not.
+- Verified in the running UI: focus trap proven (focusing an element outside the
+  modal is refused), tab order Close → 4 sort headers → 5 actions, sorting keeps
+  unscored labels last in both directions, 360 px without horizontal scrolling,
+  every target ≥ 24×24, dark mode via the tokens, no console/CSP errors.
 
 ### P1 · Shared-vectorizer cross-validation (S–M, 1 day incl. benchmark)
 - `cross_val_evaluate` accepts a prefitted matrix: `fit_transform` once over all rows,

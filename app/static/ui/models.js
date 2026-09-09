@@ -88,7 +88,7 @@ async function loadModels() {
       <thead><tr><th>Name</th><th>Task</th><th class="num">Labels</th><th class="num">F1 macro</th>
       <th class="num">F1 micro</th><th>Evaluation</th><th>Actions</th></tr></thead><tbody>` +
       infos.map((m) => `<tr${isServable(m) ? "" : ' class="stale"'}>
-        <td>${esc(m.name)}${isServable(m) ? "" :
+        <td><button type="button" class="linkish" data-detail="${esc(m.name)}">${esc(m.name)}</button>${isServable(m) ? "" :
           ` <span class="badge-stale">needs retraining</span>`}</td><td>${esc(m.task_type)}</td>
         <td class="num">${esc(m.metadata.n_labels ?? "–")}</td>
         <td class="num">${esc(fmtScore(m.metadata.metrics && m.metadata.metrics.f1_macro))}</td>
@@ -104,6 +104,8 @@ async function loadModels() {
     el.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () =>
       Api.download(`/models/${encodeURIComponent(b.dataset.export)}/export`, `${b.dataset.export}.zip`)
         .catch((err) => toast(err.message))));
+    el.querySelectorAll("[data-detail]").forEach((b) => b.addEventListener("click", () =>
+      showModelDetail(b.dataset.detail)));
     el.querySelectorAll("[data-info]").forEach((b) => b.addEventListener("click", () =>
       editModelInfo(b.dataset.info)));
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>

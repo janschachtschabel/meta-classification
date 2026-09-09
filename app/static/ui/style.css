@@ -248,3 +248,39 @@ button.chip {
   .pred { flex-wrap: wrap; }
   .pred .name { flex-basis: 100%; }
 }
+
+/* ---- model detail dialog ---- */
+/* The name in the model table is the way into the details: a button, because a
+   clickable <tr> is not focusable and would fight the action buttons inside it. */
+button.linkish {
+  background: none; border: none; margin: 0; min-height: 0;
+  padding: var(--s-1) 0;  /* the row's primary target: keep it >= 24px tall (WCAG 2.5.8) */
+  color: var(--accent); font-weight: 600; text-decoration: underline; text-align: left;
+  overflow-wrap: anywhere;
+}
+#model-detail {
+  width: min(820px, calc(100vw - var(--s-4)));
+  max-height: calc(100vh - var(--s-5));
+  padding: var(--s-5);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+}
+#model-detail::backdrop { background: rgb(0 0 0 / 0.5); }
+#model-detail .detail:focus-visible { outline: none; }  /* the frame takes focus for screen readers only */
+.detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-4); }
+.detail-head h2 { margin: 0; overflow-wrap: anywhere; }
+/* A vocabulary URI is one long unbreakable token; without this it pushes the whole
+   dialog sideways at 360px instead of wrapping. */
+.detail code, .detail p { overflow-wrap: anywhere; }
+.detail h3 { margin-top: var(--s-5); }
+.detail #detail-labels { max-height: 40vh; overflow-y: auto; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-5); }
+/* A sortable header is a button; it must still look like a header. */
+th button.th-sort {
+  background: none; border: none; margin: 0;
+  /* >= 24x24 (WCAG 2.5.8): "F1" is only three characters wide as bare text. */
+  display: inline-block; min-height: 24px; min-width: 24px; padding: var(--s-1) 0;
+  color: inherit; font: inherit; font-weight: 600; text-align: inherit;
+}
+th[aria-sort="ascending"] button.th-sort::after  { content: " ▲"; }
+th[aria-sort="descending"] button.th-sort::after { content: " ▼"; }

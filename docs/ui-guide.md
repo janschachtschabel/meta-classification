@@ -94,6 +94,18 @@ Text eingeben, Modell(e) anhaken, **Classify**.
   Wert, deshalb ist macro fast immer niedriger. Ein großer Abstand zwischen
   beiden heißt: bei seltenen Labels ist das Modell schwächer.
 - **Evaluation** zeigt, wie gemessen wurde (Split oder Cross-Validation).
+- **Klick auf den Modellnamen** öffnet die Detailansicht: worauf trainiert wurde
+  (Datensatz, Textspalten samt Gewichtung, Profil, Zeilen, Regularisierung C und
+  das durchsuchte Gitter, Dauer, Datum) und **jedes Label einzeln** — F1,
+  Zeilenzahl und die Schwelle, die beim Antworten wirklich angewendet wird.
+  Sortierbar; standardmäßig **schwächstes Label zuerst**, denn das ist die Stelle,
+  an der eine Antwort einen zweiten Blick verdient.
+  - Steht bei **C** der Hinweis *"the winner sits at the edge of the grid"*, lag
+    der beste Wert am Rand des durchsuchten Bereichs — ein besserer könnte
+    außerhalb liegen. Abhilfe ist ein breiteres Gitter, nicht mehr Folds.
+  - **Zeilen** bleibt bei Modellen leer, die trainiert wurden, bevor diese Zahl
+    aufgezeichnet wurde. **„argmax"** in der Schwellen-Spalte heißt: das Modell
+    nimmt sein bestes Label und liest gar keine Schwelle.
 
 ## Teilen & Verschieben
 

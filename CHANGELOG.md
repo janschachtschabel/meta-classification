@@ -4,6 +4,22 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — model detail view
+
+- Clicking a model's name opens a panel with everything the bundle records about
+  itself: dataset, text columns with their weights, profile, rows, the searched `C`
+  grid, evaluation, duration, created — and **every label with its F1, its row count
+  and the threshold serving actually applies**, sortable, weakest first.
+- When the winning `C` sits at either end of the searched grid, the panel says so:
+  the optimum may lie outside it, and the fix is a wider grid, not more folds. The
+  first real model checked showed exactly that (`32.0` out of `[2.0, 8.0, 32.0]`).
+- A native `<dialog>`: the focus trap, Esc, and returning focus to the row are the
+  platform's, not hand-written. Verified at 360 px with no horizontal scrolling and
+  every target ≥ 24×24.
+- `manage.js` split into `share.js` (used by both tabs), `models.js`, `datasets.js`
+  and `model-detail.js`.
+
+
 ### Fixed — smaller things found while measuring the above
 
 - **Export packs an allowlist**, not "everything except two names". `update_info`
