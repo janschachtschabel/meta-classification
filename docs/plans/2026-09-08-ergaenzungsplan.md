@@ -143,11 +143,10 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   (default decided by the benchmark). `scripts/benchmark_shared_vectorizer.py` reports
   macro/micro F1 and wall-clock for both modes on `data_30k_ai.csv` and the
   university target.
-- **Blocked, not skipped:** the gate IS a benchmark, i.e. several full training passes
-  on `data_30k_ai.csv` and the university target. The owner asked on 2026-09-09 to hold
-  off on training because it loads the machine too heavily, so this is the one Phase-1
-  item left open. Everything else in Phase 1 is done. Nothing depends on it: the flag
-  would only change a default, and the default today is the measured-safe one
+- **Unblocked 2026-09-09 (short runs):** the owner allows benchmark runs on
+  `data_30k_ai.csv` (minutes per pass). The large 156 k / 426 k runs stay off the table,
+  which is fine — P1's gate measures on 25–30 k rows by design. Nothing else depends on
+  it: the flag only changes a default, and today's default is the measured-safe one
   (refit per fold).
 - **Gate:** adopt as default only if |Δ macro F1| < 0.002 on both; expected saving
   ≈ 17 % (`auto`) / 20 % (`best`) at 156 k rows (README: 2.3 min per pass).
@@ -290,8 +289,12 @@ Every item ships as a benchmark script first; adoption needs the stated gate.
 | B5 | **Per-label calibration** (isotonic on OOF probabilities) so `confidence` reads as a probability; `class_weight="balanced"` inflates positives today | Better `confidence`/`baseline_diff` semantics for the UI; decisions unchanged | Brier/ECE improve; F1 unchanged | S–M, 1–2 days |
 | B2 ✅ **2026-09-09** (merge tool excepted — it belongs to the data-prep app, not here) | **Feedback loop**: `POST /feedback` (text, model, predicted, corrected, source) → JSONL; `GET /feedback/export` → training-compatible CSV; UI "correct this" on results; ~~merge tool into the dataset workflow~~ | The recognition rate improves with use instead of only with re-exports | Manual: a 200-row correction set retrains to a higher F1 on a fixed holdout | M, 3 days |
 | B6 | **Label hierarchy**: persist SKOS `broader` in `label_names.json` (fetch script) and in the bundle; `/predict` can return the broader concept, UI groups by parent | Fewer "wrong sibling" errors visible to editors; hierarchy-consistent output | Owner review on 50 predictions | M, 2–3 days |
-| D6 | **DE/EN UI** via a JSON string map, German default, toggle in the top bar; `docs/ui-guide.md` stays the German manual | The audience reads German | Every string in the map; no hardcoded text (grep test) | M, 2 days |
+| D6 **approved 2026-09-09** (owner: "englisch und deutsch umschaltbar mit i18n support") | **DE/EN UI** via a JSON string map, toggle in the top bar; language resolved as stored choice → browser preference → German; `docs/ui-guide.md` stays the German manual | The audience reads German | Every string in the map; no hardcoded text (grep test) | M, 2 days |
 | B7 | Train school subjects on the combined 426 k export with `best` (~1.7 h) and evaluate against `faecher_300k_auto` via B1 | Data is the biggest lever left | B1 comparison on the same holdout | S (compute) |
+
+**Owner decisions, 2026-09-09.** Training: **short benchmark runs allowed** (≈30 k rows,
+minutes each) — this unblocks P1, A2, A3, B3, B4 and B5. Still held: **B7** (426 k, ~1.7 h)
+and the retrain of `bildungsstufe_ai_cv5`. **D6 approved**, both languages switchable.
 
 Effort: ~15 person-days spread over the period; each item independent.
 
