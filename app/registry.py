@@ -209,19 +209,45 @@ class Registry:
 
         An empty mapping removes the block. Returns what is now stored.
         """
+        def edit(metadata: dict) -> None:
+            if info:
+                metadata["info"] = info
+            else:
+                metadata.pop("info", None)
+
+        self._edit_metadata(name, edit)
+        return info
+
+    def append_evaluation(self, name: str, record: dict) -> None:
+        """Add one evaluation result to the bundle, beside its training metrics.
+
+        Beside, never over: the training metrics describe the run that produced the
+        model and are the bundle's own account of itself. Appended rather than replaced
+        because a model is scored on several datasets over its life, and keeping only
+        the newest would throw away exactly the comparison this exists for.
+        """
+        def edit(metadata: dict) -> None:
+            metadata.setdefault("evaluations", []).append(record)
+
+        self._edit_metadata(name, edit)
+
+    def _edit_metadata(self, name: str, edit: Callable[[dict], None]) -> None:
+        """Read metrics.json, apply ``edit`` to it, write it back atomically.
+
+        Tmp file plus rename under the disk lock, the same discipline the bundle publish
+        and the share store use: a crash mid-write cannot leave a metrics.json that no
+        longer parses. Shared by every editor of that document so there is one place
+        where that guarantee lives.
+        """
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
             path = self._path(name) / "metrics.json"
             metadata = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            if info:
-                metadata["info"] = info
-            else:
-                metadata.pop("info", None)
+            edit(metadata)
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(tmp, path)
-        return info
 
     def delete(self, name: str) -> None:
         # Pop the cache INSIDE the disk-lock section, AFTER the rmtree: popping

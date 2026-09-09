@@ -4,6 +4,27 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — evaluate an existing model on a dataset (`POST /models/{name}/evaluate`)
+
+- "Model B beats model A" is only a statement if both were measured on the same rows.
+  Until now that meant a script driving a running server (`scripts/eval_holdout.py`),
+  which nothing recorded and nobody could repeat. The result is now **appended to the
+  bundle's `evaluations`** — beside the training metrics, never over them.
+- Truth is binarized over the **model's own classes**, not the dataset's: the two are
+  different widths, and lining up column 0 of one with column 0 of the other measures
+  nothing. Labels the model never learned are reported; rows carrying only such labels
+  are excluded and counted, because scoring them as failures blames the model for a
+  label it was never given and dropping them silently flatters it.
+- 🟢 `labels_covered` came out of the live check: `faecher_300k_auto` on an 8-row probe
+  scored **f1_macro 0.068 beside f1_micro 0.941**. Both correct — macro averages over
+  all 59 classes and 55 had no examples. The coverage number turns that headline from
+  "this model is terrible" into "this data exercises 4 of its labels".
+- When nothing comparable is left, `metrics` is `null` rather than 0.0: an F1 of zero
+  reads as "terrible here" instead of "these two vocabularies do not meet".
+- Runs on the same single worker as training, so it queues the same way; the history
+  tells them apart with `kind`.
+
+
 ### Removed — the browser no longer holds the training queue
 
 - Selecting several label fields posted the first run and kept the rest in a JavaScript

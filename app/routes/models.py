@@ -1,4 +1,4 @@
-"""Model management: list, details, delete, export, import, share download."""
+"""Model management: list, details, evaluate, delete, export, import, share download."""
 
 from __future__ import annotations
 
@@ -22,10 +22,12 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from .. import data as data_mod
+from ..evaluate import run_evaluation
 from ..jobs import job_runner
-from ..limiter import default_limit, export_limit, limiter
+from ..limiter import default_limit, export_limit, limiter, train_limit
 from ..registry import UnsafeModelError, get_registry
-from ..schemas import ExportRequest, ModelInfo
+from ..responses import TrainStartedResponse
+from ..schemas import EvaluateRequest, ExportRequest, ModelInfo
 from ..security import read_upload_capped, require_role, safe_name
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
@@ -267,3 +269,54 @@ async def download_shared(
     # a text/csv header on gzip bytes yields a decompressed file saved under its .gz name.
     media_type = "application/gzip" if data_mod.is_gzipped(info["name"]) else "text/csv"
     return FileResponse(dataset_path, filename=info["name"], media_type=media_type)
+
+
+@router.post("/models/{model_name}/evaluate", status_code=202,
+             summary="Evaluate a model on a dataset (asynchronous)",
+             response_model=TrainStartedResponse)
+@limiter.limit(train_limit)
+async def evaluate_model(
+    request: Request,
+    model_name: str,
+    body: EvaluateRequest,
+    _: str = Depends(require_role("admin")),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Score an existing model against a dataset and record the result in its bundle.
+
+    **"Model B beats model A" is only a statement if both were measured on the same
+    rows.** Until now that meant a script driving a running server; this records the
+    answer where it can be found again — appended to the bundle's `evaluations`, never
+    over the training metrics, which describe the run that produced the model.
+
+    The model's own label space decides what can be scored: labels the model never
+    learned are reported (`unknown_labels`), and rows carrying only such labels are
+    excluded and counted (`rows_without_a_known_label`) rather than scored as failures
+    — blaming a model for a label it was never given is not a number to compare on.
+
+    Runs as a background job on the same single worker as training, so it queues behind
+    a running one exactly the same way; watch it on `/train/status` and find the outcome
+    in `/train/history` with `kind: "evaluation"`. **Auth:** admin.
+    """
+    safe_name(model_name, "model name")
+    registry = get_registry()
+    if not registry.exists(model_name):
+        raise HTTPException(404, f"Model '{model_name}' not found.")
+    if not (settings.data_dir / body.dataset_name).exists():
+        raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.")
+
+    req = {"model_name": model_name, **body.model_dump()}
+    try:
+        position = job_runner.submit(
+            run_evaluation, req, settings, registry,
+            model_name=model_name, request=req, kind="evaluation",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "status": "started" if position == 0 else "queued",
+        "model_name": model_name,
+        "profile": "evaluation",
+        "status_url": "/train/status",
+        "queue_position": position,
+    }

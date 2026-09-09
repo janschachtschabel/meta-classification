@@ -250,7 +250,7 @@ gated.
   Tests: queue order, persistence across a fresh `JobRunner`, hard stop clears the
   queue.
 
-### B1 · Evaluate an existing model on a dataset (M, 2 days)
+### B1 · Evaluate an existing model on a dataset (M, 2 days) — **server done 2026-09-09**
 - `POST /models/{name}/evaluate` `{dataset_name, text_columns, label_column, …}` →
   background job; result stored under `metadata.evaluations[]` (never overwrites the
   training metrics); UI: "Evaluate on…" in the model panel with a comparison table
@@ -258,9 +258,16 @@ gated.
 - **Why:** the only honest way to say "model B beats model A" is the same holdout;
   today that is a script (`scripts/eval_holdout.py`) against a running server.
 - Files: `app/evaluate.py` (new; reuses `load_dataset`, `prepare_targets`,
-  `compute_metrics`), routes, UI. Tests: evaluating the fixture model on its own
-  training CSV reproduces the bundle's `per_label_f1` within 1e-6 for the holdout
-  rows.
+  `compute_metrics`), routes, UI.
+- Deviation on the test: "reproduces the bundle's `per_label_f1` within 1e-6 for the
+  holdout rows" is not achievable without replaying the training split (seed, sizes),
+  which the endpoint deliberately does not do — it scores the rows it is given. What is
+  pinned instead is what makes the number honest: truth aligned to the MODEL's label
+  space, unknown labels reported, uncoverable rows excluded and counted, `metrics: null`
+  when nothing comparable remains, and the decision rule serving actually applies.
+- `prepare_targets` is NOT reused: it binarizes over the dataset's own label set, which
+  is a different width from the model's output. Alignment to `model.classes` is the
+  whole point.
 
 Effort: 10–12 person-days.
 

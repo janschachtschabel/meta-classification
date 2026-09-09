@@ -83,6 +83,7 @@ def record_for(state: dict, request: dict | None, duration_seconds: float | None
     metrics = results.get("metrics") or {}
     return {
         "model_name": state.get("model_name"),
+        "kind": state.get("kind", "training"),
         "status": state.get("status"),
         "started_at": state.get("started_at"),
         "finished_at": datetime.now(UTC).isoformat(),

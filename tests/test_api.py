@@ -84,6 +84,63 @@ def trained_model() -> dict:
     return state
 
 
+EVAL_BODY = {
+    "dataset_name": "tiny.csv",
+    "text_columns": ["properties.cclom:title", "properties.cclom:general_keyword"],
+    "label_column": "properties.ccm:taxonid",
+}
+
+
+def test_a_model_can_be_evaluated_on_a_dataset(trained_model):
+    """"Model B beats model A" is only a statement if both were measured on the same
+    rows. Until now that meant a script driving a running server, which nothing recorded
+    and nobody could repeat.
+
+    The result goes BESIDE the training metrics, never over them: those describe the run
+    that produced the model and are the bundle's own account of itself.
+    """
+    started = client.post("/models/api_model/evaluate", json=EVAL_BODY, headers=ADMIN)
+    assert started.status_code == 202, started.text
+    assert _wait_for_training()["status"] == "completed"
+
+    metadata = client.get("/models/api_model", headers=RO).json()["metadata"]
+    assert metadata["metrics"]["f1_macro"] > 0.5, "the training metrics are untouched"
+
+    evaluations = metadata["evaluations"]
+    assert len(evaluations) == 1
+    run = evaluations[0]
+    assert run["dataset"] == "tiny.csv"
+    assert run["metrics"]["f1_macro"] > 0.5
+    assert run["n_rows"] > 0
+    assert run["rows_without_a_known_label"] == 0
+    assert run["evaluated_at"] and run["duration_seconds"] >= 0
+
+    # The history has to say WHICH kind of run this was, or an evaluation reads as a
+    # training that somehow produced no model.
+    entry = next(e for e in client.get("/train/history", headers=RO).json()
+                 if e["model_name"] == "api_model" and e["kind"] == "evaluation")
+    assert entry["status"] == "completed"
+
+
+def test_evaluating_twice_appends_rather_than_replaces(trained_model):
+    """A model is evaluated on several datasets over its life; keeping only the newest
+    would throw away exactly the comparison this exists for."""
+    before = len(client.get("/models/api_model", headers=RO).json()["metadata"].get("evaluations", []))
+    assert client.post("/models/api_model/evaluate", json=EVAL_BODY, headers=ADMIN).status_code == 202
+    assert _wait_for_training()["status"] == "completed"
+
+    after = client.get("/models/api_model", headers=RO).json()["metadata"]["evaluations"]
+    assert len(after) == before + 1
+
+
+def test_evaluating_an_unknown_model_or_dataset_is_refused(trained_model):
+    assert client.post("/models/ghost/evaluate", json=EVAL_BODY, headers=ADMIN).status_code == 404
+    assert client.post("/models/api_model/evaluate",
+                       json={**EVAL_BODY, "dataset_name": "missing.csv"},
+                       headers=ADMIN).status_code == 404
+    assert client.post("/models/api_model/evaluate", json=EVAL_BODY, headers=RO).status_code == 403
+
+
 def test_a_second_training_is_queued_instead_of_refused(trained_model):
     """Training five label fields used to need a browser tab kept open: the queue lived
     in the page, and closing it lost every run that had not started. A second POST is
@@ -141,9 +198,11 @@ def test_a_finished_run_is_in_the_history(trained_model):
     entries = history.json()
     assert entries, "the run from the fixture is recorded"
 
-    # By name, not by position: this module shares one server, and other tests in it
-    # train too — an assertion on "the newest entry" would pin test order instead.
-    entry = next(e for e in entries if e["model_name"] == "api_model")
+    # By name AND kind: this module shares one server, other tests in it train, and a
+    # model now carries evaluation entries too — "the newest entry for api_model" would
+    # pin test order and, since B1, pick the wrong kind of run.
+    entry = next(e for e in entries
+                 if e["model_name"] == "api_model" and e["kind"] == "training")
     assert entry["status"] == "completed"
     assert entry["duration_seconds"] > 0
     assert entry["f1_macro"] > 0.5 and entry["n_labels"] >= 1

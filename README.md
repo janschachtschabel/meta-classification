@@ -250,6 +250,16 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
 ## Endpoints (excerpt)
 
 - **Training:** `POST /train`, `GET /train/status`, `POST /train/stop`, `GET /train/profiles`
+- **Evaluate a model on a dataset:** `POST /models/{name}/evaluate` — the only honest
+  way to say "model B beats model A" is the same rows. Runs as a background job on the
+  same worker (so it queues behind a training), appends the result to the bundle's
+  `evaluations` and never touches the training metrics. Truth is scored in the **model's
+  own label space**: labels it never learned are listed in `unknown_labels`, rows
+  carrying only such labels are excluded and counted, and `labels_covered` says how much
+  of the label space the data exercises — `f1_macro` averages over *all* the model's
+  classes, so a dataset touching 4 of 59 drags it down for reasons unrelated to quality
+  (both models on the same dataset carry the same bias, which is what keeps the
+  comparison valid).
 - **Training queue:** `POST /train` while a run is going **queues** it (202, with its
   `queue_position`) instead of refusing — the server runs it when the current one
   finishes, so "train five label fields" needs no browser tab kept open. Bounded to 10

@@ -27,7 +27,7 @@ root when published standalone.
 - Single-worker design: training job, model LRU cache, and rate limiter are process-local. Do not introduce multi-worker assumptions (also: Helm chart is fixed at 1 replica).
 
 ## Architecture
-- `app/routes/*` stay thin (auth, validation, HTTP mapping) and delegate to core modules (`data`, `dataset_stats`, `vectorizers`, `classifier`, `tuning`, `prepare`, `deploy`, `training`, `explain`, `predict_csv`, `registry`, `model_io`, `model_archive`, `model_card`, `bundle_meta`, `model_report`, `jobs`, `job_history`, `sharing`, `errors`).
+- `app/routes/*` stay thin (auth, validation, HTTP mapping) and delegate to core modules (`data`, `dataset_stats`, `vectorizers`, `classifier`, `tuning`, `prepare`, `deploy`, `training`, `explain`, `predict_csv`, `evaluate`, `registry`, `model_io`, `model_archive`, `model_card`, `bundle_meta`, `model_report`, `jobs`, `job_history`, `sharing`, `errors`).
 - Training pipeline is split by stage: `prepare.py` (load/clean/targets/split) → `deploy.py` (C-selection, thresholds, metrics, deploy fit) → `training.py` (orchestration + metadata).
 - Dataset code splits by responsibility: `data.py` = load/clean/targets/split core; `dataset_stats.py` = read-only inspection/statistics for the API (consumes `data`, never the reverse); `label_names.py` = what a label URI *is* and what it is called (namespace vs concept, vocabulary, URI↔display-name pairing) — a leaf that imports nothing of ours, read by `model_io`, `model_archive`, `model_report` and the repair scripts.
 - `app/__init__.py` caps BLAS threads to 1 **before** numpy is imported — keep that the first thing the package does.

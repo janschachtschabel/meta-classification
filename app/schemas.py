@@ -254,6 +254,22 @@ class ExplainRequest(BaseModel):
     top_n_words: int = Field(5, ge=1, le=50)
 
 
+class EvaluateRequest(BaseModel):
+    """Score an existing model on a dataset. The model's own label space decides what
+    can be scored, so no label settings are accepted here beyond a filter."""
+
+    dataset_name: str
+    text_columns: list[str] = Field(..., min_length=1, max_length=20)
+    label_column: str
+    # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
+    csv_separator: str = Field(";", min_length=1, max_length=1)
+    label_separator: str = ","
+    label_filter: OptionalFilter = None
+    # The model was fit on text assembled a particular way; scoring it on text
+    # assembled differently measures a distribution it was not tuned on.
+    text_column_weights: dict[str, int] | None = None
+
+
 class AnalyzeRequest(BaseModel):
     dataset_name: str
     text_columns: list[str]

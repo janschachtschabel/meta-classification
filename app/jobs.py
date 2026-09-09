@@ -48,6 +48,7 @@ def _idle_state() -> dict:
         "eta_seconds": None,
         "seconds_since_heartbeat": None,
         "model_name": None,
+        "kind": "training",
         "results": None,
         "error": None,
     }
@@ -155,7 +156,8 @@ class JobRunner:
         return self._stop.is_set()
 
     def submit(
-        self, target: Callable, *args: object, model_name: str, request: dict | None = None
+        self, target: Callable, *args: object, model_name: str, request: dict | None = None,
+        kind: str = "training",
     ) -> int:
         """Accept a run: start it now, or queue it behind the one already going.
 
@@ -178,9 +180,9 @@ class JobRunner:
                         f"The training queue is full ({MAX_QUEUED} runs waiting); "
                         "retry once some have finished."
                     )
-                self._queue.append((target, args, model_name, request))
+                self._queue.append((target, args, model_name, request, kind))
                 return len(self._queue)
-        self.start(target, *args, model_name=model_name, request=request)
+        self.start(target, *args, model_name=model_name, request=request, kind=kind)
         return 0
 
     def _running_name(self) -> str | None:
@@ -219,9 +221,9 @@ class JobRunner:
             with self._lock:
                 if not self._queue:
                     return
-                target, args, model_name, request = self._queue.popleft()
+                target, args, model_name, request, kind = self._queue.popleft()
             try:
-                self._launch(target, args, model_name, request)
+                self._launch(target, args, model_name, request, kind)
                 return
             except Exception:  # noqa: BLE001 - one bad entry must not strand the queue
                 logger.exception("Queued run %r could not be started; skipping it.", model_name)
@@ -236,7 +238,8 @@ class JobRunner:
             return None
 
     def start(
-        self, target: Callable, *args: object, model_name: str, request: dict | None = None
+        self, target: Callable, *args: object, model_name: str, request: dict | None = None,
+        kind: str = "training",
     ) -> None:
         """Launch ``target(*args, on_progress=..., should_stop=...)`` in a thread NOW.
 
@@ -258,10 +261,11 @@ class JobRunner:
                     "A training job is already running (or a hard-stopped one is "
                     "still finishing in the background); retry once it completes."
                 )
-        self._launch(target, args, model_name, request)
+        self._launch(target, args, model_name, request, kind)
 
     def _launch(
-        self, target: Callable, args: tuple, model_name: str, request: dict | None
+        self, target: Callable, args: tuple, model_name: str, request: dict | None,
+        kind: str = "training",
     ) -> None:
         """Set the state up and put the run on a thread. No liveness guard: the two
         callers each establish it their own way — ``start`` by checking, and
@@ -301,6 +305,9 @@ class JobRunner:
                 status="running",
                 phase="starting",
                 model_name=model_name,
+                # Without it an evaluation reads as a training that somehow produced
+                # no model — in the history above all, where the two sit side by side.
+                kind=kind,
                 started_at=datetime.now(UTC).isoformat(),
             )
             self._start_ts = time.monotonic()
