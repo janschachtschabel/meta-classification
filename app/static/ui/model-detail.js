@@ -31,7 +31,9 @@ function regularization(meta) {
   if (!Number.isFinite(best)) return "–";
   if (!grid.length) return String(best);
   const atEdge = best <= Math.min(...grid) || best >= Math.max(...grid);
-  return t("modelDetail.cSearched", { best, grid: grid.join(", ") }) +
+  // As a string, so Intl does not format `best` while the grid beside it stays
+  // raw — that printed "0,5 (durchsucht: 0.5, 1.5)" and truncated a small C to 0.
+  return t("modelDetail.cSearched", { best: String(best), grid: grid.join(", ") }) +
     (atEdge ? t("modelDetail.cAtEdge") : "");
 }
 

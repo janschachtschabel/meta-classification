@@ -27,7 +27,13 @@ function createPillPicker({ pills, input, datalist, emptyHintKey, onChange = () 
     datalist.innerHTML = available.filter((c) => !selected.includes(c))
       .map((c) => `<option value="${escP(c)}">`).join("");
     input.disabled = !available.length;
-    input.placeholder = available.length ? t("train.pills.typeToAdd") : t(emptyHintKey);
+    // The key travels with the element: the markup carries one for the pre-script
+    // state, and this input has TWO states. Without it, switching language after a
+    // dataset was chosen re-applied the markup's key and told the user to choose a
+    // dataset in a field that was enabled and ready.
+    const placeholderKey = available.length ? "train.pills.typeToAdd" : emptyHintKey;
+    input.dataset.i18nPlaceholder = placeholderKey;
+    input.placeholder = t(placeholderKey);
     if (ready) onChange([...selected]);  // no event for the initial empty render
   }
 

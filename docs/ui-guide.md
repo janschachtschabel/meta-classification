@@ -34,9 +34,9 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
 1. **Datensätze** → CSV-Datei hochladen. Eine Zeile pro Material; Textspalten
    (Titel, Beschreibung, …) und mindestens eine Spalte mit den richtigen Labels
    (mehrere Labels in einer Zelle durch Komma getrennt).
-2. **Training** → Dataset auswählen → bei *Text columns* die Spalten antippen,
+2. **Training** → Dataset auswählen → bei *Textspalten* die Spalten antippen,
    die das System **lesen** soll (Titel + Beschreibung + Schlagwörter ist meist
-   die beste Wahl) → bei *Label fields* die Spalte mit den **richtigen
+   die beste Wahl) → bei *Label-Felder* die Spalte mit den **richtigen
    Antworten** wählen.
    - Wählst du **mehrere** Label-Felder, entsteht **pro Feld ein eigenes
      Modell**; die Namen werden automatisch abgeleitet (`meinname_taxonid`, …)
@@ -59,13 +59,13 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
    jedem Tab sichtbar) zeigt Phase, Prozent und Restzeit. Ein Training auf
    ~30.000 Zeilen dauert je nach Einstellung wenige Minuten bis ~1 Stunde; der
    Server bleibt dabei bedienbar (das Training nimmt sich höchstens ~60 % der
-   Rechenleistung). **Stop training** bricht sauber ab.
+   Rechenleistung). **Training stoppen** bricht sauber ab.
 
 ## Ergebnisse lesen (Reiter „Abfrage")
 
 Text eingeben, Modell(e) anhaken, **Klassifizieren**.
 
-- **Confidence (Balken + Zahl 0–1):** Wie sicher das Modell ist, dass das Label
+- **Konfidenz (Balken + Zahl 0–1):** Wie sicher das Modell ist, dass das Label
   passt. Die Werte der Labels sind unabhängig voneinander — sie müssen sich
   nicht zu 1 addieren, und **mehrere Labels gleichzeitig sind ein normales
   Ergebnis** (ein Text kann Physik *und* Elektrotechnik sein).
@@ -76,9 +76,9 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**.
   **Ausgegraute Einträge** („below threshold") sind Kandidaten, die das Modell
   von sich aus *nicht* behaupten würde. Nützlich, um die „zweite Meinung" des
   Modells zu sehen.
-- **diff (Baseline-Differenz, Häkchen „Show baseline diff"):** Wie viel der
+- **Diff (Baseline-Differenz, Häkchen „Baseline-Diff anzeigen“):** Wie viel der
   Sicherheit aus **deinem Text** kommt — und nicht daher, dass das Label einfach
-  häufig ist. Ein hoher Confidence-Wert mit *diff nahe 0* heißt: das Modell rät
+  häufig ist. Ein hoher Konfidenz-Wert mit *diff nahe 0* heißt: das Modell rät
   auf das übliche Label, dein Text hat es nicht überzeugt.
 - Mehrere Modelle gleichzeitig anhaken (Strg-Klick) → eine Antwort pro Modell,
   z. B. Fach **und** Materialart in einem Rutsch.
@@ -149,7 +149,7 @@ und kommt aus der Serverantwort, nicht aus dem Browser.
 **Stop** beendet den laufenden Lauf *und* leert die Warteschlange: „Stop" heißt „das soll
 enden", nicht „spring zum nächsten".
 
-Unter *Training* → **history** steht danach, was jeder Lauf ergeben hat — auch die
+Unter *Training* → **Verlauf** steht danach, was jeder Lauf ergeben hat — auch die
 gescheiterten, die kein Modell hinterlassen und deren Grund es sonst nirgends mehr gäbe.
 
 ## Vor dem Start prüfen (Reiter „Training")

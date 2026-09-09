@@ -102,8 +102,8 @@ function renderTrainStatus(s) {
     const scores = s.results.metrics || {};
     html += Number.isFinite(scores.f1_macro)
       ? `<p class="ok">${t("trainStatus.doneWithScores", {
-           name: esc(s.results.model_name), macro: scores.f1_macro.toFixed(3),
-           micro: scores.f1_micro.toFixed(3), labels: s.results.n_labels })}</p>`
+           name: esc(s.results.model_name), macro: fmtScore(scores.f1_macro),
+           micro: fmtScore(scores.f1_micro), labels: s.results.n_labels })}</p>`
       : `<p class="ok">${t("trainStatus.doneNoScores", { name: esc(s.results.model_name) })}</p>`;
   }
   el.innerHTML = html;

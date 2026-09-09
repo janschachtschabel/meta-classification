@@ -85,11 +85,11 @@ function renderPredictions(byModel) {
       <div class="pred${p.above_threshold === false ? " below-t" : ""}">
         <span class="name">${esc(p.label)}</span>
         <span class="bar"><span data-width="${Math.round(p.confidence * 100)}"></span></span>
-        <span class="val">${p.confidence.toFixed(3)}${p.baseline_diff !== undefined
-          ? ` <span class="muted">${t("query.diffTag")} ${p.baseline_diff >= 0 ? "+" : ""}${p.baseline_diff.toFixed(3)}</span>` : ""}${
+        <span class="val">${fmtFixed(p.confidence, 3)}${p.baseline_diff !== undefined
+          ? ` <span class="muted">${t("query.diffTag")} ${p.baseline_diff >= 0 ? "+" : ""}${fmtFixed(p.baseline_diff, 3)}</span>` : ""}${
           // != null covers both: absent when not asked for, null when the bundle
           // carries no score for this label (older or partially scored models).
-          p.label_f1 != null ? ` <span class="muted">${t("query.f1Tag")} ${p.label_f1.toFixed(3)}</span>` : ""}${
+          p.label_f1 != null ? ` <span class="muted">${t("query.f1Tag")} ${fmtFixed(p.label_f1, 3)}</span>` : ""}${
           p.above_threshold === false ? ` <span class="muted">· ${t("query.belowThreshold")}</span>` : ""}</span>
       </div>`).join("")
       : `<p class="muted">${t("query.noLabelAboveThreshold")}</p>`}</div>`).join("");
@@ -147,7 +147,7 @@ function renderBulkTable(rows, texts, out) {
       <tbody>${shown.map((r) => `<tr${r.uri ? "" : ' class="stale"'}>
         <td class="num">${r.row}</td><td>${esc(r.text)}</td>
         <td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}</td>
-        <td class="num">${r.uri ? r.confidence.toFixed(3) : "–"}</td></tr>`).join("")}</tbody>
+        <td class="num">${r.uri ? fmtFixed(r.confidence, 3) : "–"}</td></tr>`).join("")}</tbody>
     </table></div></div>`;
   out.querySelector("#bulk-download").addEventListener("click", () => {
     Api.saveBlob(new Blob([bulkCsv(rows)], { type: "text/csv" }), "predictions.csv");

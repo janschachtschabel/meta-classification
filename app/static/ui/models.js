@@ -8,7 +8,7 @@
    markup (esc at the call site) nor crash the table render (toFixed on a
    non-number throws). */
 function fmtScore(value) {
-  return Number.isFinite(value) ? value.toFixed(3) : "–";
+  return fmtFixed(value, 3);
 }
 
 /* Bundles older than format 2 keep their TF-IDF vocabulary inside the skops

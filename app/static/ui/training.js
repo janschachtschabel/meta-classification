@@ -161,7 +161,6 @@ async function runPreflight() {
     return;
   }
   button.disabled = true;
-  const original = button.textContent;
   button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
@@ -181,7 +180,7 @@ async function runPreflight() {
     box.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`;
   } finally {
     button.disabled = false;
-    button.textContent = original;
+    button.textContent = t("train.preflight.button");   // see explain.js: not a copy
   }
 }
 
@@ -191,10 +190,17 @@ function preflightSummary(body, labelFields) {
   const current = Number($("#train-minsamples").value);
   const kept = body.label_threshold_analysis[`labels_with_${current}+_samples`];
   const recommended = body.recommended_min_samples_per_label;
-  const cost = minutes == null ? t("train.preflight.noEstimate") : costLabel(minutes);
+  // One sentence per case rather than one sentence with a swapped fragment: the
+  // hedge belongs to a number, and "that is about no estimate for this profile"
+  // was what folding it into the wrapper produced.
+  const cost = !Number.isFinite(minutes)
+    ? t("train.preflight.noEstimateFor", { profile: esc(profile) })
+    : minutes < 1
+      ? t("train.preflight.underAMinuteOn", { profile: esc(profile) })
+      : t("train.preflight.onProfile", { profile: esc(profile), cost: costLabel(minutes) });
   return `<p><strong>${t("train.preflight.size", {
       rows: body.total_samples, labels: body.unique_labels })}</strong>
-      ${t("train.preflight.onProfile", { profile: esc(profile), cost })}${labelFields.length > 1
+      ${cost}${labelFields.length > 1
         ? t("train.preflight.perModel", { count: labelFields.length }) : ""}.</p>
     <p>${kept === undefined
       ? t("train.preflight.keepsUnknown", { threshold: current })

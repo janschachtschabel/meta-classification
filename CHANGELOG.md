@@ -14,10 +14,16 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   `strings-en.js`. Those files are strict JSON inside a one-line assignment: the browser
   loads them with a `<script>` tag (no fetch, no async boot, no half-translated first
   paint) and `tests/test_ui_i18n.py` reads them as data.
-- **All of it or none of it**, enforced rather than claimed: the suite fails if the two
+- **All of it or none of it**, checked rather than claimed: the suite fails if the two
   maps disagree on a key, if markup or code asks for a key nobody defined, if the map
-  grows an entry nothing uses, or if prose is left hardcoded in `index.html` or in a UI
-  module. `index.html` now carries structure only — a string exists in exactly one place.
+  grows an entry nothing uses, or if a key is assembled from a template where no test
+  can follow it. `index.html` now carries structure only — a string exists in exactly
+  one place — and it is *parsed*, so untranslated text or an untranslated readable
+  attribute there is caught outright. The JS side is netted rather than parsed: three
+  patterns for the shapes text actually takes here (a sentence in a quoted string, a
+  label between two tags, a literal handed to toast/confirm/textContent/showError).
+  A net is not a proof, so each one carries a test that it still fires on a real
+  example — and all three were verified against the pre-change sources first.
 - Plurals go through `Intl.PluralRules` (`1 Korrektur` / `5 Korrekturen`, not `1 texts`),
   and numbers and dates through `Intl` with the **UI's** locale rather than the browser's,
   so a German UI reads `156.373` where an English one reads `156,373`.

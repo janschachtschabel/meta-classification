@@ -82,6 +82,14 @@ const I18n = (() => {
       (el) => { el.title = t(el.dataset.i18nTitle); });
     root.querySelectorAll("[data-i18n-aria-label]").forEach(
       (el) => { el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel)); });
+    // No <img> or <optgroup> in the markup today. They are here because the test
+    // suite demands a data-i18n-<attr> hook for every attribute a person reads,
+    // and a demand the applier does not honour would pass the gate and still
+    // leave the attribute in the wrong language.
+    root.querySelectorAll("[data-i18n-alt]").forEach(
+      (el) => { el.setAttribute("alt", t(el.dataset.i18nAlt)); });
+    root.querySelectorAll("[data-i18n-label]").forEach(
+      (el) => { el.setAttribute("label", t(el.dataset.i18nLabel)); });
     document.documentElement.lang = current;  // screen readers pronounce from this
   }
 
@@ -95,6 +103,7 @@ const I18n = (() => {
     current = language;
     plurals = new Intl.PluralRules(current);
     numbers = new Intl.NumberFormat(current);
+    fixed.clear();
     remember(language);
     apply();
   }
@@ -110,8 +119,25 @@ const I18n = (() => {
     apply();
   }
 
-  return { t, apply, init, setLanguage, locale: () => current };
+  /* A number at a fixed number of decimals, in the active language: 0,740 for a
+     German reader and 0.740 for an English one. Every score, confidence and
+     impact in this UI goes through it — `toFixed` would print an English
+     decimal point inside a German sentence, next to a thousands separator that
+     had already been localised. */
+  const fixed = new Map();
+  function fmtFixed(value, digits) {
+    if (!Number.isFinite(value)) return "–";
+    if (!fixed.has(digits)) {
+      fixed.set(digits, new Intl.NumberFormat(current, {
+        minimumFractionDigits: digits, maximumFractionDigits: digits,
+      }));
+    }
+    return fixed.get(digits).format(value);
+  }
+
+  return { t, apply, init, setLanguage, fmtFixed, locale: () => current };
 })();
 
 const t = I18n.t;
+const fmtFixed = I18n.fmtFixed;
 I18n.init();

@@ -14,7 +14,7 @@ async function loadDatasets() {
       <th class="num">${t("datasets.table.size")}</th><th>${t("common.actions")}</th></tr></thead><tbody>` +
       list.map((d) => `<tr>
         <td><button type="button" class="linkish" data-dsdetail="${esc(d.name)}">${esc(d.name)}</button></td>
-        <td class="num">${d.rows}</td>
+        <td class="num">${fmtInt(d.rows)}</td>
         <td class="num">${esc(d.size_human)}</td>
         <td class="actions">
           <button class="small" data-dl="${esc(d.name)}">${t("common.download")}</button>

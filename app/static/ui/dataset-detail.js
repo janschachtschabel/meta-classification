@@ -87,7 +87,6 @@ async function runAnalysis(frame) {
     return;
   }
   button.disabled = true;
-  const original = button.textContent;
   button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
@@ -99,7 +98,7 @@ async function runAnalysis(frame) {
       `<div class="analysis"><p class="error" role="alert">${esc(err.message)}</p></div>`);
   } finally {
     button.disabled = false;
-    button.textContent = original;
+    button.textContent = t("datasetDetail.analyze");   // see explain.js: not a copy
   }
 }
 

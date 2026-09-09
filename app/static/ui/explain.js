@@ -18,7 +18,7 @@ function impactChip(entry, scale) {
   return `<span class="chip-word${against ? " against" : ""}">
     <span class="w">${esc(entry.word)}</span>
     <span class="chip-bar"><span data-width="${width}"></span></span>
-    <span class="val">${sign}${Math.abs(entry.impact).toFixed(4)}</span></span>`;
+    <span class="val">${sign}${fmtFixed(Math.abs(entry.impact), 4)}</span></span>`;
 }
 
 function wordSection(uri, entry) {
@@ -45,9 +45,9 @@ function allScoresTable(scores) {
         <th class="num">${t("explain.table.f1")}</th></tr></thead>
       <tbody>${rows.map((r) => `<tr>
         <td>${esc(r.label)}</td>
-        <td class="num">${r.confidence.toFixed(3)}</td>
-        <td class="num">${r.baseline_diff >= 0 ? "+" : "−"}${Math.abs(r.baseline_diff).toFixed(3)}</td>
-        <td class="num">${r.label_f1 == null ? "–" : r.label_f1.toFixed(3)}</td>
+        <td class="num">${fmtFixed(r.confidence, 3)}</td>
+        <td class="num">${r.baseline_diff >= 0 ? "+" : "−"}${fmtFixed(Math.abs(r.baseline_diff), 3)}</td>
+        <td class="num">${r.label_f1 == null ? "–" : fmtFixed(r.label_f1, 3)}</td>
       </tr>`).join("")}</tbody></table></div>
     <p class="muted">${t("explain.tableNote")}</p>
   </details>`;
@@ -62,7 +62,6 @@ function explanationHtml(body) {
 
 async function explainAnswer(modelName, text, card, button) {
   button.disabled = true;
-  const original = button.textContent;
   button.textContent = t("explain.button.busy");
   card.querySelector(".explain")?.remove();
   try {
@@ -77,7 +76,9 @@ async function explainAnswer(modelName, text, card, button) {
       `<div class="explain"><p class="error" role="alert">${esc(err.message)}</p></div>`);
   } finally {
     button.disabled = false;
-    button.textContent = original;
+    // From the key, not from a copy taken before the request: the language may
+    // have been switched while it was in flight.
+    button.textContent = t("query.explainButton");
   }
 }
 
