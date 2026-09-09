@@ -178,13 +178,16 @@ async function loadModels() {
       editModelInfo(b.dataset.info)));
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>
       shareResource("models", b.dataset.share, "#models-share")));
-    renderShareLinks("models", "#models-links");
     el.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(`Delete model "${b.dataset.delete}"? This cannot be undone.`)) return;
       try { await Api.del(`/models/${encodeURIComponent(b.dataset.delete)}`); toast("Model deleted."); loadModels(); }
       catch (err) { toast(err.message); }
     }));
   } catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  // In `finally`, not after the table: a link outlives the model it points at, so the
+  // two paths that skip the table — no models left, and the list request failing — are
+  // exactly the ones where a stale overview keeps offering links that are still live.
+  finally { renderShareLinks("models", "#models-links"); }
 }
 
 async function onImportModel(ev) {
@@ -230,13 +233,13 @@ async function loadDatasets() {
         .catch((err) => toast(err.message))));
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>
       shareResource("datasets", b.dataset.share, "#datasets-share")));
-    renderShareLinks("datasets", "#datasets-links");
     el.querySelectorAll("[data-delds]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(`Delete dataset "${b.dataset.delds}"? This cannot be undone.`)) return;
       try { await Api.del(`/datasets/${encodeURIComponent(b.dataset.delds)}`); toast("Dataset deleted."); loadDatasets(); }
       catch (err) { toast(err.message); }
     }));
   } catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  finally { renderShareLinks("datasets", "#datasets-links"); }  // same reason as loadModels
 }
 
 async function onUpload(ev) {

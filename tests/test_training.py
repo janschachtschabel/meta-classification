@@ -1844,3 +1844,26 @@ def test_export_packs_only_what_a_bundle_is_made_of(tmp_path):
         }
     # The proof that matters: what we produce, we accept.
     assert registry.import_zip("round_trip", archive)["name"] == "round_trip"
+
+
+def test_a_bundle_with_an_unreadable_document_can_still_be_exported(tmp_path):
+    """An operator whose bundle has a damaged JSON document needs the bytes OUT to look
+    at them somewhere else. Generating the card made export the one operation that
+    *parses* a bundle, so the bundle most in need of exporting was the one export
+    refused — with a 500. The card degrades; the members travel byte for byte.
+    """
+    import io
+    import zipfile
+
+    registry, settings = _trained_registry(tmp_path)
+    (Path(settings.models_dir) / "tiny_model" / "metrics.json").write_text(
+        "{ truncated", encoding="utf-8"
+    )
+
+    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as archive:
+        assert archive.read("metrics.json").decode("utf-8") == "{ truncated"
+        card = archive.read("README.md").decode("utf-8")
+        # The manifest still covers what is actually in the archive, damage included:
+        # it certifies the transfer, it does not certify the content.
+        assert json.loads(archive.read("manifest.json"))["files"]["metrics.json"]
+    assert "tiny_model" in card

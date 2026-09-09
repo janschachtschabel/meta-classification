@@ -4,6 +4,21 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Fixed — smaller things found while measuring the above
+
+- **Export packs an allowlist**, not "everything except two names". `update_info`
+  stages a `metrics.json.tmp` beside the file it replaces, so a crash in that window
+  left a member export would pack and import would then refuse: an archive this API
+  produces but does not accept.
+- **A bundle with a damaged JSON document can be exported again.** Generating the card
+  made export the one operation that *parses* a bundle, so the bundle most in need of
+  being exported — a damaged one, to inspect elsewhere — was the one export refused
+  with a 500. The card degrades; the members travel byte for byte.
+- **The share-link overview refreshes on every path.** It was rendered after the model
+  table, so the two paths that skip the table (no models left, or the list request
+  failing) left the previous overview on screen — offering links that are still live.
+
+
 ### Fixed — the share-link overview no longer shows dead links as live
 
 - Expiry was enforced in two of the three readers: the store purges at startup and

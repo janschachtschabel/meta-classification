@@ -20,6 +20,7 @@ import zipfile
 import zlib
 
 from . import model_card
+from .bundle_meta import as_mapping
 from .data import label_vocabulary
 from .model_io import (
     CARD_FILE,
@@ -48,14 +49,28 @@ _DECOMPRESSION_FLOOR_BYTES = 64 * 1024 * 1024
 _DAMAGED = (zipfile.BadZipFile, zlib.error, EOFError, ValueError)
 
 
+def _document(members: dict[str, bytes], member: str) -> dict:
+    """One of the bundle's JSON documents, or an empty one if it will not parse.
+
+    Generating the card made export the one operation that *parses* a bundle — which
+    left the bundle most in need of being exported, a damaged one an operator wants to
+    inspect elsewhere, as the one export refused. Only the generated card goes without
+    it; the member itself still travels byte for byte.
+    """
+    try:
+        return as_mapping(json.loads(members.get(member, b"{}")))
+    except ValueError:
+        return {}
+
+
 def pack(name: str, members: dict[str, bytes]) -> bytes:
     """Build the archive for one bundle, adding the model card and the manifest.
 
     Both are generated here rather than read from disk, so they always describe THIS
     archive; the caller passes only the bundle's own files.
     """
-    config = json.loads(members["config.json"])
-    metadata = json.loads(members["metrics.json"]) if "metrics.json" in members else {}
+    config = _document(members, "config.json")
+    metadata = _document(members, "metrics.json")
     vocabulary = label_vocabulary(config.get("classes") or [])
 
     members = dict(members)
@@ -111,8 +126,8 @@ def unpack(data: bytes) -> dict[str, bytes]:
             raise UnsafeModelError(f"Archive member could not be read: {exc!r}") from exc
 
     if MANIFEST_FILE in payloads:
-        # Absent for bundles exported before 3.2: verification applies when a
-        # manifest is there, its absence is not an error.
+        # Absent for bundles exported before the manifest existed: verification
+        # applies when a manifest is there, its absence is not an error.
         try:
             manifest = json.loads(payloads[MANIFEST_FILE])
         except ValueError as exc:

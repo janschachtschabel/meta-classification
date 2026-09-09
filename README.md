@@ -411,7 +411,7 @@ archive*: a **`README.md`** model card (what it classifies, the author's own sta
 how it was trained, how well it scores, and its ten weakest labels) and a
 **`manifest.json`** listing a SHA-256 for every other member. Import verifies the
 manifest and refuses an archive that arrived altered or incomplete — an archive without
-one still imports, so bundles shared before 3.2 keep working. Neither file is kept in the
+one still imports, so bundles shared before the manifest existed keep working. Neither file is kept in the
 installed bundle; both are rebuilt on the next export. The TF-IDF vocabularies live in `vocabulary.json` (terms in column
 order) rather than inside the skops container: skops is super-quadratic in the number of
 dict entries, which made a 200 000-term vocabulary take ~45 min and 148 MB to write
