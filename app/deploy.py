@@ -25,14 +25,8 @@ from .classifier import make_head
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
-from .tuning import (
-    compute_metrics,
-    cross_val_evaluate,
-    is_single_label,
-    name_threshold_columns,
-    select_c,
-    tune_thresholds,
-)
+from .thresholds import name_threshold_columns, tune_thresholds
+from .tuning import compute_metrics, cross_val_evaluate, is_single_label, select_c
 from .vectorizers import TfidfBackend
 
 logger = logging.getLogger("api_v3.training")

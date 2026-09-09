@@ -1,10 +1,13 @@
-"""Automatic optimization: regularization selection, threshold tuning, metrics.
+"""Choosing the regularization strength, and scoring the model that results.
 
-Deliberately uses small, exhaustive grids (over ``C`` and over thresholds)
-evaluated on a held-out validation split. For these tiny, mostly 1-D search
-spaces a grid is simpler, deterministic and at least as good as a sampler like
-Optuna. The held-out *test* split (never seen here) is used only for the final
-reported metrics, so numbers are not optimistically biased.
+Deliberately uses a small, exhaustive grid over ``C``, evaluated on a held-out
+validation split or out-of-fold across k folds. For this tiny, 1-D search space a
+grid is simpler, deterministic and at least as good as a sampler like Optuna. The
+held-out *test* split (never seen here) is used only for the final reported metrics,
+so numbers are not optimistically biased.
+
+Where the decision cuts sit is ``thresholds``: this module reads that one to score a
+candidate under its own cuts, and never the other way round.
 """
 
 from __future__ import annotations
@@ -17,13 +20,14 @@ from sklearn.model_selection import KFold
 
 from .classifier import make_head
 from .errors import TrainingInputError
+from .thresholds import (
+    apply_thresholds,
+    macro_f1,
+    name_threshold_columns,
+    tune_thresholds,
+    tuned_score,
+)
 from .vectorizers import TfidfBackend
-
-_DEFAULT_GRID = np.round(np.arange(0.05, 0.96, 0.05), 2)
-
-
-def macro_f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return float(f1_score(y_true, y_pred, average="macro", zero_division=0))
 
 
 def is_single_label(task_type: str) -> bool:
@@ -95,7 +99,7 @@ def select_c(
         head.fit(x_train, y_train)
         proba = head.predict_proba(x_val)
         if tune_each:
-            score, global_t, columns = _tuned_score(
+            score, global_t, columns = tuned_score(
                 y_val, proba, per_label=threshold_per_label
             )
             thresholds: tuple[float, np.ndarray] | None = (global_t, columns)
@@ -241,104 +245,10 @@ def _best_under_own_thresholds(
     best_c, best_f1 = c_grid[0], -1.0
     best_global, best_columns = 0.5, np.full(y_true.shape[1], 0.5)
     for c in c_grid:
-        score, global_t, columns = _tuned_score(y_true, proba_by_c[c], per_label=per_label)
+        score, global_t, columns = tuned_score(y_true, proba_by_c[c], per_label=per_label)
         if score > best_f1:
             best_f1, best_c, best_global, best_columns = score, c, global_t, columns
     return best_c, best_global, best_columns
-
-
-def tune_threshold_columns(
-    y_val: np.ndarray,
-    proba: np.ndarray,
-    *,
-    per_label: bool = True,
-    grid: np.ndarray | None = None,
-) -> tuple[float, np.ndarray]:
-    """The global threshold, and one threshold per COLUMN of ``proba``.
-
-    A threshold belongs to a column; the ``uri -> threshold`` dict a bundle stores is
-    that same answer named. Keeping the two apart lets a caller that has no label names
-    — the C search, which wants to score each candidate under its own thresholds — reach
-    the numbers without carrying the vocabulary along.
-
-    With ``per_label=False`` every column carries the global value: an array has no way
-    to say "absent", and the global cut is what the absent entry would have meant.
-    """
-    grid = _DEFAULT_GRID if grid is None else grid
-
-    best_global, best_global_f1 = 0.5, -1.0
-    for threshold in grid:
-        score = macro_f1(y_val, (proba >= threshold).astype(int))
-        if score > best_global_f1:
-            best_global_f1, best_global = score, float(threshold)
-
-    columns = np.full(proba.shape[1], best_global, dtype=float)
-    if per_label:
-        for col in range(proba.shape[1]):
-            truth = y_val[:, col]
-            if truth.sum() == 0:
-                # No positives to tune on: every threshold scores f1=0, and the
-                # ">" update would hand the label the grid MINIMUM (0.05) —
-                # near-zero threshold, fires on everything. Keep the global.
-                continue
-            scores = proba[:, col]
-            best_t, best_f1 = best_global, -1.0
-            for threshold in grid:
-                score = f1_score(truth, (scores >= threshold).astype(int), zero_division=0)
-                if score > best_f1:
-                    best_f1, best_t = score, float(threshold)
-            columns[col] = best_t
-
-    return best_global, columns
-
-
-def _tuned_score(
-    y_true: np.ndarray, proba: np.ndarray, *, per_label: bool
-) -> tuple[float, float, np.ndarray]:
-    """Macro F1 a candidate reaches under thresholds tuned for ITSELF, and those
-    thresholds.
-
-    One vectorised comparison against a per-column vector — the same decision
-    ``apply_thresholds`` makes once the columns carry names.
-    """
-    global_t, columns = tune_threshold_columns(y_true, proba, per_label=per_label)
-    return macro_f1(y_true, (proba >= columns).astype(int)), global_t, columns
-
-
-def name_threshold_columns(columns: np.ndarray, classes: list[str]) -> dict[str, float]:
-    """Attach label URIs to threshold columns — the form a bundle persists."""
-    return {uri: float(t) for uri, t in zip(classes, columns, strict=False)}
-
-
-def tune_thresholds(
-    y_val: np.ndarray,
-    proba: np.ndarray,
-    classes: list[str],
-    *,
-    per_label: bool = True,
-    grid: np.ndarray | None = None,
-) -> tuple[float, dict[str, float]]:
-    """Find the global (and optionally per-label) threshold maximizing F1 on val.
-
-    The named form of :func:`tune_threshold_columns` — what a bundle persists. An empty
-    dict means "every label decides at the global cut", which is what ``per_label=False``
-    produces and what ``apply_thresholds`` falls back to.
-    """
-    best_global, columns = tune_threshold_columns(y_val, proba, per_label=per_label, grid=grid)
-    if not per_label:
-        return best_global, {}
-    return best_global, name_threshold_columns(columns, classes)
-
-
-def apply_thresholds(
-    proba: np.ndarray, classes: list[str], global_threshold: float, per_label: dict[str, float]
-) -> np.ndarray:
-    """Turn probabilities into a binary prediction matrix using thresholds."""
-    preds = np.zeros_like(proba, dtype=int)
-    for col, uri in enumerate(classes):
-        threshold = per_label.get(uri, global_threshold)
-        preds[:, col] = (proba[:, col] >= threshold).astype(int)
-    return preds
 
 
 def compute_metrics(

@@ -33,7 +33,8 @@ from app.classifier import make_head  # noqa: E402
 from app.prepare import prepare_data  # noqa: E402
 from app.profiles import load_training_config  # noqa: E402
 from app.settings import Settings  # noqa: E402
-from app.tuning import _default_decision, compute_metrics, macro_f1, tune_thresholds  # noqa: E402
+from app.thresholds import macro_f1, tune_thresholds  # noqa: E402
+from app.tuning import _default_decision, compute_metrics  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 
 VOCABS = {

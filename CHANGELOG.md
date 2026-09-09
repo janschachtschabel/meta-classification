@@ -4,6 +4,23 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed — the decision layer moved out of `tuning.py` into `thresholds.py`
+
+- C1 pushed `tuning.py` to 381 lines against this project's ~300 rule, and the file had
+  three reasons to change: which `C` wins, where a decision cut sits, and how the result
+  is scored. `app/thresholds.py` now owns the middle one — the grid search over cuts, the
+  `uri -> threshold` form a bundle persists, and applying them to a probability matrix.
+  291 + 119 lines, both inside the rule.
+- The dependency runs one way. `thresholds.py` imports nothing of ours, the same shape as
+  `label_names.py`; `tuning.py` and `deploy.py` read it and it reads neither. `macro_f1`
+  went with it because it is the objective those searches maximize, and leaving it behind
+  would have made the import circular.
+- **Behaviour-preserving, checked rather than asserted:** every moved block is
+  byte-identical to the committed original apart from one deliberate rename
+  (`_tuned_score` → `tuned_score` — a name crossing a module boundary should not be
+  private). Same 313 tests, same result, before and after.
+- The four threshold tests moved to `tests/test_thresholds.py` alongside the module.
+
 ### Changed — C and its decision thresholds are now chosen together (plan item C1)
 
 - **The old rule threw away candidates before they could show what they were worth.**
