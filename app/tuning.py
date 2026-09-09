@@ -189,15 +189,23 @@ def cross_val_evaluate(
     return best_c, global_t, per_label_t, metrics
 
 
-def tune_thresholds(
+def tune_threshold_columns(
     y_val: np.ndarray,
     proba: np.ndarray,
-    classes: list[str],
     *,
     per_label: bool = True,
     grid: np.ndarray | None = None,
-) -> tuple[float, dict[str, float]]:
-    """Find the global (and optionally per-label) threshold maximizing F1 on val."""
+) -> tuple[float, np.ndarray]:
+    """The global threshold, and one threshold per COLUMN of ``proba``.
+
+    A threshold belongs to a column; the ``uri -> threshold`` dict a bundle stores is
+    that same answer named. Keeping the two apart lets a caller that has no label names
+    — the C search, which wants to score each candidate under its own thresholds — reach
+    the numbers without carrying the vocabulary along.
+
+    With ``per_label=False`` every column carries the global value: an array has no way
+    to say "absent", and the global cut is what the absent entry would have meant.
+    """
     grid = _DEFAULT_GRID if grid is None else grid
 
     best_global, best_global_f1 = 0.5, -1.0
@@ -206,25 +214,44 @@ def tune_thresholds(
         if score > best_global_f1:
             best_global_f1, best_global = score, float(threshold)
 
-    per_label_thresholds: dict[str, float] = {}
+    columns = np.full(proba.shape[1], best_global, dtype=float)
     if per_label:
-        for col, uri in enumerate(classes):
+        for col in range(proba.shape[1]):
             truth = y_val[:, col]
-            scores = proba[:, col]
             if truth.sum() == 0:
                 # No positives to tune on: every threshold scores f1=0, and the
                 # ">" update would hand the label the grid MINIMUM (0.05) —
                 # near-zero threshold, fires on everything. Keep the global.
-                per_label_thresholds[uri] = best_global
                 continue
+            scores = proba[:, col]
             best_t, best_f1 = best_global, -1.0
             for threshold in grid:
                 score = f1_score(truth, (scores >= threshold).astype(int), zero_division=0)
                 if score > best_f1:
                     best_f1, best_t = score, float(threshold)
-            per_label_thresholds[uri] = best_t
+            columns[col] = best_t
 
-    return best_global, per_label_thresholds
+    return best_global, columns
+
+
+def tune_thresholds(
+    y_val: np.ndarray,
+    proba: np.ndarray,
+    classes: list[str],
+    *,
+    per_label: bool = True,
+    grid: np.ndarray | None = None,
+) -> tuple[float, dict[str, float]]:
+    """Find the global (and optionally per-label) threshold maximizing F1 on val.
+
+    The named form of :func:`tune_threshold_columns` — what a bundle persists. An empty
+    dict means "every label decides at the global cut", which is what ``per_label=False``
+    produces and what ``apply_thresholds`` falls back to.
+    """
+    best_global, columns = tune_threshold_columns(y_val, proba, per_label=per_label, grid=grid)
+    if not per_label:
+        return best_global, {}
+    return best_global, {uri: float(t) for uri, t in zip(classes, columns, strict=False)}
 
 
 def apply_thresholds(

@@ -383,3 +383,46 @@ def test_a_profile_can_loosen_the_selection_tolerance_and_defaults_not_to():
     assert Profile("x").selection_tol is None
     for profile in load_training_config(get_settings().config_file).profiles.values():
         assert profile.selection_tol is None, "no shipped profile loosens the search yet"
+
+
+def test_tune_threshold_columns_is_what_the_uri_keyed_form_is_built_from():
+    """Thresholds are a per-COLUMN quantity; the uri -> threshold dict is how the
+    bundle stores them. Splitting the two lets a caller score a candidate by its own
+    thresholds without carrying the label names into the C search, which is what
+    plan item C1 needs. The dict must stay exactly the zip of the columns."""
+    # Each label needs a DIFFERENT optimal cut, and at least one different from the
+    # global one — on data where every column agrees with the global, a wrapper that
+    # ignored the columns entirely would pass and prove nothing (it did, once).
+    # Positives/negatives per column: 0.90/0.10, 0.50/0.45, 0.80/0.75.
+    n = 60
+    y = np.zeros((n, 3), dtype=int)
+    proba = np.empty((n, 3))
+    for col, (high, low) in enumerate([(0.90, 0.10), (0.50, 0.45), (0.80, 0.75)]):
+        block = slice(col * 20, (col + 1) * 20)
+        y[block, col] = 1
+        proba[:, col] = low
+        proba[block, col] = high
+
+    classes = ["c0", "c1", "c2"]
+    global_t, columns = tuning.tune_threshold_columns(y, proba, per_label=True)
+    wrapped_global, wrapped = tuning.tune_thresholds(y, proba, classes, per_label=True)
+
+    assert columns.shape == (3,)
+    assert wrapped_global == global_t
+    assert wrapped == {uri: float(t) for uri, t in zip(classes, columns, strict=True)}
+    assert not np.all(columns == global_t), (
+        "this fixture must produce per-label cuts that differ from the global one, "
+        "otherwise the assertion above cannot tell a real zip from a constant"
+    )
+
+
+def test_tune_threshold_columns_without_per_label_repeats_the_global():
+    """`per_label=False` means every column decides at the global cut. The dict form
+    says that by staying empty (apply_thresholds falls back); the column form has to
+    say it by carrying the value, because an array has no 'absent'."""
+    y = np.array([[1, 0], [1, 0], [0, 1], [0, 1]])
+    proba = np.array([[0.9, 0.1], [0.8, 0.2], [0.2, 0.8], [0.1, 0.9]])
+
+    global_t, columns = tuning.tune_threshold_columns(y, proba, per_label=False)
+    assert np.all(columns == global_t)
+    assert tuning.tune_thresholds(y, proba, ["a", "b"], per_label=False) == (global_t, {})
