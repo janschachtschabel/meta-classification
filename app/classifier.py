@@ -18,7 +18,8 @@ from .vectorizers import TfidfBackend
 
 
 def make_head(
-    c: float = 1.0, max_iter: int = 1000, n_jobs: int = 1, solver: str = "liblinear"
+    c: float = 1.0, max_iter: int = 1000, n_jobs: int = 1, solver: str = "liblinear",
+    tol: float | None = None,
 ) -> OneVsRestClassifier:
     """Build a multilabel-capable logistic-regression head.
 
@@ -28,9 +29,15 @@ def make_head(
     RAM). 'lbfgs' frees the GIL too but upcasts to float64 (2x matrix);
     'liblinear' is GIL-bound and parallelises only via processes (copying the
     matrix per worker).
+
+    ``tol`` is left to scikit-learn (1e-4) unless a caller asks for something
+    else, and it is OMITTED rather than passed through as a default so there is
+    exactly one place that decides what a shipped model is fit at. Loosening it
+    is a search-time trade — see ``Profile.selection_tol``.
     """
     return OneVsRestClassifier(
-        LogisticRegression(C=c, class_weight="balanced", max_iter=max_iter, solver=solver),
+        LogisticRegression(C=c, class_weight="balanced", max_iter=max_iter, solver=solver,
+                           **({} if tol is None else {"tol": tol})),
         n_jobs=n_jobs,
     )
 

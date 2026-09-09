@@ -88,6 +88,7 @@ def select_on_split(
     best_c, val_f1, head = select_c(
         x_tr, y_train, x_va, y_val, profile.c_grid, n_jobs=settings.effective_n_jobs(),
         should_stop=should_stop, solver=settings.solver, task_type=prep.task_type,
+        tol=profile.selection_tol,
         # Distribute the C search across 55->75% so progress (and thus the ETA
         # derived from it) keeps moving through the longest phase.
         on_step=lambda i, total, c, f: on_progress(
@@ -177,6 +178,7 @@ def fit_evaluate_deploy(
                 k=cv_folds, c_grid=profile.c_grid, seed=settings.random_seed,
                 n_jobs=n_jobs, solver=settings.solver,
                 tune_threshold=profile.tune_threshold, per_label=profile.threshold_per_label,
+                tol=profile.selection_tol,
                 should_stop=should_stop, task_type=prep.task_type,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).

@@ -332,3 +332,54 @@ def test_a_profile_can_ask_for_the_shared_matrix_and_defaults_to_not():
     assert Profile("x").refit_vectorizer_per_fold is True
     for profile in load_training_config(get_settings().config_file).profiles.values():
         assert profile.refit_vectorizer_per_fold is True, "no shipped profile shares yet"
+
+
+def test_make_head_uses_sklearns_tolerance_unless_a_looser_one_is_asked_for():
+    """The default has to stay sklearn's, because it is the one the DEPLOYED model
+    is fit at. A looser tolerance is a search-time trade, never a shipping one."""
+    from app.classifier import make_head
+
+    assert make_head().estimator.tol == pytest.approx(1e-4)
+    assert make_head(tol=1e-3).estimator.tol == pytest.approx(1e-3)
+
+
+def test_select_c_fits_at_the_tolerance_it_was_given():
+    texts = [f"alpha beta {i}" for i in range(40)] + [f"gamma delta {i}" for i in range(40)]
+    y = np.zeros((80, 2), dtype=int)
+    y[:40, 0] = 1
+    y[40:, 1] = 1
+    matrix = TfidfBackend().fit_transform(texts)
+    _, _, head = tuning.select_c(matrix, y, matrix, y, [1.0], tol=1e-3)
+    assert head.estimator.tol == pytest.approx(1e-3)
+
+
+def test_cross_val_evaluate_fits_every_candidate_at_the_given_tolerance(monkeypatch):
+    """Every fold and every C, not just the first: a tolerance that reaches only
+    part of the search would make the benchmark's timing meaningless."""
+    seen: list[float | None] = []
+    real = tuning.make_head
+
+    def spy(c, **kwargs):
+        seen.append(kwargs.get("tol"))
+        return real(c, **kwargs)
+
+    monkeypatch.setattr(tuning, "make_head", spy)
+    texts = [f"alpha beta {i}" for i in range(30)] + [f"gamma delta {i}" for i in range(30)]
+    y = np.zeros((60, 2), dtype=int)
+    y[:30, 0] = 1
+    y[30:, 1] = 1
+    tuning.cross_val_evaluate(
+        TfidfBackend, texts, y, ["c0", "c1"], k=2, c_grid=[1.0, 2.0], tol=1e-3,
+    )
+    assert seen == [1e-3] * 4, f"expected 2 folds x 2 candidates at 1e-3, got {seen}"
+
+
+def test_a_profile_can_loosen_the_selection_tolerance_and_defaults_not_to():
+    """The flag is the mechanism's on-switch, and the shipped profiles do not use it
+    until the benchmark's gate is met — see the field's comment in profiles.py."""
+    from app.profiles import Profile, load_training_config
+    from app.settings import get_settings
+
+    assert Profile("x").selection_tol is None
+    for profile in load_training_config(get_settings().config_file).profiles.values():
+        assert profile.selection_tol is None, "no shipped profile loosens the search yet"

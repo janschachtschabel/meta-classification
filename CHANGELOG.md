@@ -4,6 +4,29 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — a profile can loosen the C search's convergence (measured, rejected, kept as a knob)
+
+- `Profile.selection_tol` sets the tolerance for the SELECTION fits only. Every C
+  candidate is fit to be scored once and discarded; only the deploy fit is kept, and it
+  always uses scikit-learn's 1e-4. A test asserts that separation directly rather than
+  trusting that both call sites were wired correctly.
+- 🔴 **Measured on data_30k_ai (26 450 rows x 48 labels, `auto` shape) and NOT adopted.**
+  1e-3 is harmless — same `best_C`, macro F1 moved -0.000029 against a +/-1e-4 budget —
+  and saves a **median 4.4 % of the selection phase over four runs** (-2.7 / +3.4 / +5.4 /
+  +11.2 %), against the plan's 15 % gate.
+- The interesting part is *why*. The convergence tail is not thin: 1e-3 halves the solver
+  (7.02 -> 3.69 newton-cg iterations per label; one full-row fit 26 s -> 12 s), and those
+  numbers were identical in every run. The **phase** barely moves because it is mostly
+  other work — k vectorization passes, the scoring, the threshold search. A first run
+  reported -2.7 %, so the benchmark was repeated: on this machine a single wall-clock run
+  cannot resolve an effect this size, while the solver-level measurement is exact. The
+  script reports both for that reason.
+- This also re-prices **A2** (warm-starting the C path, 2-3 days): it draws on the same
+  pool of solver iterations that A3 just halved for 4.4 %. Recommended for dropping —
+  recorded in the plan as an estimate chained across two measurements, not as a
+  measurement.
+
+
 ### Added — the admin UI speaks German and English (plan item D6)
 
 - **The audience reads German; the interface was entirely English.** A toggle in the top

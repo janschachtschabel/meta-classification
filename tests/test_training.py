@@ -1880,3 +1880,34 @@ def test_a_bundle_with_an_unreadable_document_can_still_be_exported(tmp_path):
         # it certifies the transfer, it does not certify the content.
         assert json.loads(archive.read("manifest.json"))["files"]["metrics.json"]
     assert "tiny_model" in card
+
+
+def test_a_loosened_selection_tolerance_never_reaches_the_deploy_fit(tmp_path, monkeypatch):
+    """The safety property of A3: a looser tolerance buys search time, and the model
+    that gets shipped must not pay for it. Fits are made in two places — the C search
+    (tuning) and the final fit (deploy) — so assert the two separately rather than
+    trusting that one call site was wired correctly."""
+    from app import deploy as deploy_mod
+    from app import tuning as tuning_mod
+
+    selection: list[float | None] = []
+    deployed: list[float | None] = []
+
+    def spy(real, sink):
+        def wrapped(c, **kwargs):
+            sink.append(kwargs.get("tol"))
+            return real(c, **kwargs)
+        return wrapped
+
+    monkeypatch.setattr(tuning_mod, "make_head", spy(tuning_mod.make_head, selection))
+    monkeypatch.setattr(deploy_mod, "make_head", spy(deploy_mod.make_head, deployed))
+
+    settings = _settings(tmp_path)
+    config = _config()
+    config.profiles["fast"].selection_tol = 1e-3
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    assert selection and set(selection) == {1e-3}, f"the C search ignored it: {selection}"
+    assert deployed == [None], f"the deploy fit was loosened too: {deployed}"

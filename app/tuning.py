@@ -52,6 +52,7 @@ def select_c(
     on_step: Callable[[int, int, float, float], None] | None = None,
     solver: str = "liblinear",
     task_type: str = "multilabel",
+    tol: float | None = None,
 ):
     """Fit the head for each C, score macro-F1 on val; return the best.
 
@@ -60,6 +61,8 @@ def select_c(
     optimized for the rule that actually answers requests.
     Stops early (between C candidates) if ``should_stop`` returns True.
     Calls ``on_step(index, total, c, best_f1)`` after each candidate (sub-progress).
+    ``tol`` loosens the convergence of these throw-away fits only — the caller's
+    deploy fit is a separate call and never sees it.
     Returns ``(best_c, best_f1, fitted_head)``.
 
     :raises ValueError: if ``c_grid`` is empty (e.g. a misconfigured profile),
@@ -74,7 +77,7 @@ def select_c(
     for index, c in enumerate(c_grid, start=1):
         if should_stop is not None and should_stop():
             break
-        head = make_head(c, n_jobs=n_jobs, solver=solver)
+        head = make_head(c, n_jobs=n_jobs, solver=solver, tol=tol)
         head.fit(x_train, y_train)
         proba = head.predict_proba(x_val)
         score = macro_f1(y_val, _default_decision(proba, task_type))
@@ -102,6 +105,7 @@ def cross_val_evaluate(
     on_step: Callable[[int, int, str], None] | None = None,
     task_type: str = "multilabel",
     matrix=None,
+    tol: float | None = None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
@@ -124,6 +128,10 @@ def cross_val_evaluate(
 
     ``on_step(done, total, detail)`` fires after EVERY head fit (k x |grid| of
     them), so the caller can show real progress across a run that takes minutes.
+
+    ``tol`` applies to every fold's fit and to nothing else; the deploy fit the caller
+    makes afterwards keeps scikit-learn's default. See ``Profile.selection_tol`` for
+    what a looser one was measured to be worth.
 
     Fairness note: ``C`` and the thresholds are selected on the same OOF predictions
     the metrics report, so those two choices carry a mild in-sample optimism; the
@@ -165,7 +173,7 @@ def cross_val_evaluate(
             # "between the C fits" promise in CV mode as well.
             if should_stop is not None and should_stop():
                 return None
-            head = make_head(c, n_jobs=n_jobs, solver=solver)
+            head = make_head(c, n_jobs=n_jobs, solver=solver, tol=tol)
             head.fit(x_tr, y[tr])
             oof[c][te] = head.predict_proba(x_te).astype(np.float32)
             done += 1

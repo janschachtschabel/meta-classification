@@ -69,6 +69,18 @@ class Profile:
     # for a second target (university subjects) whose source export is not on this
     # machine, so the default stays the leak-free one until that can be measured.
     refit_vectorizer_per_fold: bool = True
+    # Convergence tolerance for the SELECTION fits only; the deploy fit always uses
+    # scikit-learn's 1e-4. Every C candidate is fit to be scored and then thrown away,
+    # so the last digits of its convergence look like waste. ``None`` = sklearn's default.
+    # 🔴 Measured 2026-09-09 on data_30k_ai (26 450 rows x 48 labels, `auto` shape,
+    # benchmark_selection_tol.py). It is HARMLESS — same best_C, macro F1 moved
+    # -0.000029 — and it is not worth having: 1e-3 saved a median 4.4% of the selection
+    # phase over four runs (-2.7 / +3.4 / +5.4 / +11.2), against a 15% gate. Not because
+    # the tail is thin: it halves the solver (7.02 -> 3.69 newton-cg iterations per
+    # label, one full-row fit 26s -> 12s). The phase is simply mostly other work — k
+    # vectorization passes, scoring, the threshold search. Kept as a knob because the
+    # ratio changes with row count and fold count, and re-measuring is one flag away.
+    selection_tol: float | None = None
 
 
 @dataclass
@@ -134,6 +146,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             max_char_features=raw.get("max_char_features"),
             cv_folds=raw.get("cv_folds"),
             refit_vectorizer_per_fold=raw.get("refit_vectorizer_per_fold", True),
+            selection_tol=raw.get("selection_tol"),
         )
     if not profiles:
         profiles = dict(_DEFAULTS)

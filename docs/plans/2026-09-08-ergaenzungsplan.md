@@ -295,8 +295,8 @@ Every item ships as a benchmark script first; adoption needs the stated gate.
 
 | # | Item | Expected effect | Gate to adopt | Effort |
 |---|---|---|---|---|
-| A2 | **Warm-started C path** during *selection only*: per label, fit C ascending with `warm_start=True` (newton-cg supports it), keep the deploy fit on the plain `OneVsRestClassifier` so bundles stay pure sklearn. | Fewer solver iterations on candidates 2..n; ⚪ theoretical 20–40 % of search time | ≥ 15 % wall-clock on `auto` at 30 k rows, identical `best_C` and OOF F1 (±1e-4) | M, 2–3 days |
-| A3 | Looser `tol` (1e-3) for selection fits, 1e-4 for deploy | ⚪ small | same as A2 | S, ½ day |
+| ⚠️ A2 **re-priced by A3 — recommend dropping** | **Warm-started C path** during *selection only*: per label, fit C ascending with `warm_start=True`, keep the deploy fit on the plain `OneVsRestClassifier` so bundles stay pure sklearn. | A2 harvests the same pool A3 measured: solver iterations in the C search. A3 halved them for a median 4.4 % of the phase, so the whole pool is a small share of it — an estimate chained across two measurements, not a measurement | Unchanged (≥ 15 % wall-clock, identical `best_C` and OOF F1 ±1e-4) — but the arithmetic says 15 % is out of reach at this shape. **Owner decision needed:** drop, or measure the fit share directly first | M, 2–3 days |
+| 🔴 A3 **measured 2026-09-09, rejected** | Looser `tol` (1e-3) for selection fits, 1e-4 for deploy. Mechanism shipped as `Profile.selection_tol`, off everywhere; `scripts/benchmark_selection_tol.py` re-measures it | Harmless (same `best_C`, ΔF1 −0.000029) but **median 4.4 % of the selection phase over four runs** (−2.7 / +3.4 / +5.4 / +11.2) | ❌ 15 % not reached. The solver tail is real — 7.02 → 3.69 newton-cg iterations, one fit 26 s → 12 s — the phase is just mostly vectorization, scoring and threshold search | S, done |
 | B3 | **Iterative stratification** for the holdout split and the K folds (multilabel-aware; ~60 lines, no dependency) | Rare labels get positives in every fold → stabler per-label thresholds and metrics | Macro F1 not worse; per-label F1 variance across seeds lower | S–M, 1–2 days |
 | B4 | **Threshold shrinkage** for labels with few validation positives toward the global threshold | Fewer degenerate thresholds on the tail | Macro F1 ≥ baseline on both targets | S, 1 day |
 | B5 | **Per-label calibration** (isotonic on OOF probabilities) so `confidence` reads as a probability; `class_weight="balanced"` inflates positives today | Better `confidence`/`baseline_diff` semantics for the UI; decisions unchanged | Brier/ECE improve; F1 unchanged | S–M, 1–2 days |
@@ -310,6 +310,60 @@ minutes each) — this unblocks P1, A2, A3, B3, B4 and B5. Still held: **B7** (4
 and the retrain of `bildungsstufe_ai_cv5`. **D6 approved**, both languages switchable.
 
 Effort: ~15 person-days spread over the period; each item independent.
+
+---
+
+## Owner proposals, 2026-09-09 — checked against the code, not yet scheduled
+
+Five suggestions arrived after D6, aimed at the cheapest levers: how C and the
+decision thresholds are chosen, and how the training text is assembled. Nothing is
+scheduled yet; what follows is what each one is actually worth once the claim behind
+it was checked against this repository. Where a claim was measurable, it was measured
+rather than argued.
+
+| # | Proposal | Status after checking | What it would cost |
+|---|---|---|---|
+| **C1** | **Pick C on tuned thresholds, not on a fixed 0.5.** Today `tuning.py` scores every candidate with `_default_decision` (a flat 0.5 cut for multilabel) and tunes thresholds only on the winner, so a candidate that would be better *with its own thresholds* can be eliminated before it is ever tried. | 🟢 **Confirmed, and the better procedure already exists in this repo**: `scripts/benchmark_field_weights.py` tunes thresholds per C and *then* picks the best. The production pipeline never adopted it. Multilabel only — single-label serving is argmax and reads no threshold. | No new fits: in CV mode the OOF probabilities for every C are already in memory (`oof[c]`). Threshold tuning per candidate is \|grid\| × the current tuning cost. |
+| **C2** | **Stop searching thresholds in 0.05 steps.** `_DEFAULT_GRID` is 0.05…0.95; anything between two steps, or outside the range, is unreachable. Derive candidates from the observed scores (a PR curve), and shrink toward the global threshold where a label has few positives. | 🟢 **Confirmed** for the grid. The shrinkage half is plan item **B4**, already scheduled — C2 and B4 should be one piece of work, not two. | No new fits. Sorting each label's scores is O(n log n) per label on data already held. |
+| **C3** | **Apply the field weighting consistently at train and predict time.** | 🔴 **Already done** — the claim is out of date. `text_column_weights` is a validated `TrainRequest` field (`schemas.py:73`, rejects columns the request does not train on), `prepare.py:128` honours it over the config default, the admin UI always sends it, and `/predict/csv` reads the weights back out of the model's own metadata (`routes/predict_bulk.py:60`) so a CSV is assembled the way the model was fit. What remains is inherent: `/predict` with a bare text cannot know how the caller assembled it, which is why the training form says so. | — |
+| **C4** | **Merge labels across duplicate texts** instead of keeping the first row and discarding the rest (`data.py:264`). | 🟡 **Mechanism confirmed, effect measured as negligible.** On `data_30k.csv` dedup drops **7 445 of 32 516 rows (22.9 %)** across 5 406 duplicate groups — but only **2 groups** contain a label the kept row lacks, i.e. **2 lost label assignments in total**, and 1 genuine disagreement. `data_30k_ai.csv` and `data_30k_base.csv` have no duplicate texts at all. Duplicates here are the same item's metadata repeated, so they carry the same labels. | Measured 2026-09-09; the review effort would find almost nothing **on these three exports**. A differently shaped export (one row per collection membership) could differ — re-measure before dismissing it there. |
+| **C5** | **Two small experiments**: `class_weight="balanced"` against unweighted (with thresholds retuned either way), and a relative weight between the word and character TF-IDF blocks. | 🟢 **Confirmed as unmeasured.** `classifier.py:33` hardcodes `class_weight="balanced"`; `vectorizers.py:83` `hstack`es the two blocks with no scaling. Both interact with **B5** (calibration) — `balanced` is precisely what makes `confidence` read high. | Comparison runs only; neither changes the bundle size. |
+
+### C1 in detail — the package to build first
+
+Four steps, each its own commit, because the first one is a refactor and bundling a
+refactor into a feature is how a bisect stops being useful.
+
+0. **Split `tune_thresholds` into a column core and a URI-keyed wrapper.** The maths is
+   about columns; the `uri -> threshold` dict is presentation at the edge. Without this,
+   scoring a candidate by its own thresholds means pushing `classes` and `per_label`
+   through `select_c`, which already carries nine parameters. Behaviour-preserving, and
+   it lets `apply_thresholds` become one vectorised comparison instead of a Python loop
+   over labels.
+1. **`Profile.select_c_on_tuned_thresholds: bool = False`** — off until the gate is met,
+   the same shape as `refit_vectorizer_per_fold` and `selection_tol`.
+2. **CV path**: tune thresholds on `oof[c]` for every candidate, pick the (C, thresholds)
+   pair together, and keep the winner's thresholds instead of re-deriving them.
+3. **Holdout path**: `select_c` scores each candidate with its own thresholds and returns
+   them. This also removes a redundant `head.predict_proba(x_va)` that `deploy.py:108`
+   runs today on probabilities `select_c` had already computed and discarded.
+
+**Gate.** Macro F1 up by >= 0.002 on the 26 k target, *and* `predicted_labels_per_row`
+not more than 10 % above the baseline. The second half is the owner's own condition and
+the reason `compute_metrics` already records that pair: a threshold rule can always buy
+macro F1 by asserting more labels per row, and that is a different product rather than a
+better model. Precision and recall are reported beside them so the trade is visible.
+
+**Cost.** `tune_thresholds` runs |c_grid| times instead of once — no additional model
+fits, which is what makes this the cheapest quality lever left in the plan.
+
+**Sequencing, if these are taken up:** C1 and C2 are one experiment, not two — both
+change how a decision threshold is chosen, and measuring them apart would attribute the
+same gain twice. They fold naturally into **B4**, which already owns the shrinkage half.
+Run them on a fixed holdout with the label set unchanged, and report **precision, recall
+and `predicted_labels_per_row` beside macro/micro F1**: a threshold change that buys F1
+by asserting more labels per row is a different product, not a better model — which is
+exactly why `compute_metrics` already records that pair.
 
 ---
 
