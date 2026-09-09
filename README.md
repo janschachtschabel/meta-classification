@@ -250,9 +250,40 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
 ## Endpoints (excerpt)
 
 - **Training:** `POST /train`, `GET /train/status`, `POST /train/stop`, `GET /train/profiles`
-- **Classification:** `POST /predict` (takes up to 1000 texts; `POST /predict/batch` is a deprecated alias of it), `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
+- **Classification:** `POST /predict` (takes up to 1000 texts; `POST /predict/batch` is a deprecated alias of it), `POST /predict/csv` (upload a CSV, get one back — see below), `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
   - `baseline_diff` (`include_baseline_diff=true`) — confidence minus the model's empty-text prediction. A high confidence with a diff near zero means the label fires for almost anything, not for this text.
   - `label_f1` (`include_label_f1=true`) — this label's F1 from the training evaluation. Confidence says how sure the model is *here*, `label_f1` how much that is worth: `Politik 0.95` on a label scoring 0.68 deserves a human look, `Mathematik 0.95` on a label scoring 0.95 does not. `null` for labels the bundle has no score for.
+
+### Classifying a whole CSV
+
+`POST /predict/csv` takes an uploaded CSV and streams a CSV back — the daily editorial
+job is "classify these 500 new items", not one text. `/predict` can do it too, but only
+if the caller assembles each row's text, and **how a text is assembled is part of what
+the model was fit on**: a model trained on `title title description` sits on a different
+feature distribution than one trained on `title description`, and its tuned thresholds
+sit on that distribution with it. So the text columns and their repetition weights are
+read from the bundle; `text_columns` overrides the names when a newer export renamed
+them, and the weights narrow to what is left.
+
+```bash
+curl -X POST http://localhost:8000/predict/csv -H "X-API-Key: $KEY"   -F "file=@items.csv" -F "model_name=faecher_300k_auto" -o items-predictions.csv
+```
+
+The answer is `row,uri,label,confidence,above_threshold`, one line per predicted label,
+where `row` is the 0-based number of the input row — that is how the answers are joined
+back onto the original file. **A row the model asserts nothing for still gets a line**
+with the prediction fields empty, so "which items did it refuse" is readable off the
+result. `above_threshold` is filled only in ranking mode (`top_k`), where it keeps a
+forced ranking distinguishable from an asserted one.
+
+Neither side is materialised: the input is read in chunks and the answer leaves as it is
+produced. 🟢 Measured: 50 000 rows against the 59-label `faecher_300k_auto` produced
+4.1 MB of CSV in 54.6 s at a **2.2 MB peak heap** on a 6.5 MB input (`transfer-encoding:
+chunked`, no `content-length`). The upload obeys `max_upload_mb`; the header is checked
+before a byte is streamed, because once a streaming response starts the status line is
+already 200. A malformed row deep in the file therefore truncates the download — the row
+numbers say where it stopped.
+
 - **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
 - **Share links:** `GET /share/{id}` (public bearer download), `GET /share` and `DELETE /share/{id}` (admin: review what is outstanding, withdraw it early)
 - **Datasets:** `GET /datasets`, `GET /datasets/{name}`, `POST /datasets/analyze`, `POST /datasets/{name}/validate`, import/export/delete

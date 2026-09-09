@@ -4,6 +4,25 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — classify a whole CSV in one call (`POST /predict/csv`)
+
+- Upload a CSV, get a CSV back. The daily editorial job is "classify these 500 new
+  items", not one text. `/predict` could always do it, but only if the caller assembled
+  each row's text — and **how a text is assembled is part of what the model was fit
+  on**, so that is the one thing not to leave to the caller: the text columns and their
+  repetition weights are read from the bundle.
+- `row,uri,label,confidence,above_threshold`, one line per predicted label, `row` being
+  the 0-based input row so the answers join back onto the original file. **A row the
+  model asserts nothing for still gets a line** — "which items did it refuse" has to be
+  readable off the result, and a vanished row is indistinguishable from one never sent.
+- Neither side is materialised. 🟢 Measured: 50 000 rows against the 59-label
+  `faecher_300k_auto` → 4.1 MB of CSV in 54.6 s at a **2.2 MB peak heap** on a 6.5 MB
+  input; `transfer-encoding: chunked`, no `content-length`.
+- The text assembly now lives in one function (`data.combine_text_columns`) shared with
+  training. Two loops that merely looked alike would have drifted into exactly the
+  train/serve skew the model card warns about — silently, with plausible numbers.
+
+
 ### Changed — exports and dataset uploads no longer pass through memory
 
 - Exporting a model built the whole archive in RAM. Measured on the real 51 MB

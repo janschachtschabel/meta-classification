@@ -160,6 +160,29 @@ class LoadedData:
     uri_to_label: dict[str, str]
 
 
+def combine_text_columns(
+    frame: pd.DataFrame, text_columns: list[str], weights: dict[str, int] | None = None
+) -> pd.Series:
+    """Assemble one text per row: each column repeated as often as its weight says.
+
+    Extracted from ``load_dataset`` because classifying a CSV has to assemble its input
+    EXACTLY the way training did. A model fit on "title title description" sits on a
+    different feature distribution than one fit on "title description", and its tuned
+    thresholds sit on that distribution too — two copies of this loop would drift into
+    exactly that skew, silently and with plausible-looking numbers.
+
+    Repetition is what a TF-IDF backend understands as "this field matters more": a
+    title drowning in a long description gets its term frequency back. ``sublinear_tf``
+    damps it logarithmically, so a weight of 2 is worth ~1.7x, not 2x.
+    """
+    weights = weights or {}
+    repeated = [col for col in text_columns for _ in range(max(1, int(weights.get(col, 1))))]
+    combined = frame[repeated[0]].fillna("")
+    for col in repeated[1:]:
+        combined = combined + " " + frame[col].fillna("")
+    return combined
+
+
 def load_dataset(
     path: str | Path,
     text_columns: list[str],
@@ -181,11 +204,8 @@ def load_dataset(
     (if present) is used to build a URI->human-readable-label mapping.
 
     ``text_column_weights`` maps a column to how often its text is repeated in the
-    combined training text (default 1). Repetition is what a TF-IDF backend
-    understands as "this field matters more": a title drowning in a long
-    description gets its term frequency back. ``sublinear_tf`` damps it
-    logarithmically, so a weight of 2 is worth ~1.7x, not 2x. Weights for columns
-    the CSV does not have are ignored, exactly like the columns themselves.
+    combined training text (default 1) — see :func:`combine_text_columns`. Weights for
+    columns the CSV does not have are ignored, exactly like the columns themselves.
     """
     path = Path(path)
     header = read_csv(path, sep=separator, nrows=0)
@@ -210,12 +230,7 @@ def load_dataset(
     emit("Reading CSV file …")
     df = read_csv(path, sep=separator, usecols=usecols, dtype=str, low_memory=False)
 
-    weights = text_column_weights or {}
-    weighted_cols = [col for col in text_cols for _ in range(max(1, int(weights.get(col, 1))))]
-    combined = df[weighted_cols[0]].fillna("")
-    for col in weighted_cols[1:]:
-        combined = combined + " " + df[col].fillna("")
-    texts = _clean_in_chunks(combined, on_progress)
+    texts = _clean_in_chunks(combine_text_columns(df, text_cols, text_column_weights), on_progress)
 
     label_series = df[label_column]
     uri_to_label: dict[str, str] = {}

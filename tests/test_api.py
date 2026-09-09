@@ -5,6 +5,8 @@ redirected to a temp dir via environment variables set before the app imports.
 """
 
 import atexit
+import csv
+import io
 import os
 import shutil
 import tempfile
@@ -953,3 +955,63 @@ def test_an_oversized_dataset_upload_is_refused_without_filling_the_disk(monkeyp
 
     assert "huge.csv" not in [d["name"] for d in client.get("/datasets", headers=RO).json()]
     assert not list((_TMP / "data").glob("*.part")), "the refused upload leaves no bytes"
+
+
+CSV_BODY = (
+    b"properties.cclom:title;properties.cclom:general_keyword;other\n"
+    b"Bruchrechnung und Gleichungen loesen;Mathematik Brueche;x\n"
+    b"Photosynthese der gruenen Pflanzen;Biologie Blatt Chlorophyll;y\n"
+    b"Der Wiener Kongress von 1815;Geschichte Europa Restauration;z\n"
+)
+
+
+def test_a_whole_csv_can_be_classified_in_one_call(trained_model):
+    """The editorial job is "classify these 500 new items", not one text. Doing that
+    through /predict means the caller assembles each row's text — and how a text is
+    assembled is part of what the model was fit on, so it is the one thing not to leave
+    to the caller. The columns and their weights come out of the bundle.
+    """
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    response = client.post("/predict/csv", files=files,
+                           data={"model_name": "api_model"}, headers=RO)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "items-predictions.csv" in response.headers["content-disposition"]
+
+    rows = list(csv.reader(io.StringIO(response.text)))
+    assert rows[0] == ["row", "uri", "label", "confidence", "above_threshold"]
+    assert {row[0] for row in rows[1:]} == {"0", "1", "2"}, "every input row is accounted for"
+    assert rows[1][1] == "uri:math", "the first row is classified from its own text"
+    assert 0.0 <= float(rows[1][3]) <= 1.0
+
+
+def test_classifying_a_csv_refuses_a_file_without_the_trained_columns(trained_model):
+    """A streaming response cannot report a failure — the status line is already 200 —
+    so the header is checked while a 400 is still possible."""
+    files = {"file": ("wrong.csv", b"headline;body\na;b\n", "text/csv")}
+    response = client.post("/predict/csv", files=files,
+                           data={"model_name": "api_model"}, headers=RO)
+    assert response.status_code == 400, response.text
+    assert "properties.cclom:title" in response.text, "say which column is missing"
+
+
+def test_classifying_a_csv_reports_an_unknown_model_and_an_oversized_upload(trained_model):
+    """Both failures belong to the request, not to the server, and both must be decided
+    before a byte of CSV is streamed."""
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    missing = client.post("/predict/csv", files=files,
+                          data={"model_name": "ghost"}, headers=RO)
+    assert missing.status_code == 404, missing.text
+
+    from app.settings import get_settings
+
+    settings = get_settings()
+    original = settings.max_upload_mb
+    try:
+        settings.max_upload_mb = 0  # any byte is over the cap
+        oversize = client.post("/predict/csv", files={"file": ("items.csv", CSV_BODY, "text/csv")},
+                               data={"model_name": "api_model"}, headers=RO)
+        assert oversize.status_code == 413, oversize.text
+    finally:
+        settings.max_upload_mb = original
+    assert not list((_TMP / "data").glob(".predict-*")), "the spooled upload is cleaned up"

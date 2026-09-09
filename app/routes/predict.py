@@ -1,4 +1,9 @@
-"""Prediction endpoints: predict, batch, explainable prediction."""
+"""Prediction endpoints over JSON: predict, batch, several models, explain.
+
+Classifying a whole uploaded CSV lives in ``predict_bulk`` — same feature area, but a
+multipart upload streaming a file back is a different shape from a JSON request, and
+it changes for different reasons.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ from ..security import require_role, safe_name
 router = APIRouter(tags=["Prediction"])
 
 
-def _load(model_name: str) -> ClassifierModel:
+def load_model(model_name: str) -> ClassifierModel:
     safe_name(model_name, "model name")
     registry = get_registry()
     if not registry.exists(model_name):
@@ -83,7 +88,7 @@ def _build_response(model: ClassifierModel, body: PredictRequest, top_k: int | N
 
 def _load_and_build_multi(body: MultiPredictRequest) -> dict:
     names = list(dict.fromkeys(body.model_names))  # dedupe, keep order
-    models = {name: _load(name) for name in names}  # loads run in the worker thread
+    models = {name: load_model(name) for name in names}  # loads run in the worker thread
     return _build_multi_response(models, body)
 
 
@@ -118,7 +123,7 @@ def _load_and_build(body: PredictRequest) -> dict:
     # _load (cold-cache disk read + skops deserialize) runs INSIDE the thread so
     # a cold model never blocks the single worker's event loop. HTTPExceptions it
     # raises propagate back through the await and are handled normally.
-    return _build_response(_load(body.model_name), body, body.top_k)
+    return _build_response(load_model(body.model_name), body, body.top_k)
 
 
 async def _predict(body: PredictRequest) -> dict:
@@ -194,7 +199,7 @@ async def predict_explain(
     More expensive than `/predict`. **Auth:** readonly.
     """
     def load_and_explain() -> dict:
-        return explain_prediction(_load(body.model_name), body.text, body.top_n_words)
+        return explain_prediction(load_model(body.model_name), body.text, body.top_n_words)
 
     result = await asyncio.to_thread(load_and_explain)
     return {**result, "model_name": body.model_name}
