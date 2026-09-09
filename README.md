@@ -450,6 +450,42 @@ For hosting in other ML serving systems:
 - **Kubernetes:** Helm chart in [`deploy/helm/classification-api`](deploy/helm/classification-api/README.md) — StatefulSet with exactly **1 replica** (process-local state + one PVC), probes on `/health`, API keys via chart secret.
 - **CI/CD:** GitHub Actions ([`.github/workflows/`](.github/workflows)) run the three quality gates and publish the image to GHCR; GitLab ([`.gitlab-ci.yml`](.gitlab-ci.yml)) mirrors that for self-hosted registries + Helm-chart push (credentials via CI/CD variables only).
 
+### Backup & restore
+
+Everything that cannot be rebuilt from the image lives on one volume (`/data`):
+
+| Path | What it costs to lose |
+|---|---|
+| `/data/models` | **Hours.** A subject model on 156 k rows took 40 min; `best` on 114 k rows took 93 min. |
+| `/data/datasets` | A re-export from the source system, plus the transfer (the WLO exports are 126–195 MB gzipped). |
+| `/data/share_links.json` | Nothing worth restoring — links expire within 7 days anyway. |
+
+```bash
+# Docker: copy the volume out (and back in) through a throwaway container
+docker run --rm -v classification-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/metaclassify-$(date +%F).tar.gz -C /data .
+docker run --rm -v classification-data:/data -v "$PWD":/backup alpine \
+  tar xzf /backup/metaclassify-2026-09-09.tar.gz -C /data     # restore
+
+# Kubernetes: a VolumeSnapshot if the storage class supports it, otherwise
+kubectl exec <pod> -- tar cz -C /data . > metaclassify-$(date +%F).tar.gz
+```
+
+**A copy taken while the service runs is consistent, with one exception.** A
+training publishes its bundle by staging into a hidden `.name.tmp` directory and
+renaming, so a copy catches either the previous bundle or the new one — never a
+mixture; an interrupted save leaves only the hidden directory, which the next
+startup sweeps. The exception is `scripts/prune_bundle_labels.py --apply`, which
+saves over an *existing* name: that path deletes before it renames, so a copy taken
+in that window can miss the bundle entirely. Back up when no repair script is
+running, or stop the service first.
+
+**Individual models have a second, verifiable route:** `POST /models/{name}/export`
+produces a ZIP whose `manifest.json` carries a SHA-256 for every member, and import
+checks it. That is a portable backup you can verify on arrival — a raw volume copy
+is not. It is the right form for the handful of models you actually deploy; the tar
+above is the right form for everything at once.
+
 ## Tests
 
 ```bash

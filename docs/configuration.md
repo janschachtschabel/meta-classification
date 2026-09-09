@@ -45,7 +45,9 @@ limits see real client IPs · storage paths on a persistent volume.
 
 In containers, the provided `docker-compose.yml` and Helm chart point the three
 *state* paths (`DATA_DIR`, `MODELS_DIR`, `SHARE_LINKS_FILE`) at the mounted
-volume (`/data/*`) automatically. `APIV3_CONFIG_FILE` deliberately stays at the
+volume (`/data/*`) automatically. That volume is the only thing that cannot be
+rebuilt from the image — see [Backup & restore](../README.md#backup--restore) for
+what it costs to lose and how to copy it consistently while the service runs. `APIV3_CONFIG_FILE` deliberately stays at the
 image-baked `/app/config.yaml`: the profiles file ships with the image, and
 under the Helm chart's read-only root filesystem it is **immutable at runtime**
 (the "reloaded on every `POST /train`" note above then only matters for local
