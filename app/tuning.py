@@ -53,6 +53,8 @@ def select_c(
     solver: str = "liblinear",
     task_type: str = "multilabel",
     tol: float | None = None,
+    select_on_tuned_thresholds: bool = False,
+    threshold_per_label: bool = True,
 ):
     """Fit the head for each C, score macro-F1 on val; return the best.
 
@@ -63,16 +65,28 @@ def select_c(
     Calls ``on_step(index, total, c, best_f1)`` after each candidate (sub-progress).
     ``tol`` loosens the convergence of these throw-away fits only — the caller's
     deploy fit is a separate call and never sees it.
-    Returns ``(best_c, best_f1, fitted_head)``.
+
+    ``select_on_tuned_thresholds`` swaps that scoring rule for one that tunes each
+    candidate's thresholds on the validation split and scores it under its own —
+    otherwise a candidate ranked well but scaled low is eliminated before its
+    thresholds exist. Ignored for single-label tasks, where serving is argmax and
+    reads no threshold. See ``Profile.select_c_on_tuned_thresholds``.
+
+    Returns ``(best_c, best_f1, fitted_head, thresholds)``, where ``thresholds`` is the
+    winner's ``(global, per-column)`` pair under that rule and ``None`` otherwise. The
+    caller can keep it instead of scoring the validation split a second time to
+    rediscover it.
 
     :raises ValueError: if ``c_grid`` is empty (e.g. a misconfigured profile),
         instead of failing with an opaque IndexError / a ``None`` head downstream.
     """
     if len(c_grid) == 0:
         raise ValueError("empty C grid: at least one C candidate is required")
+    tune_each = select_on_tuned_thresholds and not is_single_label(task_type)
     best_c: float = c_grid[0]
     best_f1 = -1.0
     best_head = None
+    best_thresholds: tuple[float, np.ndarray] | None = None
     total = len(c_grid)
     for index, c in enumerate(c_grid, start=1):
         if should_stop is not None and should_stop():
@@ -80,12 +94,19 @@ def select_c(
         head = make_head(c, n_jobs=n_jobs, solver=solver, tol=tol)
         head.fit(x_train, y_train)
         proba = head.predict_proba(x_val)
-        score = macro_f1(y_val, _default_decision(proba, task_type))
+        if tune_each:
+            score, global_t, columns = _tuned_score(
+                y_val, proba, per_label=threshold_per_label
+            )
+            thresholds: tuple[float, np.ndarray] | None = (global_t, columns)
+        else:
+            score = macro_f1(y_val, _default_decision(proba, task_type))
+            thresholds = None
         if score > best_f1:
-            best_f1, best_c, best_head = score, c, head
+            best_f1, best_c, best_head, best_thresholds = score, c, head, thresholds
         if on_step is not None:
             on_step(index, total, c, best_f1)
-    return best_c, best_f1, best_head
+    return best_c, best_f1, best_head, best_thresholds
 
 
 def cross_val_evaluate(

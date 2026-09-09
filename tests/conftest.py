@@ -40,3 +40,72 @@ def _reset_rate_limiter():
 
     limiter.reset()
     yield
+
+
+class _ScriptedHead:
+    """A head whose probabilities are read from a table instead of learned."""
+
+    def __init__(self, table, scored_rows: list[int]) -> None:
+        self.table = table
+        self._scored_rows = scored_rows
+
+    def fit(self, x, y):
+        return self
+
+    def predict_proba(self, x):
+        import numpy as np
+
+        # Sparse when a scripted vectorizer produced it, dense when a test handed
+        # `cross_val_evaluate` a shared matrix directly.
+        dense = x.toarray() if hasattr(x, "toarray") else np.asarray(x)
+        rows = dense[:, 0].astype(int)
+        self._scored_rows.append(len(rows))
+        return self.table[rows]
+
+
+class ScriptedCSearch:
+    """Two C candidates that the flat 0.5 cut and tuned thresholds disagree about.
+
+    ``C=1`` is well scaled but misses row 0 of label 0: macro F1 6/7 and 1.0 on the two
+    labels, and no threshold rescues it because the missed row scores exactly what the
+    negatives score. ``C=2`` ranks every row perfectly but compresses the scores below
+    0.5 — the flat cut predicts nothing and scores it 0.0, a tuned cut scores it 1.0.
+    Selecting on the flat cut therefore discards the candidate that wins once its
+    thresholds are set, which is what plan item C1 is about.
+
+    The probabilities are scripted rather than fitted so the tests measure the
+    SELECTION RULE: with real fits the answer would turn on how well two Cs happen to
+    separate toy data. Row identity travels in column 0 of the feature matrix, which is
+    what lets a CV fold's slice look its own rows up again.
+    """
+
+    def __init__(self, scored_rows: list[int]) -> None:
+        import numpy as np
+
+        self.y = np.zeros((8, 2), dtype=int)
+        self.y[:4, 0] = 1
+        self.y[4:, 1] = 1
+        self.tables = {
+            1.0: np.array([[0.1, 0.1]] + [[0.9, 0.1]] * 3 + [[0.1, 0.9]] * 4),
+            2.0: np.array([[0.4, 0.05]] * 4 + [[0.05, 0.4]] * 4),
+        }
+        self.row_ids = np.arange(8, dtype=float).reshape(-1, 1)
+        # Rows handed to predict_proba, one entry per call, in order.
+        self.scored_rows = scored_rows
+
+    # Macro F1 the well-scaled candidate reaches under any rule — the number both
+    # selection rules must agree on for it, spelled out once.
+    well_scaled_f1 = 6 / 7 / 2 + 0.5
+
+    def head(self, c, **kwargs):
+        return _ScriptedHead(self.tables[c], self.scored_rows)
+
+
+@pytest.fixture
+def scripted_c_search(monkeypatch):
+    """`tuning.make_head` scripted with :class:`ScriptedCSearch`'s two candidates."""
+    from app import tuning
+
+    case = ScriptedCSearch([])
+    monkeypatch.setattr(tuning, "make_head", case.head)
+    return case

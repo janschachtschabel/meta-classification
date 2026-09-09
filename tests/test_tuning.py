@@ -52,7 +52,7 @@ def test_select_c_returns_fitted_head():
     x, y = x[order], y[order]
     x_tr, x_val, y_tr, y_val = x[:60], x[60:], y[:60], y[60:]
 
-    best_c, best_f1, head = tuning.select_c(x_tr, y_tr, x_val, y_val, [0.5, 1.0, 2.0])
+    best_c, best_f1, head, _ = tuning.select_c(x_tr, y_tr, x_val, y_val, [0.5, 1.0, 2.0])
     assert best_c in (0.5, 1.0, 2.0)
     assert head is not None
     assert head.predict_proba(x_val).shape == (20, 2)
@@ -211,8 +211,8 @@ def test_select_c_scores_the_argmax_rule_for_single_label_tasks(monkeypatch):
     monkeypatch.setattr(tuning, "make_head", lambda c, **kw: _FixedProbaHead(proba))
 
     x = np.zeros((2, 3))
-    _, f1_multiclass, _ = tuning.select_c(x, y_val, x, y_val, [1.0], task_type="multiclass")
-    _, f1_multilabel, _ = tuning.select_c(x, y_val, x, y_val, [1.0])
+    _, f1_multiclass, *_ = tuning.select_c(x, y_val, x, y_val, [1.0], task_type="multiclass")
+    _, f1_multilabel, *_ = tuning.select_c(x, y_val, x, y_val, [1.0])
     assert f1_multiclass == pytest.approx(1.0)
     assert f1_multilabel == pytest.approx(0.0)
 
@@ -349,7 +349,7 @@ def test_select_c_fits_at_the_tolerance_it_was_given():
     y[:40, 0] = 1
     y[40:, 1] = 1
     matrix = TfidfBackend().fit_transform(texts)
-    _, _, head = tuning.select_c(matrix, y, matrix, y, [1.0], tol=1e-3)
+    _, _, head, _ = tuning.select_c(matrix, y, matrix, y, [1.0], tol=1e-3)
     assert head.estimator.tol == pytest.approx(1e-3)
 
 
@@ -456,64 +456,19 @@ def test_a_profile_can_pick_c_on_tuned_thresholds_and_defaults_not_to(tmp_path):
     assert load_training_config(config_file).get("tuned").select_c_on_tuned_thresholds is True
 
 
-class _ScriptedHead:
-    """A head whose probabilities are read from a table instead of learned.
-
-    The tests below pin down a SELECTION RULE, so the probabilities have to be an
-    input to the test rather than an output of a solver — with real fits the answer
-    would depend on how well two Cs happen to separate toy data. Row identity travels
-    in column 0 of the feature matrix, which is what lets a CV fold's slice look its
-    own rows up again.
-    """
-
-    def __init__(self, table: np.ndarray) -> None:
-        self.table = table
-
-    def fit(self, x, y):
-        return self
-
-    def predict_proba(self, x):
-        return self.table[np.asarray(x)[:, 0].astype(int)]
-
-
-def _selection_disagreement_case():
-    """Two candidates the flat cut and tuned thresholds disagree about.
-
-    C=1 is well scaled but misses row 0 of label 0: macro F1 0.929, and no threshold
-    can rescue it because the missed row scores exactly what the negatives score.
-    C=2 ranks every row perfectly but compresses the scores below 0.5 — the flat cut
-    predicts nothing and scores it 0.0, a tuned cut scores it 1.0.
-
-    So selecting on the flat 0.5 cut throws away the candidate that wins once its
-    thresholds are set, which is the whole of plan item C1.
-    """
-    y = np.zeros((8, 2), dtype=int)
-    y[:4, 0] = 1
-    y[4:, 1] = 1
-    well_scaled = np.array([[0.1, 0.1]] + [[0.9, 0.1]] * 3 + [[0.1, 0.9]] * 4)
-    compressed = np.array([[0.4, 0.05]] * 4 + [[0.05, 0.4]] * 4)
-    row_ids = np.arange(8, dtype=float).reshape(-1, 1)
-    return row_ids, y, {1.0: well_scaled, 2.0: compressed}
-
-
-def _script_the_heads(monkeypatch, tables):
-    monkeypatch.setattr(tuning, "make_head", lambda c, **kwargs: _ScriptedHead(tables[c]))
-
-
-def test_cross_val_evaluate_picks_the_c_that_wins_under_its_own_thresholds(monkeypatch):
+def test_cross_val_evaluate_picks_the_c_that_wins_under_its_own_thresholds(scripted_c_search):
     """With the flag on, each candidate is scored under thresholds tuned for itself
     and the (C, thresholds) pair is chosen together; off, today's flat 0.5 cut decides.
     The grid puts the tuned winner FIRST so a rule that kept the last candidate's
     thresholds could not pass by accident."""
-    row_ids, y, tables = _selection_disagreement_case()
-    _script_the_heads(monkeypatch, tables)
+    row_ids, y = scripted_c_search.row_ids, scripted_c_search.y
     classes = ["c0", "c1"]
 
     best_c, global_t, per_label, metrics = tuning.cross_val_evaluate(
         TfidfBackend, [""] * 8, y, classes, matrix=row_ids, k=2, c_grid=[2.0, 1.0],
     )
     assert best_c == 1.0, "the flat cut scores the compressed candidate 0.0"
-    assert metrics["f1_macro"] == pytest.approx(6 / 7 / 2 + 0.5, abs=1e-3)
+    assert metrics["f1_macro"] == pytest.approx(scripted_c_search.well_scaled_f1, abs=1e-3)
 
     best_c, global_t, per_label, metrics = tuning.cross_val_evaluate(
         TfidfBackend, [""] * 8, y, classes, matrix=row_ids, k=2, c_grid=[2.0, 1.0],
@@ -525,11 +480,10 @@ def test_cross_val_evaluate_picks_the_c_that_wins_under_its_own_thresholds(monke
     assert per_label == {"c0": pytest.approx(0.1), "c1": pytest.approx(0.1)}
 
 
-def test_cross_val_evaluate_ignores_the_tuned_rule_when_thresholds_are_off(monkeypatch):
+def test_cross_val_evaluate_ignores_the_tuned_rule_when_thresholds_are_off(scripted_c_search):
     """`tune_threshold=False` means the bundle ships no thresholds, so selecting on
     thresholds it will not keep would optimize for a rule serving never applies."""
-    row_ids, y, tables = _selection_disagreement_case()
-    _script_the_heads(monkeypatch, tables)
+    row_ids, y = scripted_c_search.row_ids, scripted_c_search.y
 
     best_c, global_t, per_label, _ = tuning.cross_val_evaluate(
         TfidfBackend, [""] * 8, y, ["c0", "c1"], matrix=row_ids, k=2, c_grid=[2.0, 1.0],
@@ -538,11 +492,10 @@ def test_cross_val_evaluate_ignores_the_tuned_rule_when_thresholds_are_off(monke
     assert (best_c, global_t, per_label) == (1.0, 0.5, {})
 
 
-def test_cross_val_evaluate_ignores_the_tuned_rule_for_single_label_tasks(monkeypatch):
+def test_cross_val_evaluate_ignores_the_tuned_rule_for_single_label_tasks(scripted_c_search):
     """binary/multiclass serving is argmax and reads no threshold; tuning one to
     select on would optimize for a rule that never runs."""
-    row_ids, y, tables = _selection_disagreement_case()
-    _script_the_heads(monkeypatch, tables)
+    row_ids, y = scripted_c_search.row_ids, scripted_c_search.y
 
     best_c, global_t, per_label, _ = tuning.cross_val_evaluate(
         TfidfBackend, [""] * 8, y, ["c0", "c1"], matrix=row_ids, k=2, c_grid=[2.0, 1.0],
@@ -550,3 +503,39 @@ def test_cross_val_evaluate_ignores_the_tuned_rule_for_single_label_tasks(monkey
     )
     assert (global_t, per_label) == (0.5, {})
     assert best_c in (1.0, 2.0)
+
+
+def test_select_c_scores_candidates_under_their_own_thresholds(scripted_c_search):
+    """The holdout half of C1. Same disagreement as the CV test, and the same guard:
+    the grid puts the tuned winner FIRST, so returning the last candidate's thresholds
+    cannot pass by accident."""
+    row_ids, y = scripted_c_search.row_ids, scripted_c_search.y
+
+    best_c, best_f1, head, thresholds = tuning.select_c(row_ids, y, row_ids, y, [2.0, 1.0])
+    assert (best_c, thresholds) == (1.0, None)
+    assert best_f1 == pytest.approx(scripted_c_search.well_scaled_f1, abs=1e-3)
+
+    best_c, best_f1, head, thresholds = tuning.select_c(
+        row_ids, y, row_ids, y, [2.0, 1.0], select_on_tuned_thresholds=True,
+    )
+    assert best_c == 2.0
+    assert best_f1 == 1.0
+    assert thresholds is not None
+    global_t, columns = thresholds
+    assert global_t == pytest.approx(0.1)
+    assert columns == pytest.approx([0.1, 0.1])
+    assert np.array_equal(head.predict_proba(row_ids), scripted_c_search.tables[2.0]), (
+        "the head that comes back must be the winner's, not the last candidate's"
+    )
+
+
+def test_select_c_leaves_thresholds_alone_for_single_label_tasks(scripted_c_search):
+    """binary/multiclass serving is argmax, so a threshold selected here would be dead
+    weight in the bundle — the flag must not reach the decision rule."""
+    row_ids, y = scripted_c_search.row_ids, scripted_c_search.y
+
+    _, _, _, thresholds = tuning.select_c(
+        row_ids, y, row_ids, y, [2.0, 1.0],
+        task_type="multiclass", select_on_tuned_thresholds=True,
+    )
+    assert thresholds is None

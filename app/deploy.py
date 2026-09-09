@@ -25,7 +25,14 @@ from .classifier import make_head
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
-from .tuning import compute_metrics, cross_val_evaluate, is_single_label, select_c, tune_thresholds
+from .tuning import (
+    compute_metrics,
+    cross_val_evaluate,
+    is_single_label,
+    name_threshold_columns,
+    select_c,
+    tune_thresholds,
+)
 from .vectorizers import TfidfBackend
 
 logger = logging.getLogger("api_v3.training")
@@ -85,10 +92,14 @@ def select_on_split(
 
     on_progress(phase="selecting", progress=55,
                 message=f"Selecting regularization strength C – {len(profile.c_grid)} candidates on validation...")
-    best_c, val_f1, head = select_c(
+    # Single-label serving is argmax, so thresholds are neither tuned nor stored there.
+    thresholds_apply = profile.tune_threshold and not is_single_label(prep.task_type)
+    best_c, val_f1, head, val_thresholds = select_c(
         x_tr, y_train, x_va, y_val, profile.c_grid, n_jobs=settings.effective_n_jobs(),
         should_stop=should_stop, solver=settings.solver, task_type=prep.task_type,
         tol=profile.selection_tol,
+        select_on_tuned_thresholds=profile.select_c_on_tuned_thresholds and thresholds_apply,
+        threshold_per_label=profile.threshold_per_label,
         # Distribute the C search across 55->75% so progress (and thus the ETA
         # derived from it) keeps moving through the longest phase.
         on_step=lambda i, total, c, f: on_progress(
@@ -100,16 +111,20 @@ def select_on_split(
         return None
     logger.info("Selected C=%s (val_f1_macro=%.4f)", best_c, val_f1)
 
-    if profile.tune_threshold and not is_single_label(prep.task_type):
-        # Single-label tasks skip this: serving decides via argmax and never
-        # reads thresholds — tuning would only bake dead values into the bundle.
+    if not thresholds_apply:
+        global_t, per_label = 0.5, {}
+    elif val_thresholds is not None:
+        # Already tuned inside the C search, on this very head's validation
+        # probabilities — re-deriving them would score the same rows again to reach
+        # the same answer. No progress phase either: there is no work to report.
+        global_t, columns = val_thresholds
+        per_label = name_threshold_columns(columns, classes) if profile.threshold_per_label else {}
+    else:
         on_progress(phase="threshold", progress=75,
                     message="Tuning per-label classification thresholds (on validation)...")
         global_t, per_label = tune_thresholds(
             y_val, head.predict_proba(x_va), classes, per_label=profile.threshold_per_label
         )
-    else:
-        global_t, per_label = 0.5, {}
 
     on_progress(phase="evaluating", progress=85,
                 message="Evaluating on the held-out test split (honest metrics)...")
@@ -179,6 +194,7 @@ def fit_evaluate_deploy(
                 n_jobs=n_jobs, solver=settings.solver,
                 tune_threshold=profile.tune_threshold, per_label=profile.threshold_per_label,
                 tol=profile.selection_tol,
+                select_on_tuned_thresholds=profile.select_c_on_tuned_thresholds,
                 should_stop=should_stop, task_type=prep.task_type,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).
