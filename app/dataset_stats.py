@@ -12,7 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .data import load_dataset, read_csv, split_labels
+from .data import auto_min_samples, load_dataset, read_csv, split_labels
+from .profiles import estimated_minutes
 
 
 def sample_rows(path: str | Path, *, separator: str = ";", n: int = 5) -> dict:
@@ -52,10 +53,21 @@ def analyze_dataset(
         for lab in labs:
             counts[lab] = counts.get(lab, 0) + 1
     top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    total = len(data.texts)
     return {
         "file": str(path),
-        "total_samples": len(data.texts),
+        "total_samples": total,
         "unique_labels": len(counts),
+        # The two numbers that decide whether to start a run at all, computed here so
+        # nothing downstream re-derives them: the threshold that fits this size (the
+        # heuristic the training request would apply for `null`), and what each profile
+        # costs. The threshold analysis below says how many labels survive the
+        # recommendation, which is what turns it from a number into a decision.
+        "recommended_min_samples_per_label": auto_min_samples(total),
+        "estimated_minutes": {
+            name: minutes for name in ("fast", "auto", "best")
+            if (minutes := estimated_minutes(name, total)) is not None
+        },
         "text_statistics": {
             "mean_length_chars": float(lengths.mean()),
             "median_length_chars": float(np.median(lengths)),
@@ -64,9 +76,12 @@ def analyze_dataset(
             "mean_labels_per_sample": float(per_sample.mean()),
             "max_labels_per_sample": int(per_sample.max()),
         },
+        # The recommendation joins the fixed buckets: "keeps N of M labels" is the
+        # sentence that turns it from a number into a decision, and on a small dataset
+        # the heuristic answers 2, which none of the fixed buckets covers.
         "label_threshold_analysis": {
             f"labels_with_{t}+_samples": int(sum(1 for c in counts.values() if c >= t))
-            for t in (5, 10, 20, 35, 50, 100)
+            for t in sorted({5, 10, 20, 35, 50, 100, auto_min_samples(total)})
         },
         "top_20_labels": dict(top[:20]),
         "rare_labels_under_10": {k: v for k, v in counts.items() if v < 10},

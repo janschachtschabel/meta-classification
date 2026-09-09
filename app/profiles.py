@@ -15,6 +15,36 @@ from pathlib import Path
 
 import yaml
 
+# What a run costs, anchored on the ONE full-scale measurement this project has:
+# faecher_300k_auto, 156 373 rows x 60 labels, `auto`, 40.2 min wall-clock (README,
+# "How large a dataset does this handle?"). Row scaling is linear — benchmark_row_scaling
+# measured exponent 1.00 for memory and vectorization — so minutes scale with the rows.
+ANCHOR_ROWS = 156_373
+ANCHOR_MINUTES = 40.2
+# Relative to `auto`, from the head-fit and vectorization-pass counts in that same table
+# (~4 min / 40 min / ~1.2 h at the anchor size). The RATIO is solid because it follows
+# from the loop in tuning.cross_val_evaluate; the absolute minutes are an estimate.
+_PROFILE_COST = {"fast": 0.1, "auto": 1.0, "best": 1.8}
+
+
+def estimated_minutes(profile_name: str, n_rows: int) -> float | None:
+    """Roughly how long training ``n_rows`` rows on this profile takes, in minutes.
+
+    An **estimate**, not a schedule, and it is worth knowing what it cannot see: the
+    label count (the head's coefficients are ``n_labels x n_features``), the machine, and
+    the corpus's non-zeros per document — 365 on the anchor run against 278 on a shorter
+    corpus. What it is good for is the decision it exists to support: whether a run is a
+    coffee break or an afternoon.
+
+    ``None`` for a profile the cost model has no factor for: a profile added to
+    ``config.yaml`` has no measured cost until somebody measures it, and answering with
+    ``auto``'s number would put a figure on screen that nothing supports.
+    """
+    factor = _PROFILE_COST.get(profile_name)
+    if factor is None:
+        return None
+    return round(ANCHOR_MINUTES * factor * (n_rows / ANCHOR_ROWS), 1)
+
 
 @dataclass
 class Profile:

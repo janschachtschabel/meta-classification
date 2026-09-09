@@ -253,6 +253,43 @@ def test_datasets_endpoints():
     assert analyze.json()["total_samples"] > 0
 
 
+def test_analyze_recommends_a_threshold_and_prices_the_run():
+    """Analyzing a dataset is what you do BEFORE spending an afternoon on it, so the
+    two numbers that decide the run belong in the answer: which
+    `min_samples_per_label` fits this size, and roughly what each profile costs.
+
+    Both are computed server-side on purpose — the recommendation already exists as
+    `data.auto_min_samples` and the cost model has one measured anchor under it. A UI
+    that re-derived either would drift from the thing that was actually measured.
+    """
+    body = client.post(
+        "/datasets/analyze",
+        json={
+            "dataset_name": "tiny.csv",
+            "text_columns": ["properties.cclom:title", "properties.cclom:general_keyword"],
+            "label_column": "properties.ccm:taxonid",
+        },
+        headers=ADMIN,
+    ).json()
+
+    from app.data import auto_min_samples
+
+    assert body["recommended_min_samples_per_label"] == auto_min_samples(body["total_samples"])
+    # Paired with the threshold table so the recommendation can be READ as a decision:
+    # "this value keeps N of M labels" is the sentence the UI has to be able to write.
+    bucket = f"labels_with_{body['recommended_min_samples_per_label']}+_samples"
+    assert bucket in body["label_threshold_analysis"]
+
+    estimate = body["estimated_minutes"]
+    assert set(estimate) == {"fast", "auto", "best"}
+    assert all(value >= 0 for value in estimate.values())
+    # Only non-decreasing here, deliberately: the fixture is 36 rows, where a model
+    # anchored at 156 373 rounds all three profiles to 0.0 min — which is the truthful
+    # output of a linear model at that size, not a bug. The STRICT ordering is a claim
+    # about the model and is pinned where it means something (test_cost_estimate.py).
+    assert estimate["fast"] <= estimate["auto"] <= estimate["best"]
+
+
 def test_analyze_wrong_column_returns_400_with_message():
     """A typo in the label column is the most common user error: /datasets/analyze
     answers 400 with the crafted message (available columns), not a generic 500."""

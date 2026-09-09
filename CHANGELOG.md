@@ -4,6 +4,22 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — analyze says what a run will cost, before you start it
+
+- `POST /datasets/analyze` now answers with `recommended_min_samples_per_label` and
+  `estimated_minutes` per profile. Both are the two numbers that decide whether to start
+  a training run at all, and both are computed server-side so nothing re-derives them.
+- The cost model (`app/profiles.estimated_minutes`) is anchored on the one full-scale
+  measurement this project has — `faecher_300k_auto`, 156 373 rows, 40.2 min — and
+  scales linearly, which is what `benchmark_row_scaling.py` measured (exponent 1.00).
+  🟢 It reproduces **all six** figures published in the README's per-profile table
+  (4.0 / 40.2 / 72.4 min at 156 k; 15.4 min / 2.6 h / 4.6 h at 600 k). A profile with no
+  measured factor gets `None`, not `auto`'s number.
+- The threshold table now always contains the recommended value. On a small dataset the
+  heuristic answers 2, which none of the fixed buckets covered — leaving the
+  recommendation unreadable as the sentence it exists for: "keeps N of M labels".
+
+
 ### Added — "Why?" on a single-text answer
 
 - `/predict/explain` has existed since 3.1; nothing in the UI reached it. A **Why?**

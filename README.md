@@ -365,6 +365,12 @@ directly from the loop in `tuning.cross_val_evaluate`. The 40 min for `auto` at 
 `600 000 × 48 × 4 bytes` = 115 MB each. Note this makes the *grid size*, not the fold
 count, the memory lever under CV: folds are processed one at a time, candidates are not.
 
+`POST /datasets/analyze` serves this model per dataset (`estimated_minutes` per profile)
+alongside a `recommended_min_samples_per_label` and the threshold table that says how
+many labels that value keeps — the two numbers worth having *before* starting a run.
+`app/profiles.estimated_minutes` is the one implementation, anchored on the measured run
+above; a test pins it to reproduce the published figures.
+
 **Recommendation by size:** `auto` up to a few hundred thousand rows — it delivered the
 run above in 40 min while still training the shipped model on 100 % of the data. At
 600 k it is a half-day job rather than a coffee break, so plan it as one. `best` is
