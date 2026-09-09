@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     data_dir: Path = _BASE / "data"
     models_dir: Path = _BASE / "models"
     share_links_file: Path = _BASE / "share_links.json"
+    # Outcomes of finished training runs. Beside the models rather than in the
+    # models dir: it describes runs, not bundles, and a stray file there would
+    # sit next to things the registry enumerates.
+    job_history_file: Path = _BASE / "job_history.jsonl"
     config_file: Path = _BASE / "config.yaml"
 
     # --- RAM control: how many models stay resident (LRU eviction beyond this) ---

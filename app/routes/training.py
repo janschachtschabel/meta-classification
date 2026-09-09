@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from .. import job_history
 from ..jobs import training_job
 from ..limiter import limiter, train_limit
 from ..profiles import load_training_config
@@ -134,7 +135,15 @@ async def train(
         # The singleton registry is injected so the training save shares its disk
         # lock with every API-side registry operation.
         training_job.start(run_training, req, settings, cfg, profile, get_registry(),
-                           model_name=body.model_name)
+                           model_name=body.model_name,
+                           # Everything but the documentation block: `info` is what the
+                           # model says about itself, not a parameter of the run.
+                           # The profile is not in _REQ_KEYS (it is resolved separately),
+                           # yet it is the dimension two runs differ on most — recorded
+                           # under the field name a caller would resend, holding the
+                           # profile that was actually used rather than what was asked.
+                           request={**{k: v for k, v in req.items() if k != "info"},
+                                    "optimize_parameters": profile.name})
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {
@@ -171,3 +180,21 @@ async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> d
     """
     training_job.stop(hard=hard)
     return {"status": "idle" if hard else "stopping"}
+
+
+@router.get("/train/history", summary="Outcomes of finished training runs")
+async def history(limit: int = 50, _: str = Depends(require_role("readonly"))) -> list[dict]:
+    """What every finished run left behind, newest first.
+
+    Per run: the model name, how it ended, when and for how long, the request it was
+    started with, and the headline scores (`f1_macro`, `f1_micro`, `n_labels`). A run
+    that failed carries its `error` — and that is the case with no bundle to inspect
+    afterwards, so this is the only place the reason survives.
+
+    Not the full metrics: `per_label_f1` is one entry per label, and comparing two runs
+    needs the numbers a comparison is made on. The bundle keeps the rest.
+
+    Bounded to the newest 200 runs on disk. A run killed mid-flight leaves no entry —
+    it never finished. **Auth:** readonly.
+    """
+    return job_history.recent(limit=max(1, min(limit, 200)))

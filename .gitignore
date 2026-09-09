@@ -1,6 +1,7 @@
 # Secrets & runtime state
 .env
 share_links.json
+job_history.jsonl
 
 # Generated artifacts (uploaded datasets, trained bundles, runtime caches)
 models/

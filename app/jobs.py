@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from . import job_history
 from .errors import TrainingInputError
 
 logger = logging.getLogger("api_v3.jobs")
@@ -59,6 +60,8 @@ class TrainingJob:
         # active_model_name() while the runner thread is alive (hard stop resets
         # the STATUS, but the abandoned thread keeps writing this bundle).
         self._last_model_name: str | None = None
+        # What the run was asked to do, kept for its history entry.
+        self._last_request: dict | None = None
 
     def snapshot(self) -> dict:
         """Return a copy of the state, adding elapsed/ETA while running."""
@@ -105,11 +108,51 @@ class TrainingJob:
 
     def _finish(self, generation: int, **fields: object) -> None:
         """Final status update from the runner thread — dropped if a hard stop
-        (or a newer start) bumped the generation while the target was running."""
+        (or a newer start) bumped the generation while the target was running.
+
+        This is the one place a run ends, whichever way it ended, so it is where the
+        history entry is written. A run whose generation is stale writes nothing: it
+        was superseded, and recording it would put a second outcome under a name the
+        newer run owns.
+        """
         with self._lock:
             if self._generation != generation:
                 return
             self._apply(fields)
+            record = self._history_record()
+        # Outside the lock: the disk write must not hold the state lock that every
+        # /train/status read takes. And it must never turn a finished run into a
+        # failed one — the work is already done and saved by the time we get here.
+        try:
+            job_history.append(record)
+        except OSError:
+            logger.warning("Could not record %r in the job history.", record.get("model_name"))
+
+    def _history_record(self) -> dict:
+        """What survives a run: what was asked for, how it ended, and the headline score.
+
+        Deliberately not the full metrics — ``per_label_f1`` alone is one entry per
+        label, and the history exists to COMPARE runs, which needs the two numbers a
+        comparison is made on. The bundle keeps the rest.
+        """
+        results = self._state.get("results") or {}
+        metrics = results.get("metrics") or {}
+        return {
+            "model_name": self._state.get("model_name"),
+            "status": self._state.get("status"),
+            "started_at": self._state.get("started_at"),
+            "finished_at": datetime.now(UTC).isoformat(),
+            "duration_seconds": (
+                round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
+            ),
+            "request": self._last_request,
+            "task_type": results.get("task_type"),
+            "n_labels": results.get("n_labels"),
+            "f1_macro": metrics.get("f1_macro"),
+            "f1_micro": metrics.get("f1_micro"),
+            "decision_rule": metrics.get("decision_rule"),
+            "error": self._state.get("error"),
+        }
 
     def should_stop(self) -> bool:
         return self._stop.is_set()
@@ -123,8 +166,15 @@ class TrainingJob:
                 return self._last_model_name
             return None
 
-    def start(self, target: Callable, *args: object, model_name: str) -> None:
-        """Launch ``target(*args, on_progress=..., should_stop=...)`` in a thread."""
+    def start(
+        self, target: Callable, *args: object, model_name: str, request: dict | None = None
+    ) -> None:
+        """Launch ``target(*args, on_progress=..., should_stop=...)`` in a thread.
+
+        ``request`` is recorded with the run's outcome so the history says what was
+        asked for, not only what came out. The runner is the only thing that knows when
+        a run ends, so it is the only place that can write that record.
+        """
 
         def runner() -> None:
             try:
@@ -176,6 +226,7 @@ class TrainingJob:
             self._generation += 1
             generation = self._generation
             self._last_model_name = model_name
+            self._last_request = request
             # Register the thread INSIDE the same lock block as the state
             # transition: a hard stop + new start in the gap between two separate
             # blocks could otherwise pass the liveness guard and run two

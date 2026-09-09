@@ -30,6 +30,9 @@ os.environ.update(
         "APIV3_API_KEY_READONLY": "ro-key",
         "APIV3_DATA_DIR": str(_TMP / "data"),
         "APIV3_MODELS_DIR": str(_TMP / "models"),
+        # Never the repo's own file: the suite trains several models and would
+        # otherwise write real history entries on every run.
+        "APIV3_JOB_HISTORY_FILE": str(_TMP / "job_history.jsonl"),
     }
 )
 
@@ -78,6 +81,41 @@ def trained_model() -> dict:
     state = _wait_for_training()
     assert state["status"] == "completed", state
     return state
+
+
+def test_a_finished_run_is_in_the_history(trained_model):
+    """Comparing two runs means opening two bundles and reading their metrics — and a
+    run that FAILED leaves no bundle at all, so its reason lived only in whichever
+    browser tab happened to be watching. The history is where an outcome outlives the
+    tab, the restart and the deploy.
+    """
+    history = client.get("/train/history", headers=RO)
+    assert history.status_code == 200, history.text
+    entries = history.json()
+    assert entries, "the run from the fixture is recorded"
+
+    entry = entries[0]
+    assert entry["model_name"] == "api_model"
+    assert entry["status"] == "completed"
+    assert entry["duration_seconds"] > 0
+    assert entry["f1_macro"] > 0.5 and entry["n_labels"] >= 1
+    # The request, so a run can be repeated or explained without guessing what it was.
+    assert entry["request"]["dataset_name"] == "tiny.csv"
+    assert entry["request"]["optimize_parameters"] == "fast"
+    assert "info" not in entry["request"], "documentation is not a training parameter"
+
+
+def test_the_history_records_a_run_that_failed(trained_model):
+    """The failure case is the one with nothing else to inspect afterwards."""
+    broken = {**TRAIN_BODY, "model_name": "history_failure", "min_samples_per_label": 9999}
+    assert client.post("/train", json=broken, headers=ADMIN).status_code == 202
+    assert _wait_for_training()["status"] == "error"
+
+    entry = client.get("/train/history", headers=RO).json()[0]
+    assert entry["model_name"] == "history_failure"
+    assert entry["status"] == "error"
+    assert entry["error"], "the reason survives the run"
+    assert entry["f1_macro"] is None
 
 
 def test_health_is_public():

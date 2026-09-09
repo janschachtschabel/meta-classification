@@ -4,6 +4,24 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — finished runs are written down (`GET /train/history`)
+
+- Comparing two runs meant opening two bundles and reading their `metrics.json`, and a
+  run that **failed** left nothing to open at all — its reason lived only in whichever
+  browser tab happened to be watching. Every finished run now leaves a record: the
+  request it was started with, how it ended, its duration, and the headline scores.
+- 🟢 Verified across a real process restart: `/train/status` resets to `idle`, the
+  history entry and its metrics do not.
+- The **resolved profile** is recorded even though it is not part of the request
+  dictionary the pipeline uses — it is the dimension two runs differ on most, and a
+  comparison without it compares nothing.
+- Not the full metrics: `per_label_f1` is one entry per label. The history exists to
+  compare runs, which needs the numbers a comparison is made on; the bundle keeps the
+  rest. Bounded to the newest 200, rewritten atomically, and a damaged line costs that
+  line — never the endpoint, and never a run, which writes here only after the work is
+  already saved.
+
+
 ### Added — a pre-flight check in the Training tab
 
 - **Check before training** reads the dataset once and answers the two questions you
