@@ -30,7 +30,39 @@ new runtime dependency, a database.
 
 ---
 
-## Phase 0 — Stop the bleeding (≤ 1 day)
+## Phase 0 — Stop the bleeding (≤ 1 day) — **DONE 2026-09-09**
+
+> Published to `github.com/janschachtschabel/meta-classification` and released as
+> **v3.1.0**. 0.1, 0.2 and 0.4 are complete; 0.3 is complete in code, and its two
+> data items are settled below. 198 tests, ruff, mypy and pip-audit clean; CI and
+> the Docker build green on GitHub Actions.
+>
+> **Model inventory checked (the open question in 0.3).** Of the four format-1
+> bundles, exactly one still has no successor:
+>
+> | target | newest bundle | rows | format | verdict |
+> |---|---|---:|:---:|---|
+> | subjects (`taxonid`) | `faecher_300k_auto` (2026-07-26) | 156,373 | 2 | successor exists — no retrain needed |
+> | educational level (`educationalcontext`) | `bildungsstufe_ai_cv5` (2026-07-19) | 25,763 | 1 | **no successor — retrain still open** |
+>
+> `faecher_cv5` and `faecher_synth_bal` are superseded experiments. Note the macro
+> figures of the two subject models are *not* comparable (48 vs 59 labels, different
+> data and evaluation), so "the new one is better" is not a claim this table makes.
+> Training is deferred at the owner's request (machine load).
+>
+> **Added beyond the plan** (owner request, same session): every model listed in
+> `APIV3_WARMUP_MODELS` now stays resident — the cache is sized to fit the list —
+> and the setting is wired through `docker-compose.yml` and the Helm chart. It had
+> existed only in `.env.example`, so the containerized deployment it is meant for
+> could not configure it. 🟢 Measured with the cap deliberately at 2 and three real
+> bundles warmed: 3 of 3 resident, every `/predict` ≈ 0.09 s.
+>
+> **Dependencies:** the grouped Dependabot PR (7 GitHub Actions, among them
+> `actions/checkout` 4.3.1 → 7.0.1 and `setup-python` 5.6.0 → 7.0.0) was merged
+> after its own checks passed; the stale `# v4` comment it left on the new SHA was
+> corrected. Python runtime dependencies were **not** touched: `pip-audit` reports
+> no CVEs, so there is no driver, and bumping them would mean recompiling the hash
+> lock and re-validating the model pipeline for no gain.
 
 | # | Item | Files | Acceptance |
 |---|---|---|---|
