@@ -211,9 +211,18 @@ gated.
 - Files: `app/static/ui/datasets.js`, `training.js`, `app/dataset_stats.py` (+`support`
   per label). Tests: analyze output includes the fields the UI reads.
 
-### D4 · Explain view (S–M, 1 day)
+### D4 · Explain view (S–M, 1 day) — **done 2026-09-09**
 - "Why?" on a prediction → `/predict/explain`; the top words per label rendered as
   chips with their impact; `all_scores` collapsible.
+- Deviation: the button sits on the model's ANSWER, not on a single prediction line —
+  one call explains the top predicted labels of that model at once, which is what the
+  endpoint does. In multi-model mode each card gets its own.
+- 🟢 Measured, and it changed the design: impacts are tiny on a confident answer
+  (0.0021 against a 0.9997 confidence) and large on a contested one (0.5544). The bars
+  are therefore scaled **per label**; a shared scale would render the confident case as
+  an empty row. Negative impacts are common on weaker labels and are marked as arguing
+  *against* the label.
+- Files: `app/static/ui/explain.js` (new, 98), `query.js`, `index.html`, `style.css`.
 
 ### A5 · Server-side training queue + D5 persisted history (M, 3 days)
 - `POST /train` while busy → 202 with a queue position (bounded queue, e.g. 10);

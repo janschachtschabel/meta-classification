@@ -301,3 +301,21 @@ input[type="file"] { min-height: 24px; padding: var(--s-1) 0; }
 /* A one-character field stretched to the full column reads as a text box that wants a
    sentence; the fields rule below sets width:100% for everything else. */
 #query-separator { width: 4rem; }
+
+/* ---- why-this-answer panel ---- */
+.explain { margin-top: var(--s-4); border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.explain h4 { margin: var(--s-3) 0 var(--s-1); font-size: 0.95rem; }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.chip-word {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: var(--s-1) var(--s-3); min-height: 24px; font-size: 0.9em;
+}
+.chip-word .w { font-weight: 600; overflow-wrap: anywhere; }
+.chip-bar { width: 40px; height: 6px; border-radius: 3px; background: var(--bar-bg); overflow: hidden; }
+.chip-bar span { display: block; height: 100%; background: var(--accent); }
+.chip-word .val { font-variant-numeric: tabular-nums; color: var(--muted); }
+/* A word that argues against the label. Marked three ways — a dashed border, the
+   muted bar and the "−" in the number — because colour alone is not a signal. */
+.chip-word.against { border-style: dashed; }
+.chip-word.against .chip-bar span { background: var(--muted); }

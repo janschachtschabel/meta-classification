@@ -4,6 +4,24 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — "Why?" on a single-text answer
+
+- `/predict/explain` has existed since 3.1; nothing in the UI reached it. A **Why?**
+  button on each model's answer now shows the words that carried it, per predicted
+  label, as chips with their leave-one-out impact — plus every label's score, collapsed.
+- **The bars are scaled per label, not across them.** Measured on the real
+  `faecher_300k_auto`: a confident answer moves by 0.002 for its strongest word (0.9997
+  confidence barely falls for anything), while a contested label swings by 0.55. One
+  shared scale would have flattened the first case to an empty row. What the bars carry
+  is the order; the numbers carry the amount, and the panel says so.
+- A word that argues *against* a label is marked three ways — a `−` prefix, a dashed
+  border and a muted bar — because colour is not a signal on its own.
+- A single-word text gets an honest note instead of an empty block: leaving a word out
+  needs at least two. The label table is still there, which is the useful part then.
+- An explain call that fails leaves the answer it belongs to standing, reports inside
+  that card with `role="alert"`, and a retry replaces it.
+
+
 ### Added — the Query tab classifies lists and files, not just one text
 
 - Three modes: **one text** (as before), **many texts** (one per line, sent in batches

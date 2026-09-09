@@ -75,7 +75,10 @@ function queryErrorHtml(err) {
 
 function renderPredictions(byModel) {
   return Object.entries(byModel).map(([name, preds]) => `
-    <div class="card"><h3>${esc(name)}</h3>${preds.length ? preds.map((p) => `
+    <div class="card">
+      <div class="detail-head"><h3>${esc(name)}</h3>
+        <button type="button" class="small ghost" data-explain="${esc(name)}">Why?</button></div>
+      ${preds.length ? preds.map((p) => `
       <div class="pred${p.above_threshold === false ? " below-t" : ""}">
         <span class="name">${esc(p.label)}</span>
         <span class="bar"><span data-width="${Math.round(p.confidence * 100)}"></span></span>
@@ -99,8 +102,11 @@ async function runSingle(models, out) {
     const r = await Api.post("/predict/multi", { ...body, model_names: models });
     byModel = r.results[0].predictions_by_model;
   }
+  const text = $("#query-text").value;
   out.innerHTML = renderPredictions(byModel);
   applyBarWidths(out);
+  // Only here: the endpoint explains one text, so the bulk modes have nothing to bind.
+  bindExplainButtons(out, text);
 }
 
 /* ---------- many texts ---------- */

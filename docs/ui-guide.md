@@ -84,6 +84,24 @@ Text eingeben, Modell(e) anhaken, **Classify**.
   dauern (das Modell wird von der Festplatte geladen) — danach kommen Antworten
   in Millisekunden.
 
+## „Warum?" — die Erklärung zu einer Antwort
+
+Neben dem Modellnamen im Ergebnis steht **Warum?**. Der Knopf zeigt, welche Wörter die
+Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
+
+- Der Wert ist, **wie weit die Konfidenz fällt, wenn man das Wort weglässt**. Bei einer
+  sicheren Antwort sind diese Zahlen winzig — ein Modell bei 0,999 bewegt sich für kein
+  einzelnes Wort viel. Deshalb sind die Balken **pro Label** skaliert: entscheidend ist
+  die Reihenfolge, nicht der Betrag.
+- Ein **−** (gestrichelter Rahmen, gedämpfter Balken) markiert ein Wort, das *gegen* das
+  Label spricht: ohne dieses Wort wäre die Konfidenz höher.
+- Jedes **Vorkommen** eines Wortes wird einzeln bewertet. Dasselbe Wort kann deshalb
+  zweimal mit verschiedenen Werten auftauchen — das ist kein Fehler.
+- Aufklappbar darunter: **alle Labels** mit Konfidenz, `diff` und F1, stärkstes zuerst.
+
+Bei einem einzelnen Wort gibt es keine Wort-Zuordnung — weglassen braucht mindestens
+zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
+
 ## Viele Texte auf einmal (Query-Tab)
 
 Der Query-Tab kennt drei Modi — die Auswahl steht oben im Formular:
