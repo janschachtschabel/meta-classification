@@ -26,7 +26,49 @@ async function shareResource(kind, name, boxSel) {
       toast("Link copied.");
     });
     box.querySelector("[data-close]").addEventListener("click", () => { box.innerHTML = ""; });
+    renderShareLinks(kind, `#${kind}-links`);   // the new link joins the overview
   } catch (err) { toast(err.message); }
+}
+
+/* Active share links for one resource kind. A link is a bearer capability valid for
+   up to a week: whoever holds the URL downloads without a key. Handing one out was
+   always possible; seeing what is outstanding, and taking it back, was not. */
+const fmtWhen = (iso) => (iso ? new Date(iso).toLocaleString() : "–");
+// The UI addresses resources in the plural (routes, container ids); the store records
+// the singular kind it was created with. Map explicitly rather than slicing an "s".
+const SHARE_KIND = { models: "model", datasets: "dataset" };
+
+async function renderShareLinks(kind, boxSel) {
+  const box = document.querySelector(boxSel);
+  let links;
+  try { links = (await Api.get("/share")).filter((l) => l.kind === SHARE_KIND[kind]); }
+  catch { box.innerHTML = ""; return; }   // readonly key: the listing is admin-only
+  if (!links.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="card table-wrap">
+    <h3>Active share links <span class="muted">(${links.length})</span></h3>
+    <p class="muted">Anyone with the link can download without an API key until it expires.
+       Revoking stops further downloads; it cannot recall what was already fetched.</p>
+    <table><thead><tr><th>${kind === "models" ? "Model" : "Dataset"}</th>
+      <th>Created</th><th>Expires</th><th>Actions</th></tr></thead><tbody>` +
+    links.map((l) => `<tr>
+      <td>${esc(l.name)}</td><td>${esc(fmtWhen(l.created_at))}</td>
+      <td>${esc(fmtWhen(l.expires_at))}</td>
+      <td class="actions">
+        <button class="small" data-copylink="${esc(l.share_id)}">Copy link</button>
+        <button class="small danger" data-revoke="${esc(l.share_id)}">Revoke</button>
+      </td></tr>`).join("") + `</tbody></table></div>`;
+  box.querySelectorAll("[data-copylink]").forEach((b) => b.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(`${location.origin}/share/${b.dataset.copylink}`);
+    toast("Link copied.");
+  }));
+  box.querySelectorAll("[data-revoke]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Revoke this share link? Anyone still holding it loses access.")) return;
+    try {
+      await Api.del(`/share/${encodeURIComponent(b.dataset.revoke)}`);
+      toast("Share link revoked.");
+      renderShareLinks(kind, boxSel);
+    } catch (err) { toast(err.message); }
+  }));
 }
 
 /* ---------- models ---------- */
@@ -136,6 +178,7 @@ async function loadModels() {
       editModelInfo(b.dataset.info)));
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>
       shareResource("models", b.dataset.share, "#models-share")));
+    renderShareLinks("models", "#models-links");
     el.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(`Delete model "${b.dataset.delete}"? This cannot be undone.`)) return;
       try { await Api.del(`/models/${encodeURIComponent(b.dataset.delete)}`); toast("Model deleted."); loadModels(); }
@@ -187,6 +230,7 @@ async function loadDatasets() {
         .catch((err) => toast(err.message))));
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>
       shareResource("datasets", b.dataset.share, "#datasets-share")));
+    renderShareLinks("datasets", "#datasets-links");
     el.querySelectorAll("[data-delds]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(`Delete dataset "${b.dataset.delds}"? This cannot be undone.`)) return;
       try { await Api.del(`/datasets/${encodeURIComponent(b.dataset.delds)}`); toast("Dataset deleted."); loadDatasets(); }

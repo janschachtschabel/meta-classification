@@ -348,6 +348,29 @@ def test_share_link_serves_gzipped_dataset_as_gzip():
     assert gzip.decompress(fetched.content) == b"a;b\n1;2\n"
 
 
+def test_share_links_can_be_reviewed_and_revoked(trained_model):
+    """Handing out a link is easy; taking it back was not possible through the API at
+    all. Both are admin actions — the listing exposes the ids, which ARE the
+    capability, so it must never answer a readonly key."""
+    created = client.post("/models/api_model/export", headers=ADMIN,
+                          json={"generate_share_url": True, "expires_hours": 1})
+    share_id = created.json()["share_id"]
+    assert client.get(f"/share/{share_id}").status_code == 200  # public, as designed
+
+    assert client.get("/share", headers=RO).status_code == 403
+    assert client.delete(f"/share/{share_id}", headers=RO).status_code == 403
+
+    listed = client.get("/share", headers=ADMIN)
+    assert listed.status_code == 200, listed.text
+    entry = next(e for e in listed.json() if e["share_id"] == share_id)
+    assert entry["kind"] == "model" and entry["name"] == "api_model"
+
+    assert client.delete(f"/share/{share_id}", headers=ADMIN).status_code == 200
+    assert client.get(f"/share/{share_id}").status_code == 404, "the link must stop working"
+    assert share_id not in [e["share_id"] for e in client.get("/share", headers=ADMIN).json()]
+    assert client.delete(f"/share/{share_id}", headers=ADMIN).status_code == 404
+
+
 def test_share_link_for_deleted_dataset_returns_404():
     """A share link whose underlying dataset was deleted answers 404, not 500."""
     files = {"file": ("ephemeral.csv", b"a;b\n1;2\n", "text/csv")}

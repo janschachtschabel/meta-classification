@@ -169,6 +169,33 @@ async def import_model(
     return {"status": "imported", **info}
 
 
+@router.get("/share", summary="List active share links")
+async def list_share_links(_: str = Depends(require_role("admin"))) -> list[dict]:
+    """Every share link that has not expired: id, kind, name, created and expiry.
+
+    A share link is a bearer capability — the id IS the authorization — so this
+    listing hands out the secrets themselves and stays admin-only, unlike the
+    download route it describes. **Auth:** admin.
+    """
+    return get_share_store().list()
+
+
+@router.delete("/share/{share_id}", summary="Revoke a share link")
+@limiter.limit(default_limit)
+async def revoke_share_link(
+    request: Request, share_id: str, _: str = Depends(require_role("admin")),
+) -> dict:
+    """Withdraw a share link before it expires.
+
+    What was already downloaded cannot be recalled, but the link stops working — the
+    point of an expiring capability you can end early. **Auth:** admin · rate limit
+    active.
+    """
+    if not get_share_store().revoke(share_id):
+        raise HTTPException(404, "Share link not found or already expired.")
+    return {"status": "revoked", "share_id": share_id}
+
+
 @router.get("/share/{share_id}", summary="Download a shared resource")
 @limiter.limit(export_limit)  # public endpoint: throttle share-id brute-forcing
 async def download_shared(

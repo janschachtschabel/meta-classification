@@ -4,6 +4,24 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — share links can be reviewed and withdrawn
+
+- `GET /share` lists every live link (id, kind, name, created, expires) and
+  `DELETE /share/{id}` revokes one; both admin-only, because the id **is** the
+  capability. Handing a link out was always possible — seeing what was outstanding,
+  or taking it back before its expiry, was not: the only way was editing
+  `share_links.json` on the volume.
+- Links now record `created_at`, so an overview can say how old one is. Entries
+  written before this release list with `created_at: null` rather than breaking the
+  view — verified against the real store (33 entries, 29 of them without the field).
+- Admin UI: an "Active share links" table on the Models and Datasets tabs, each row
+  with Copy link and Revoke.
+- **Not** implemented, deliberately: download counting and `max_downloads`. Counting
+  means a JSON write on every hit of the *public, unauthenticated* download route,
+  for information the access log already carries; the gap that was asked for is
+  revocation.
+
+
 ### Added — exported bundles explain and verify themselves
 
 - Every export now carries a generated **`README.md` model card**: what the model

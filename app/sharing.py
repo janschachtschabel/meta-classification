@@ -67,9 +67,42 @@ class ShareStore:
         share_id = secrets.token_urlsafe(12)
         expires_at = (_now() + timedelta(hours=expires_hours)).isoformat()
         with self._lock:
-            self._links[share_id] = {"kind": kind, "name": name, "expires_at": expires_at}
+            self._links[share_id] = {
+                "kind": kind, "name": name, "expires_at": expires_at,
+                # Free at creation and the one thing an overview cannot derive:
+                # how long ago somebody handed this capability out.
+                "created_at": _now().isoformat(),
+            }
             self._persist()
         return share_id, expires_at
+
+    def list(self) -> list[dict]:
+        """Every live link, newest expiry last — the overview an operator revokes from.
+
+        The share id is the capability itself, so this is admin-only at the route.
+        ``created_at`` is ``None`` for links created before it was recorded.
+        """
+        with self._lock:
+            return sorted(
+                (
+                    {"share_id": share_id, "kind": info.get("kind"), "name": info.get("name"),
+                     "created_at": info.get("created_at"), "expires_at": info.get("expires_at")}
+                    for share_id, info in self._links.items()
+                ),
+                key=lambda entry: entry["expires_at"] or "",
+            )
+
+    def revoke(self, share_id: str) -> bool:
+        """Withdraw a link; ``False`` if it was already gone.
+
+        A link cannot be un-shared once downloaded, but it can be stopped from being
+        used again — until now the only way was editing the JSON on the volume.
+        """
+        with self._lock:
+            if self._links.pop(share_id, None) is None:
+                return False
+            self._persist()
+            return True
 
     def resolve(self, share_id: str) -> dict | None:
         """Return link info, or None if missing/expired (expired ones are purged)."""
