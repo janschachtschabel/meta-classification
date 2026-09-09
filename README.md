@@ -422,7 +422,7 @@ For hosting in other ML serving systems:
 ```bash
 pip install -r requirements.txt -c requirements.lock
 pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
-python -m pytest tests -q                          # 196 tests
+python -m pytest tests -q                          # 198 tests
 python -m ruff check app tests                     # lint
 python -m mypy app --config-file pyproject.toml    # types
 ```

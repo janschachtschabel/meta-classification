@@ -2,7 +2,24 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased] — audit remediation, phase 0 (2026-09-08)
+## [3.1.0] — 2026-09-09
+
+First release since the torch-free rewrite. It carries the whole July development
+wave and the 2026-09-08 audit remediation; the dated sections below document them
+in the order the work happened.
+
+**Breaking.** Strict semver would call this a major bump — it ships as 3.1.0 by
+owner decision, so read these three before upgrading:
+
+- **Model bundles are format 2.** A bundle trained before it keeps its vocabulary
+  inside the skops container, no longer loads, and has to be retrained. The API
+  says so explicitly instead of answering 404.
+- **`POST /train` answers 202**, not 200: it accepts a job and returns a status
+  URL. A client asserting `== 200` breaks; one asserting `< 300` does not.
+- **`POST /datasets/{name}/validate` takes one JSON object** like
+  `/datasets/analyze`. The former raw-array body plus query parameters are gone.
+
+## audit remediation, phase 0 (2026-09-08)
 
 Test-first; **196 tests green**, ruff/mypy clean, `pip-audit` clean. Acts on
 `docs/audits/2026-09-08-audit.md`; the remaining phases are in
@@ -62,7 +79,7 @@ promised while nothing performed it.
 The dependency tree is hash-pinned, so a CVE published against an already-pinned
 version is invisible until someone pushes. The scan now also runs Mondays.
 
-## [Unreleased] — prediction reliability, measured tuning, sizing to 600k (2026-07-25)
+## prediction reliability, measured tuning, sizing to 600k (2026-07-25)
 
 Test-first; 170 tests green, ruff/mypy clean.
 
@@ -276,7 +293,7 @@ earlier doubly-derived estimate claimed (see README sizing).
   `large` profile and rested on the superseded `(3,5)` character n-grams (725 nnz/doc);
   it now uses the `(5,5)` basis and labels derived figures as derived.
 
-## [Unreleased] — prediction reliability, wider C search, field weights (2026-07-25)
+## prediction reliability, wider C search, field weights (2026-07-25)
 
 Four changes from a review of where recognition quality is actually lost.
 Test-first; 163 tests green, ruff/mypy clean.
@@ -410,7 +427,7 @@ Test-first; 163 tests green, ruff/mypy clean.
   min_samples_per_label=20") instead of just restating the rule, and surfaces as
   `status=error` on `/train/status`.
 
-## [Unreleased] — deferred re-audit items resolved (2026-07-16, late evening)
+## deferred re-audit items resolved (2026-07-16, late evening)
 
 Closes the four items the same-day re-audit deliberately deferred
 (B9/B10/C3/D10 in `docs/audits/2026-07-16-reaudit.md`). All test-first;
@@ -454,7 +471,7 @@ Closes the four items the same-day re-audit deliberately deferred
   `APIV3_CPU_MAX_PERCENT` finally means what it documents inside containers:
   training keeps ~40% of the POD's quota free for serving.
 
-## [Unreleased] — re-audit fixes (2026-07-16, evening)
+## re-audit fixes (2026-07-16, evening)
 
 Acting on the same-day re-audit (`docs/audits/2026-07-16-reaudit.md`; four
 fresh-eyes readers + scanners). 134 tests green (95% line coverage), ruff/mypy
@@ -528,7 +545,7 @@ clean; all fixes test-first where logic.
 - Helm `values.yaml`: `nJobs` default now matches `resources.limits.cpu` (the
   app derives "-1 = all cores" from the NODE, not the CFS quota — documented).
 
-## [Unreleased] — audit remediation (2026-07-16)
+## audit remediation (2026-07-16)
 
 Acting on the whole-codebase audit (`docs/audits/2026-07-16-audit.md`). All
 findings addressed except three deliberately deferred (see that report's status
@@ -633,7 +650,7 @@ banner). 118 tests green, ruff/mypy clean.
   `tabindex`, and Left/Right/Home/End keyboard navigation (was `aria-current`,
   the nav-link idiom, with no arrow-key model).
 
-## [Unreleased] — hardening & evaluation wave (2026-07-07 … 2026-07-08)
+## hardening & evaluation wave (2026-07-07 … 2026-07-08)
 
 ### Added
 - **UI feature completion**: share links for models AND datasets (with copy

@@ -1,6 +1,6 @@
 [project]
 name = "classification-api-v3"
-version = "3.0.0"
+version = "3.1.0"
 description = "MetaClassify — torch-free, CPU-only text-classification API; train on your metadata, serve multiple models via REST"
 license = {text = "MIT"}
 # 3.11 floor: the Docker base image and requirements-hashes.lock are compiled

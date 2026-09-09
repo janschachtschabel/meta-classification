@@ -11,4 +11,4 @@ import os
 for _thread_var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ.setdefault(_thread_var, "1")
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
