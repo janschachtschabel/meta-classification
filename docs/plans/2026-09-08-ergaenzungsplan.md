@@ -181,7 +181,7 @@ gated.
 
 ---
 
-## Phase 2 — The UI catches up with the API (2–4 weeks)
+## Phase 2 — The UI catches up with the API (2–4 weeks) — **DONE 2026-09-09**
 
 ### D2 · Batch classification (M, 2–3 days) — **done 2026-09-09**
 - Query tab: "Many texts" mode — paste one text per line *or* upload a CSV, choose
