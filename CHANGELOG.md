@@ -4,6 +4,30 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed — exports and dataset uploads no longer pass through memory
+
+- Exporting a model built the whole archive in RAM. Measured on the real 51 MB
+  `faecher_300k_auto`: **142 MB of peak Python heap, 2.78× the bundle** — every member,
+  the zip built beside them, and the copy `getvalue()` makes. It now streams member by
+  member into a staging file which the response sends and then deletes: **2.2 MB peak,
+  0.04×**. For a 180 MB bundle on a small vServer that is the difference between an
+  export and an OOM.
+  - The trade, stated plainly: compression happens under the disk lock now, where before
+    only the read did — 3.1 s for that bundle. The members are read one at a time from
+    files that must still exist, and holding open handles outside the lock would make
+    `delete` fail outright on Windows.
+  - Staging goes beside the bundles, not into `/tmp`: on a container that is often tmpfs,
+    i.e. RAM. It uses the hidden `.*.tmp` name the startup sweep already cleans.
+- Dataset uploads (capped at 200 MB, and WLO exports really are 126–195 MB gzipped) were
+  assembled in memory — the chunks *and* the joined copy, twice the file, before a byte
+  reached disk. They now spool straight into `<name>.part` and are renamed into place.
+  The rename is what makes a dataset exist, so a failure before it leaves nothing that
+  can be listed, inspected or trained on.
+- **Model import still buffers** (172 MB peak, 3.37×). `unpack` validates the archive as
+  bytes *before* anything touches the filesystem, and that order is the security property
+  — streaming it means extracting to staging first, which is a separate change.
+
+
 ### Added — model detail view
 
 - Clicking a model's name opens a panel with everything the bundle records about

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import (
@@ -17,6 +19,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from .. import data as data_mod
 from ..jobs import training_job
@@ -30,12 +33,31 @@ from ..sharing import get_share_store
 router = APIRouter(tags=["Models"])
 
 
-def _zip_response(name: str, blob: bytes) -> Response:
-    """A ZIP download response with an attachment filename."""
-    return Response(
-        content=blob,
-        media_type="application/zip",
+def _staged_zip_response(name: str) -> FileResponse:
+    """Pack the bundle into a staging file and stream that file back.
+
+    The archive is not built in memory: a production bundle is 50-180 MB and the byte
+    path peaked at 2.78x that (measured). Staging goes next to the bundles rather than
+    into the system temp — on a container /tmp is often tmpfs, i.e. RAM, which would
+    give back exactly what this removes — and carries the same hidden ".*.tmp" name the
+    startup sweep already cleans, so a download that dies mid-flight leaks nothing
+    permanently. The response deletes it once the body is sent.
+    """
+    registry = get_registry()
+    registry.dir.mkdir(parents=True, exist_ok=True)
+    handle, staged = tempfile.mkstemp(prefix=".export-", suffix=".zip.tmp", dir=registry.dir)
+    os.close(handle)
+    path = Path(staged)
+    try:
+        with path.open("wb") as stream:
+            registry.export_to(name, stream)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return FileResponse(
+        path, media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
+        background=BackgroundTask(path.unlink, missing_ok=True),
     )
 
 
@@ -147,7 +169,7 @@ async def export_model(
     # Zipping a production bundle (100+ MB skops) takes seconds of CPU/disk —
     # run it in a worker thread so /health and predicts stay responsive (same
     # rationale as the predict cold-load offload).
-    return _zip_response(model_name, await asyncio.to_thread(registry.export_zip, model_name))
+    return await asyncio.to_thread(_staged_zip_response, model_name)
 
 
 @router.post("/models/import", summary="Import a model (file upload only)")
@@ -236,8 +258,7 @@ async def download_shared(
         if not registry.exists(info["name"]):
             raise HTTPException(404, "Model no longer exists.")
         # Same blocking-zip offload as the authenticated export route.
-        blob = await asyncio.to_thread(registry.export_zip, info["name"])
-        return _zip_response(info["name"], blob)
+        return await asyncio.to_thread(_staged_zip_response, info["name"])
     dataset_path = settings.data_dir / info["name"]
     if not dataset_path.exists():
         raise HTTPException(404, "Dataset no longer exists.")

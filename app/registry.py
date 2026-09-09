@@ -15,6 +15,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
+from typing import BinaryIO
 
 from . import model_archive, model_report
 from .classifier import ClassifierModel
@@ -69,19 +70,26 @@ class Registry:
         )
 
     def sweep_stale_tmp(self) -> int:
-        """Delete hidden ``.name.tmp`` staging dirs orphaned by a crashed/killed
-        save (the atomic rename never ran, so list()/exists() already ignore
-        them, but they leak disk until the same name is retrained). Called on
+        """Delete hidden ``.*.tmp`` staging left by a crashed/killed save or export.
+
+        A save leaves a directory (the atomic rename never ran); an export leaves a
+        file (the download never finished). Both are invisible to list()/exists()
+        already, but they leak disk until the same name is retrained. Called on
         startup; returns how many were removed."""
         if not self.dir.exists():
             return 0
         removed = 0
         with self._disk_lock:
             for path in self.dir.iterdir():
-                if path.is_dir() and path.name.startswith(".") and path.name.endswith(".tmp"):
+                if not (path.name.startswith(".") and path.name.endswith(".tmp")):
+                    continue
+                if path.is_dir():
                     shutil.rmtree(path, ignore_errors=True)
-                    if not path.exists():  # ignore_errors can leave it; count only real removals
-                        removed += 1
+                else:
+                    # An export staged here whose download never completed.
+                    path.unlink(missing_ok=True)
+                if not path.exists():  # ignore_errors can leave it; count only real removals
+                    removed += 1
         return removed
 
     def _tmp_path(self, name: str) -> Path:
@@ -228,8 +236,8 @@ class Registry:
             with self._lock:
                 self._cache.pop(name, None)
 
-    def export_zip(self, name: str) -> bytes:
-        """Read a bundle from disk and pack it (card + manifest added by ``model_archive``).
+    def export_to(self, name: str, target: BinaryIO) -> None:
+        """Write the bundle's archive into ``target`` (card + manifest added by ``model_archive``).
 
         The transport artifacts are never read from disk: they are regenerated per
         export, so a stale copy could otherwise ship beside the fresh one.
@@ -238,17 +246,23 @@ class Registry:
         way back in, minus those two. A denylist could not hold: ``update_info`` stages
         a ``metrics.json.tmp`` next to the file it replaces, so a crash in that window
         leaves one behind — and we would have produced an archive we then refuse.
+
+        Compression now happens under the disk lock, where before only the read did.
+        That is a few seconds of extra hold on a 50 MB bundle, and it is the price of
+        the members being read one at a time from files that must still exist: the
+        alternative, holding open handles outside the lock, would make ``delete``
+        fail outright on Windows.
         """
         packable = model_archive.ALLOWED_MEMBERS - {MANIFEST_FILE, CARD_FILE}
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
-            members = {
-                file.name: file.read_bytes()
+            sources = {
+                file.name: file
                 for file in sorted(self._path(name).iterdir())
                 if file.is_file() and file.name in packable
             }
-        return model_archive.pack(name, members)
+            model_archive.pack_into(target, name, sources)
 
     def import_zip(self, name: str, data: bytes) -> dict:
         """Validate an uploaded archive (``model_archive.unpack``) and install it."""

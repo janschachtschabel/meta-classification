@@ -97,10 +97,21 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
 - Files: `app/sharing.py` (+`list`, `revoke`, `count_download`), `app/routes/models.py`,
   `app/static/ui/manage.js`. Tests: create → list → revoke → `GET /share/{id}` 404.
 
-### C3 · Streamed transfers (S, ½ day) — P2
+### C3 · Streamed transfers (S, ½ day) — **done 2026-09-09**
 - `export_zip` writes to a `tempfile` and returns a `FileResponse`; dataset uploads
   spool to `<name>.part` and `os.replace`. Tests: a crash between write and replace
   leaves no listed dataset.
+- 🟢 Measured on the real 51 MB `faecher_300k_auto`: export peak heap **142 MB → 2.2 MB**
+  (2.78× the bundle → 0.04×). The old path held every member, the zip built beside them,
+  and the copy `getvalue()` makes. Cost: compression now runs under the disk lock, 3.1 s
+  for that bundle — the members are read one at a time from files that must still exist,
+  and holding open handles outside the lock would make `delete` fail on Windows.
+- Staging goes next to the bundles, not into the system temp: on a container `/tmp` is
+  often tmpfs, i.e. RAM, which would give back exactly what this removes. It carries the
+  hidden `.*.tmp` name the startup sweep already cleans (extended from dirs to files).
+- **Model import still buffers** (measured 172 MB peak, 3.37×): `unpack` validates the
+  archive as bytes before anything reaches the filesystem, and that order is the security
+  property. Streaming it means extracting to staging first — a separate change.
 
 ### B8 · Per-label diagnostics endpoint (S, ½ day)
 - `GET /models/{name}/labels` → `[{uri, label, f1, threshold, support}]` sorted by F1.

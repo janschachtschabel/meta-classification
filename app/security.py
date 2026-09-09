@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import secrets
+from pathlib import Path
 
 from fastapi import Depends, HTTPException, Security, UploadFile
 from fastapi.security import APIKeyHeader
@@ -87,8 +88,43 @@ def safe_name(name: str, kind: str = "name") -> str:
     return name
 
 
+async def spool_upload_capped(upload: UploadFile, max_bytes: int, target: Path) -> int:
+    """Stream an upload straight to ``target``, aborting if it exceeds ``max_bytes``.
+
+    For the uploads that are large by design — a WLO export is 126-195 MB gzipped —
+    where :func:`read_upload_capped` would hold the chunks AND the joined copy, i.e.
+    twice the file, before a byte reached disk. Nothing is held here but one block.
+
+    A refusal or a write error removes the partial file: leaving the bytes on the
+    volume would only move the problem the cap exists to prevent. Returns the number
+    of bytes written.
+    """
+    total = 0
+    try:
+        with target.open("wb") as handle:
+            while True:
+                block = await upload.read(1024 * 1024)
+                if not block:
+                    break
+                total += len(block)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Upload exceeds {max_bytes // (1024 * 1024)} MB limit.",
+                    )
+                handle.write(block)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return total
+
+
 async def read_upload_capped(upload: UploadFile, max_bytes: int) -> bytes:
-    """Read an uploaded file in chunks, aborting if it exceeds ``max_bytes``."""
+    """Read an uploaded file in chunks, aborting if it exceeds ``max_bytes``.
+
+    Kept for the model import, which validates the archive as bytes before anything
+    touches the filesystem — see ``model_archive.unpack``.
+    """
     chunks: list[bytes] = []
     total = 0
     while True:

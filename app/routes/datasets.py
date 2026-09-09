@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from fastapi import (
@@ -23,7 +24,7 @@ from .. import dataset_stats as stats_mod
 from ..errors import TrainingInputError
 from ..limiter import default_limit, export_limit, limiter
 from ..schemas import AnalyzeRequest, ExportRequest, ValidateRequest
-from ..security import read_upload_capped, require_role, safe_name
+from ..security import require_role, safe_name, spool_upload_capped
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
 
@@ -175,11 +176,19 @@ async def import_dataset(
     target = settings.data_dir / name
     if target.exists():
         raise HTTPException(409, f"Dataset '{name}' already exists.")
-    data = await read_upload_capped(file, settings.max_upload_mb * 1024 * 1024)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    # Writing up to 200 MB is a blocking disk op — keep it off the event loop.
-    await asyncio.to_thread(target.write_bytes, data)
-    return {"status": "imported", "dataset_name": name, "size_bytes": len(data)}
+    # Spool beside the target, then rename: the rename is what makes a dataset exist,
+    # so a failure before it leaves a ".part" file that no route can name (the listing
+    # globs the CSV suffixes and _dataset_path checks them) rather than a truncated CSV
+    # that lists, inspects and trains as if it were complete.
+    staging = target.with_name(target.name + ".part")
+    size = await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, staging)
+    try:
+        await asyncio.to_thread(os.replace, staging, target)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+    return {"status": "imported", "dataset_name": name, "size_bytes": size}
 
 
 @router.post("/datasets/{dataset_name}/export", summary="Export a dataset (download or share link)",

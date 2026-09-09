@@ -74,7 +74,7 @@ def test_train_predict_and_secure_roundtrip(tmp_path):
     assert math_pred[0] and math_pred[0][0].uri == "uri:math"
 
     # Export then import under a new name; the imported model must work.
-    blob = registry.export_zip("tiny_model")
+    blob = _export_bytes(registry, "tiny_model")
     info = registry.import_zip("tiny_copy", blob)
     assert info["name"] == "tiny_copy"
     copy_pred = registry.get("tiny_copy").predict(["Das Römische Reich der Antike"], top_k=1)
@@ -1420,6 +1420,19 @@ def test_bundle_carries_per_label_f1_and_survives_a_malformed_metrics_file(tmp_p
     assert ranked[0][0].label_f1 is None
 
 
+def _export_bytes(registry, name: str) -> bytes:
+    """Run the real streaming export and hand the archive back as bytes.
+
+    Production streams into a staging file; the fixture bundle is a few hundred KB, so
+    a BytesIO keeps the assertions readable without a second code path.
+    """
+    import io
+
+    buffer = io.BytesIO()
+    registry.export_to(name, buffer)
+    return buffer.getvalue()
+
+
 def _trained_registry(tmp_path, info: dict | None = None) -> tuple[Registry, Settings]:
     """Train the tiny fixture model and return its registry (helper for the export tests)."""
     settings = _settings(tmp_path)
@@ -1445,7 +1458,7 @@ def test_export_carries_a_manifest_and_a_readable_model_card(tmp_path):
         "description": "Subject classifier. Not for grading learners.",
     })
 
-    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as archive:
+    with zipfile.ZipFile(io.BytesIO(_export_bytes(registry, "tiny_model"))) as archive:
         members = set(archive.namelist())
         assert {"manifest.json", "README.md"} <= members
         manifest = json.loads(archive.read("manifest.json"))
@@ -1472,7 +1485,7 @@ def test_import_rejects_a_tampered_member(tmp_path):
     from app.registry import UnsafeModelError
 
     registry, _ = _trained_registry(tmp_path)
-    original = registry.export_zip("tiny_model")
+    original = _export_bytes(registry, "tiny_model")
 
     tampered = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(original)) as source, \
@@ -1505,7 +1518,7 @@ def test_import_rejects_every_way_an_archive_arrives_damaged(tmp_path):
     from app.registry import UnsafeModelError
 
     registry, _ = _trained_registry(tmp_path)
-    original = registry.export_zip("tiny_model")
+    original = _export_bytes(registry, "tiny_model")
 
     def mangled_member_name() -> bytes:
         raw = bytearray(original)
@@ -1540,7 +1553,7 @@ def test_import_still_accepts_an_archive_without_a_manifest(tmp_path):
 
     registry, _ = _trained_registry(tmp_path)
     stripped = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as source, \
+    with zipfile.ZipFile(io.BytesIO(_export_bytes(registry, "tiny_model"))) as source, \
             zipfile.ZipFile(stripped, "w", zipfile.ZIP_DEFLATED) as target:
         for member in source.namelist():
             if member not in ("manifest.json", "README.md"):
@@ -1555,7 +1568,7 @@ def test_transport_artifacts_are_not_kept_in_the_installed_bundle(tmp_path):
     Writing them into the bundle directory would make the next export ship a stale
     copy alongside the fresh one."""
     registry, settings = _trained_registry(tmp_path)
-    registry.import_zip("copy", registry.export_zip("tiny_model"))
+    registry.import_zip("copy", _export_bytes(registry, "tiny_model"))
 
     installed = {p.name for p in (settings.models_dir / "copy").iterdir()}
     assert "manifest.json" not in installed and "README.md" not in installed
@@ -1806,7 +1819,7 @@ def test_a_malformed_metrics_document_degrades_the_card_instead_of_failing_the_e
         json.dumps(hostile), encoding="utf-8"
     )
 
-    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as archive:
+    with zipfile.ZipFile(io.BytesIO(_export_bytes(registry, "tiny_model"))) as archive:
         card = archive.read("README.md").decode("utf-8")
     assert "tiny_model" in card
     assert "many" not in card, "an unusable row count is not printed as if it were measured"
@@ -1836,7 +1849,7 @@ def test_export_packs_only_what_a_bundle_is_made_of(tmp_path):
     (bundle / "metrics.json.tmp").write_text("{}", encoding="utf-8")
     (bundle / ".DS_Store").write_bytes(b"\x00")
 
-    archive = registry.export_zip("tiny_model")
+    archive = _export_bytes(registry, "tiny_model")
     with zipfile.ZipFile(io.BytesIO(archive)) as packed:
         assert set(packed.namelist()) == {
             "config.json", "metrics.json", "head.skops", "vectorizer.skops",
@@ -1860,7 +1873,7 @@ def test_a_bundle_with_an_unreadable_document_can_still_be_exported(tmp_path):
         "{ truncated", encoding="utf-8"
     )
 
-    with zipfile.ZipFile(io.BytesIO(registry.export_zip("tiny_model"))) as archive:
+    with zipfile.ZipFile(io.BytesIO(_export_bytes(registry, "tiny_model"))) as archive:
         assert archive.read("metrics.json").decode("utf-8") == "{ truncated"
         card = archive.read("README.md").decode("utf-8")
         # The manifest still covers what is actually in the archive, damage included:

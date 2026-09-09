@@ -58,7 +58,16 @@ class UnsafeModelError(Exception):
     unreadable/corrupt (any bundle we cannot safely load)."""
 
 
-def build_manifest(name: str, members: dict[str, bytes], metadata: dict) -> dict:
+def digest_file(path: Path) -> str:
+    """SHA-256 of a file, read in blocks — a single bundle member reaches ~120 MB."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def build_manifest(name: str, digests: dict[str, str], metadata: dict) -> dict:
     """Describe an archive: a SHA-256 for every member, plus what it is.
 
     Deliberately built at EXPORT rather than at save time. ``metrics.json`` is
@@ -78,10 +87,7 @@ def build_manifest(name: str, members: dict[str, bytes], metadata: dict) -> dict
         "n_labels": metadata.get("n_labels"),
         "f1_macro": metrics.get("f1_macro"),
         "dataset": metadata.get("dataset"),
-        "files": {
-            member: hashlib.sha256(payload).hexdigest()
-            for member, payload in sorted(members.items())
-        },
+        "files": dict(sorted(digests.items())),
     }
 
 

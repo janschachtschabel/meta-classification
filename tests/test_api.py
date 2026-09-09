@@ -914,3 +914,42 @@ def test_import_rejects_a_bundle_whose_config_is_not_shaped_like_one(trained_mod
                           headers=ADMIN)
     assert refused.status_code == 400, refused.text
     assert "bad_config" not in client.get("/models", headers=RO).json()
+
+
+def test_a_dataset_upload_that_dies_before_the_rename_leaves_nothing_behind(monkeypatch):
+    """A dataset upload is capped at 200 MB and used to be assembled in memory first —
+    the chunks, then the joined copy, so twice the file before a byte reached disk.
+
+    It now spools straight into "<name>.part" and is renamed into place. The rename is
+    what makes a dataset exist, so a failure before it must leave nothing that can be
+    listed, inspected, downloaded or trained on — and no orphan on the volume either.
+    """
+    import app.routes.datasets as datasets_mod
+
+    def _die(_src, _dst):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(datasets_mod.os, "replace", _die)
+    files = {"file": ("crash.csv", b"title,label\nx,uri:math\n", "text/csv")}
+    with pytest.raises(OSError):
+        client.post("/datasets/import", files=files, headers=ADMIN)
+
+    listed = [d["name"] for d in client.get("/datasets", headers=RO).json()]
+    assert "crash.csv" not in listed
+    assert client.get("/datasets/crash.csv", headers=RO).status_code == 404
+    assert not list((_TMP / "data").glob("*.part")), "the partial upload is cleaned up"
+
+
+def test_an_oversized_dataset_upload_is_refused_without_filling_the_disk(monkeypatch):
+    """The cap has to bite while spooling, not after: the point of writing straight to
+    disk is that the whole upload is never held anywhere, and a refusal that left the
+    bytes on the volume would just move the problem."""
+    from app.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_upload_mb", 0)  # any byte is over the cap
+    files = {"file": ("huge.csv", b"title,label\n" + b"x,uri:math\n" * 100, "text/csv")}
+    response = client.post("/datasets/import", files=files, headers=ADMIN)
+    assert response.status_code == 413, response.text
+
+    assert "huge.csv" not in [d["name"] for d in client.get("/datasets", headers=RO).json()]
+    assert not list((_TMP / "data").glob("*.part")), "the refused upload leaves no bytes"
