@@ -141,8 +141,13 @@ config:
   limits:
     ## @param config.limits.maxUploadMb Upload cap in MB for datasets/model bundles — keep ingress proxy-body-size in sync
     maxUploadMb: 200
-    ## @param config.limits.maxModelsInMemory Trained models kept resident (LRU eviction beyond this)
+    ## @param config.limits.maxModelsInMemory Trained models kept resident (LRU eviction beyond this).
+    ## Raised automatically to fit config.limits.warmupModels, so a warmed model is never evicted at startup.
     maxModelsInMemory: 2
+    ## @param config.limits.warmupModels Comma-separated model names preloaded on startup and kept in memory,
+    ## so their first /predict pays no cold skops load (e.g. "faecher_300k_auto,bildungsstufe"). Empty = off.
+    ## Budget the RAM: a bundle's head is n_labels x n_features x 4 bytes (a 60-label model is ~48 MB).
+    warmupModels: ""
     ## @param config.limits.rateLimitEnabled Enable the in-process rate limiter (keys on client IP — see README for proxy note)
     rateLimitEnabled: true
 

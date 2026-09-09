@@ -273,4 +273,4 @@ class Registry:
 @lru_cache
 def get_registry() -> Registry:
     settings = get_settings()
-    return Registry(settings.models_dir, settings.max_models_in_memory)
+    return Registry(settings.models_dir, settings.effective_max_models_in_memory())

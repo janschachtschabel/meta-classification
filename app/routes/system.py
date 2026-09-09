@@ -79,6 +79,8 @@ async def config(
         "tfidf_max_word_features": settings.tfidf_max_word_features,
         "tfidf_max_char_features": settings.tfidf_max_char_features,
         "max_models_in_memory": settings.max_models_in_memory,
+        # What the cache actually holds: raised to fit the warmup list (see settings).
+        "effective_max_models_in_memory": settings.effective_max_models_in_memory(),
         "warmup_models": settings.warmup_models_list,
         "auth_enabled": settings.auth_enabled,
         "rate_limit_enabled": settings.rate_limit_enabled,

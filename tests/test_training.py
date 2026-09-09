@@ -164,6 +164,47 @@ def test_warmup_skips_corrupt_bundle_without_failing_startup(tmp_path, monkeypat
         get_registry.cache_clear()
 
 
+def test_warmup_holds_every_listed_model_past_the_configured_cap(tmp_path, monkeypatch):
+    """The vServer case: several trained models are listed for warmup so that each
+    target field answers without a cold skops load. The LRU used to be sized purely
+    from max_models_in_memory (default 2), so the third and fourth warmed model were
+    evicted during startup and their first request paid the load anyway."""
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.registry import get_registry
+    from app.settings import get_settings
+
+    settings = _settings(tmp_path)
+    config = _config()
+    run_training(
+        _request(), settings, config, config.get("fast"), _registry(settings),
+        on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    # Three distinct model names sharing one bundle: the cache counts entries, so
+    # the content is irrelevant and copying beats training the same thing twice.
+    source = settings.models_dir / "tiny_model"
+    for name in ("level_model", "type_model"):
+        shutil.copytree(source, settings.models_dir / name)
+
+    monkeypatch.setenv("APIV3_DATA_DIR", str(FIXTURES))
+    monkeypatch.setenv("APIV3_MODELS_DIR", str(settings.models_dir))
+    monkeypatch.setenv("APIV3_AUTH_ENABLED", "false")
+    monkeypatch.setenv("APIV3_MAX_MODELS_IN_MEMORY", "2")
+    monkeypatch.setenv("APIV3_WARMUP_MODELS", "tiny_model, level_model, type_model")
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    try:
+        with TestClient(create_app()) as client:
+            assert client.get("/health").status_code == 200
+            assert get_registry().in_memory_count() == 3
+    finally:
+        get_settings.cache_clear()
+        get_registry.cache_clear()
+
+
 def test_run_training_uses_injected_registry(tmp_path):
     """run_training persists through the caller-provided registry — the route
     injects the get_registry() singleton, so training disk I/O shares the same

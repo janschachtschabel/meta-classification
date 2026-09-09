@@ -70,8 +70,8 @@ No key is ever required for `/health`, `/metrics` and `GET /share/{id}`
 |---|---|---|
 | `APIV3_CORS_ALLOW_ORIGINS` | *(empty)* | Comma-separated browser-origin allowlist; empty = no cross-origin access. |
 | `APIV3_MAX_UPLOAD_MB` | `200` | Upload cap for datasets/model bundles (streamed; aborts at the cap). |
-| `APIV3_MAX_MODELS_IN_MEMORY` | `2` | LRU cache size: models kept resident in RAM. |
-| `APIV3_WARMUP_MODELS` | *(empty)* | Comma-separated model names to preload + warm on startup so their first `/predict` pays no cold skops-load. Best-effort (a missing name is logged and skipped); keep the count ≤ `MAX_MODELS_IN_MEMORY`. |
+| `APIV3_MAX_MODELS_IN_MEMORY` | `2` | LRU cache size: models kept resident in RAM. Raised automatically to fit `WARMUP_MODELS`; `GET /config` reports the resolved `effective_max_models_in_memory`. |
+| `APIV3_WARMUP_MODELS` | *(empty)* | Comma-separated model names to preload + warm on startup so their first `/predict` pays no cold skops-load — the practical setting for a server answering several target fields. **All listed models stay resident** (the cache is sized to fit them). Best-effort: a missing or unloadable name is logged and skipped, never fatal to startup. Wired through `docker-compose.yml` and the Helm chart (`config.limits.warmupModels`). |
 | `APIV3_RATE_LIMIT_ENABLED` | `true` | In-process limiter, keyed on client IP. |
 | `APIV3_RATE_LIMIT_PREDICT` | `300/minute` | `/predict`, `/predict/batch`, `/predict/multi`, `/predict/explain`. |
 | `APIV3_RATE_LIMIT_TRAIN` | `5/minute` | `POST /train`. |

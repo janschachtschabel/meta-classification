@@ -20,6 +20,22 @@ def test_effective_n_jobs_caps_at_cpu_percent(monkeypatch):
     assert Settings(n_jobs=-1, cpu_max_percent=60).effective_n_jobs() == 1  # never below 1
 
 
+def test_warmup_models_are_all_kept_resident():
+    """Listing models in APIV3_WARMUP_MODELS is a statement that all of them should
+    answer without a cold load. With the LRU sized independently (default 2), warming
+    four models evicted two of them before the first request — the documented advice
+    was to keep the list short rather than to hold what was asked for. The cache is
+    therefore sized to fit at least the warmed models."""
+    four = Settings(max_models_in_memory=2, warmup_models="subjects, level, type, curriculum")
+    assert four.effective_max_models_in_memory() == 4
+
+    # The configured cap still governs everything else: it is a RAM ceiling, and a
+    # short warmup list must not shrink it.
+    assert Settings(max_models_in_memory=5, warmup_models="subjects").effective_max_models_in_memory() == 5
+    assert Settings(max_models_in_memory=2, warmup_models="").effective_max_models_in_memory() == 2
+    assert Settings(max_models_in_memory=0, warmup_models="").effective_max_models_in_memory() == 1
+
+
 def test_effective_n_jobs_uses_container_budget_not_host(monkeypatch):
     """The Kubernetes scenario: a 4-CPU-limited pod on a 64-core node. The budget
     must derive from the 4 CPUs the cgroup quota grants (-> 2 threads at the

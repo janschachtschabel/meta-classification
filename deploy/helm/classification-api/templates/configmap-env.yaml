@@ -24,6 +24,7 @@ data:
   # ---- Limits ----
   APIV3_MAX_UPLOAD_MB: {{ .Values.config.limits.maxUploadMb | quote }}
   APIV3_MAX_MODELS_IN_MEMORY: {{ .Values.config.limits.maxModelsInMemory | quote }}
+  APIV3_WARMUP_MODELS: {{ .Values.config.limits.warmupModels | quote }}
   APIV3_RATE_LIMIT_ENABLED: {{ .Values.config.limits.rateLimitEnabled | quote }}
   {{- range $key, $value := .Values.config.extraEnv }}
   {{ $key }}: {{ $value | quote }}

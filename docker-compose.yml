@@ -36,6 +36,13 @@ services:
       # -2 = leave one core free so the host stays responsive during training.
       APIV3_N_JOBS: ${APIV3_N_JOBS:--2}
 
+      # ---- Model cache ----
+      # Comma-separated model names to preload on startup and keep resident, so
+      # their first /predict pays no cold load. The cache is sized to hold at
+      # least this list, so several models stay warm side by side.
+      APIV3_WARMUP_MODELS: ${APIV3_WARMUP_MODELS:-}
+      APIV3_MAX_MODELS_IN_MEMORY: ${APIV3_MAX_MODELS_IN_MEMORY:-2}
+
       # ---- Data (persistent volume) ----
       APIV3_DATA_DIR: /data/datasets
       APIV3_MODELS_DIR: /data/models

@@ -165,6 +165,18 @@ class Settings(BaseSettings):
         """Model names to preload on startup (parsed from the comma-separated list)."""
         return [m.strip() for m in self.warmup_models.split(",") if m.strip()]
 
+    def effective_max_models_in_memory(self) -> int:
+        """Size of the model cache: the configured cap, but never smaller than the
+        warmup list.
+
+        Listing a model in ``warmup_models`` states that it should answer without a
+        cold skops load. Sizing the LRU independently broke that promise silently —
+        four warmed models on the default cap of 2 left two of them evicted before
+        the first request. The cap keeps its meaning as the RAM ceiling for
+        everything else; it is only lifted to hold what was explicitly asked for.
+        """
+        return max(1, self.max_models_in_memory, len(self.warmup_models_list))
+
     def effective_n_jobs(self) -> int:
         """Thread count for the label-wise head fits: the requested ``n_jobs``
         (joblib semantics for negatives) bounded by the ``cpu_max_percent``

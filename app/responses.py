@@ -27,6 +27,7 @@ class ConfigResponse(BaseModel):
     tfidf_max_word_features: int
     tfidf_max_char_features: int
     max_models_in_memory: int
+    effective_max_models_in_memory: int
     warmup_models: list[str]
     auth_enabled: bool
     rate_limit_enabled: bool

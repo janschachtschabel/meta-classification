@@ -358,6 +358,7 @@ def test_health_and_config_response_models_preserve_exact_keys(monkeypatch, tmp_
     assert set(config.json()) == {
         "n_jobs", "cpu_max_percent", "effective_n_jobs",
         "tfidf_max_word_features", "tfidf_max_char_features", "max_models_in_memory",
+        "effective_max_models_in_memory",
         "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb",
     }
     # The response model must never leak a configured key.

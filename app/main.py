@@ -76,6 +76,15 @@ async def lifespan(app: FastAPI):
     if swept:
         logger.warning("Swept %d orphaned model staging dir(s) from a previous crash", swept)
     if settings.warmup_models_list:
+        resident = settings.effective_max_models_in_memory()
+        if resident > settings.max_models_in_memory:
+            # Never silently: the operator set a RAM ceiling and the warmup list
+            # raised it, so the extra memory has to be visible in the log.
+            logger.info(
+                "Model cache holds %d models (raised from APIV3_MAX_MODELS_IN_MEMORY=%d "
+                "to fit the %d warmup models)",
+                resident, settings.max_models_in_memory, len(settings.warmup_models_list),
+            )
         _warmup_models(registry, settings.warmup_models_list)
     logger.info(
         "api_v3 ready (models_dir=%s, auth=%s)", settings.models_dir, settings.auth_enabled
