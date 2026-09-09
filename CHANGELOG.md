@@ -21,6 +21,22 @@ owner decision, so read these three before upgrading:
 
 ## audit remediation, phase 0 (2026-09-08)
 
+### Added — every warmed model stays resident (`APIV3_WARMUP_MODELS`)
+
+- Listing models for warmup states that each should answer without a cold skops
+  load. The LRU was sized independently from `APIV3_MAX_MODELS_IN_MEMORY`
+  (default 2), so warming three models evicted one during startup and its first
+  request paid the load anyway — documented as a rule to follow ("keep the count
+  ≤ the LRU size") rather than as the defect it was.
+- The cache is now sized to `max(cap, len(warmup list))`; the cap keeps its
+  meaning as the RAM ceiling for every model that is *not* warmed. The raise is
+  logged at startup and `GET /config` reports `effective_max_models_in_memory`.
+- The setting is wired through `docker-compose.yml` and the Helm chart
+  (`config.limits.warmupModels`). It had existed only in `.env.example`, so the
+  containerized deployment it exists for could not configure it.
+- 🟢 Measured with the cap deliberately at 2 and three real bundles warmed:
+  3 of 3 resident (2 before), every `/predict` ≈ 0.09 s.
+
 Test-first; **196 tests green**, ruff/mypy clean, `pip-audit` clean. Acts on
 `docs/audits/2026-09-08-audit.md`; the remaining phases are in
 `docs/plans/2026-09-08-ergaenzungsplan.md`.
