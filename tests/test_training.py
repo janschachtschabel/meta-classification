@@ -603,7 +603,9 @@ def test_cv_mode_keeps_labels_missing_from_the_train_split(tmp_path, monkeypatch
 
     from app import data as data_mod
 
-    def adversarial_split(n, *, val_size, test_size, seed):
+    def adversarial_split(n, *, val_size, test_size, seed, y=None):
+        # `y` mirrors the real signature (B3's stratified splits read it);
+        # this double ignores it because the point here is WHERE the rows go.
         idx = np.arange(n)
         # All 'uri:hist' rows (24..35 in tiny.csv) land outside the train split.
         return idx[:24], idx[24:30], idx[30:]

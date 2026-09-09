@@ -114,6 +114,7 @@ def prepare_data(
     cv_folds: int,
     on_progress: Callable[..., None],
     should_stop: Callable[[], bool],
+    stratified: bool = False,
 ) -> Prepared | None:
     """Load + clean the dataset, build label targets, detect the task type and
     split into train/val/test. Returns ``None`` if cancelled."""
@@ -190,6 +191,7 @@ def prepare_data(
     train_idx, val_idx, test_idx = data_mod.three_way_split(
         len(texts), val_size=training_cfg.validation_size,
         test_size=training_cfg.test_size, seed=settings.random_seed,
+        y=y_all if stratified else None,
     )
     if cv_folds < 2:
         # Classic split only: drop unlearnable label columns + the rows that

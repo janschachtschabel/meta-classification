@@ -128,6 +128,7 @@ def run_training(
     )
     prep = prepare_data(
         req, settings, training_cfg, cv_folds=cv_folds,
+        stratified=profile.stratified_splits,
         on_progress=on_progress, should_stop=should_stop,
     )
     if prep is None:

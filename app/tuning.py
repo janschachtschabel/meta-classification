@@ -20,6 +20,7 @@ from sklearn.model_selection import KFold
 
 from .classifier import make_head
 from .errors import TrainingInputError
+from .stratify import stratified_partition
 from .thresholds import (
     apply_thresholds,
     macro_f1,
@@ -134,6 +135,7 @@ def cross_val_evaluate(
     tol: float | None = None,
     select_on_tuned_thresholds: bool = False,
     threshold_shrink_k: float | None = None,
+    stratified: bool = False,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
@@ -188,7 +190,13 @@ def cross_val_evaluate(
             f"matrix has {matrix.shape[0]} rows but the labels have {n}; they must be "
             "the same rows in the same order."
         )
-    folds = list(KFold(n_splits=k, shuffle=True, random_state=seed).split(np.arange(n)))
+    if stratified:
+        # Held-out block per fold; the training rows are everything else, which is what
+        # KFold's second array is. Building it here keeps the loop below identical.
+        held_out = stratified_partition(y, [1.0 / k] * k, seed=seed)
+        folds = [(np.setdiff1d(np.arange(n), block), block) for block in held_out]
+    else:
+        folds = list(KFold(n_splits=k, shuffle=True, random_state=seed).split(np.arange(n)))
     # OOF probabilities per C, each row filled exactly once (float32 bounds RAM).
     oof = {c: np.zeros((n, n_labels), dtype=np.float32) for c in c_grid}
     total_fits = k * len(c_grid)

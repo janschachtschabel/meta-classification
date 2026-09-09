@@ -192,6 +192,7 @@ def fit_evaluate_deploy(
                 tol=profile.selection_tol,
                 select_on_tuned_thresholds=profile.select_c_on_tuned_thresholds,
                 threshold_shrink_k=profile.threshold_shrinkage_k,
+                stratified=profile.stratified_splits,
                 should_stop=should_stop, task_type=prep.task_type,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).

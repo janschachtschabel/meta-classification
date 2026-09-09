@@ -19,6 +19,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
 
+from . import stratify
 from .errors import TrainingInputError
 from .label_names import is_container_label, pair_names
 
@@ -314,9 +315,19 @@ def prepare_targets(
 
 
 def three_way_split(
-    n: int, *, val_size: float, test_size: float, seed: int
+    n: int, *, val_size: float, test_size: float, seed: int, y: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (train_idx, val_idx, test_idx) index arrays for a random split."""
+    """Return (train_idx, val_idx, test_idx) index arrays.
+
+    Random by default. Given ``y`` (the n x n_labels target matrix) the split is
+    multilabel-stratified instead, so each label keeps its share in all three parts —
+    it is the rare ones that a shuffle misplaces, and macro F1 weights those equally.
+    See ``stratify.stratified_partition``.
+    """
+    if y is not None:
+        train, val, test = stratify.stratified_partition(
+            y, [1.0 - val_size - test_size, val_size, test_size], seed=seed)
+        return train, val, test
     indices = np.arange(n)
     train_idx, rest_idx = train_test_split(indices, test_size=val_size + test_size, random_state=seed)
     rel_test = test_size / (val_size + test_size)

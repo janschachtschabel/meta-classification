@@ -134,6 +134,17 @@ class Profile:
     # at holdout shape put shrinkage at +0.0040 — single seed, not the pipeline, so it
     # justifies keeping the flag and nothing more.
     threshold_shrinkage_k: float | None = None
+    # Split rows so every LABEL keeps its share, not just the row count — multilabel
+    # iterative stratification, applied to the holdout split AND the k folds. Random
+    # splitting balances rows and leaves the rare labels to chance: measured over 20
+    # seeds on data_30k_ai, the rarest label (20 positives, the min_samples floor) lands
+    # anywhere from 1 to 4 positives in a 15% validation split whose share is 3, and
+    # macro F1 weights it exactly as heavily as the label with 2 476.
+    # ⚪ UNMEASURED, hence off: plan item B3, gated by benchmark_stratified_splits.py on
+    # macro F1 not worse AND per-label F1 varying less across seeds. Nothing starves to
+    # zero here (0 such cases in 20 seeds x 48 labels), so this is about stability
+    # rather than about rescuing a label that could not be learned at all.
+    stratified_splits: bool = False
 
 
 @dataclass
@@ -202,6 +213,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             selection_tol=raw.get("selection_tol"),
             select_c_on_tuned_thresholds=raw.get("select_c_on_tuned_thresholds", True),
             threshold_shrinkage_k=raw.get("threshold_shrinkage_k"),
+            stratified_splits=raw.get("stratified_splits", False),
         )
     if not profiles:
         profiles = dict(_DEFAULTS)
