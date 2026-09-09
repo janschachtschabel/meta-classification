@@ -84,6 +84,22 @@ Text eingeben, Modell(e) anhaken, **Classify**.
   dauern (das Modell wird von der Festplatte geladen) — danach kommen Antworten
   in Millisekunden.
 
+## „Correct" — eine falsche Antwort korrigieren
+
+Neben **Warum?** steht **Correct**. Damit hält man fest, was das Modell hätte sagen
+sollen: die Liste zeigt alle Labels des Modells, Mehrfachauswahl per Strg-Klick.
+
+- **Nichts auswählen** heißt „keines davon passt". Das wird ebenfalls gespeichert,
+  taucht aber nicht im Trainings-Export auf — eine Zeile ohne Label kann ein Lauf nicht
+  lernen.
+- Korrekturen werden **nie verworfen**. Anders als die Lauf-Historie (gedeckelt bei 200)
+  sind sie kein Protokoll, sondern die Daten, aus denen der nächste Lauf lernt.
+- Der Export unter `GET /feedback/export` ist eine CSV mit den Spalten `text` und
+  `labels`, die sich direkt als Datensatz hochladen und trainieren lässt.
+
+Korrigieren darf jeder mit Lese-Schlüssel — genau die Redaktion, die die Fehler sieht.
+Der Export bleibt Admin-Sache.
+
 ## „Warum?" — die Erklärung zu einer Antwort
 
 Neben dem Modellnamen im Ergebnis steht **Warum?**. Der Knopf zeigt, welche Wörter die

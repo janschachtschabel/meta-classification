@@ -91,6 +91,50 @@ EVAL_BODY = {
 }
 
 
+def test_an_editor_can_correct_a_prediction(trained_model):
+    """The recognition rate improves with use, or it improves only when somebody
+    produces a new export. A correction is what a person noticed, written down where
+    the next training run can read it.
+
+    Posting is readonly on purpose: correcting an answer is part of classifying, and
+    the editors who spot the mistakes are exactly the ones without an admin key.
+    """
+    recorded = client.post("/feedback", headers=RO, json={
+        "text": "Der Wiener Kongress von 1815",
+        "model_name": "api_model",
+        "predicted": ["uri:math"],
+        "corrected": ["uri:hist"],
+        "source": "ui",
+    })
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["collected"] >= 1, "say how much has been gathered so far"
+
+    exported = client.get("/feedback/export", headers=ADMIN)
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith("text/csv")
+    rows = list(csv.DictReader(io.StringIO(exported.text), delimiter=";"))
+    assert list(rows[0]) == ["text", "labels"], "the columns /train asks for"
+    assert rows[-1]["labels"] == "uri:hist"
+
+
+def test_feedback_is_bounded_at_the_trust_boundary(trained_model):
+    """It is the one write a readonly key can make, so its size limits are the only
+    thing standing between a key and an unbounded file."""
+    assert client.post("/feedback", headers=RO, json={
+        "text": "", "model_name": "api_model", "corrected": ["uri:hist"]}).status_code == 422
+    assert client.post("/feedback", headers=RO, json={
+        "text": "x", "model_name": "api_model",
+        "corrected": [f"uri:{i}" for i in range(200)]}).status_code == 422
+    assert client.post("/feedback", headers=RO, json={
+        "text": "x", "model_name": "../escape", "corrected": ["uri:hist"]}).status_code == 400
+
+
+def test_the_feedback_export_is_admin_only(trained_model):
+    """Posting one correction is part of the job; walking off with every text an
+    editor ever pasted is not."""
+    assert client.get("/feedback/export", headers=RO).status_code == 403
+
+
 def test_a_model_can_be_evaluated_on_a_dataset(trained_model):
     """"Model B beats model A" is only a statement if both were measured on the same
     rows. Until now that meant a script driving a running server, which nothing recorded

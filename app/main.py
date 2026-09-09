@@ -16,7 +16,7 @@ from . import __version__
 from .jobs import job_runner
 from .limiter import limiter
 from .registry import Registry, get_registry
-from .routes import datasets, models, predict, predict_bulk, system, training
+from .routes import datasets, feedback, models, predict, predict_bulk, system, training
 from .settings import Settings, get_settings
 
 logging.basicConfig(
@@ -104,6 +104,7 @@ _TAGS_METADATA = [
     {"name": "Prediction", "description": "Classify texts with a trained model."},
     {"name": "Models", "description": "List, inspect, delete, export/import and share models."},
     {"name": "Datasets", "description": "Manage, analyze and validate CSV datasets."},
+    {"name": "Feedback", "description": "Corrections to predictions, and the CSV they train from."},
 ]
 
 _DESCRIPTION = (
@@ -251,6 +252,7 @@ def create_app() -> FastAPI:
     app.include_router(predict_bulk.router)
     app.include_router(models.router)
     app.include_router(datasets.router)
+    app.include_router(feedback.router)
 
     if settings.ui_enabled:
         # Optional admin UI: plain static files (no build step, no external

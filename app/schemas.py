@@ -254,6 +254,25 @@ class ExplainRequest(BaseModel):
     top_n_words: int = Field(5, ge=1, le=50)
 
 
+class FeedbackRequest(BaseModel):
+    """One correction an editor made to a prediction.
+
+    The bounds are the point: this is the only write a *readonly* key can make, so they
+    are what stands between a key and an unbounded file on the volume.
+    """
+
+    text: str = Field(..., min_length=1, max_length=100_000)
+    model_name: str
+    # What the model said, so a later reader can see WHAT was corrected, not only to
+    # what. Optional: a correction is still a correction if nobody recorded the guess.
+    predicted: list[str] = Field(default_factory=list, max_length=100)
+    # Empty means "none of these apply" — a real thing to say, and not trainable.
+    corrected: list[str] = Field(default_factory=list, max_length=100)
+    # Where it came from ("ui", a script, an integration), so a later merge can weigh
+    # or filter by origin instead of guessing.
+    source: str = Field("ui", max_length=50)
+
+
 class EvaluateRequest(BaseModel):
     """Score an existing model on a dataset. The model's own label space decides what
     can be scored, so no label settings are accepted here beyond a filter."""

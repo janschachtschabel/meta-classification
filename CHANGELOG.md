@@ -4,6 +4,24 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added — corrections feed back into training (`POST /feedback`)
+
+- **The recognition rate improves with use, or it improves only when somebody produces
+  a new export.** A "Correct" button on a single-text answer records what the model said
+  and what it should have said; `GET /feedback/export` hands the collection back as a
+  CSV `/train` reads directly.
+- Appended and never dropped, unlike the job history's 200-entry cap: this is not a log,
+  it is the data the next run learns from, and the oldest correction is worth as much as
+  the newest.
+- Posting is **readonly**. Correcting an answer is part of classifying, and the editors
+  who notice the mistakes are exactly the ones without an admin key. The export is admin:
+  one correction is part of the job, every text an editor ever pasted is not.
+- "None of these apply" is recordable and is left out of the export — the loader drops
+  label-less rows, so including them would overstate what the file contributes.
+- 🟢 The training-compatibility claim is pinned by handing the export to `load_dataset`
+  itself, not by asserting a header string.
+
+
 ### Added — "Evaluate on…" in the model panel
 
 - The model detail gained a section listing every dataset the model has been scored

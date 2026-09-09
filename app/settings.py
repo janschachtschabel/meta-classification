@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # models dir: it describes runs, not bundles, and a stray file there would
     # sit next to things the registry enumerates.
     job_history_file: Path = _BASE / "job_history.jsonl"
+    # Corrections editors make to predictions. Append-only and uncapped: this is
+    # training data, not a log, so the oldest entry is worth as much as the newest.
+    feedback_file: Path = _BASE / "feedback.jsonl"
     config_file: Path = _BASE / "config.yaml"
 
     # --- RAM control: how many models stay resident (LRU eviction beyond this) ---

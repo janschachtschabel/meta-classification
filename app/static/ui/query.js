@@ -77,7 +77,8 @@ function renderPredictions(byModel) {
   return Object.entries(byModel).map(([name, preds]) => `
     <div class="card">
       <div class="detail-head"><h3>${esc(name)}</h3>
-        <button type="button" class="small ghost" data-explain="${esc(name)}">Why?</button></div>
+        <button type="button" class="small ghost" data-explain="${esc(name)}">Why?</button>
+        <button type="button" class="small ghost" data-correct="${esc(name)}">Correct</button></div>
       ${preds.length ? preds.map((p) => `
       <div class="pred${p.above_threshold === false ? " below-t" : ""}">
         <span class="name">${esc(p.label)}</span>
@@ -105,8 +106,10 @@ async function runSingle(models, out) {
   const text = $("#query-text").value;
   out.innerHTML = renderPredictions(byModel);
   applyBarWidths(out);
-  // Only here: the endpoint explains one text, so the bulk modes have nothing to bind.
+  // Only here: both act on ONE text — the endpoint explains one, and a correction
+  // records one. The bulk modes have nothing to bind.
   bindExplainButtons(out, text);
+  bindCorrectionButtons(out, byModel);
 }
 
 /* ---------- many texts ---------- */

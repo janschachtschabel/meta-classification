@@ -24,9 +24,12 @@ os.environ["APIV3_RATE_LIMIT_ENABLED"] = "true"
 # Any JobRunner a test constructs writes its outcome to the configured history file.
 # Without this the suite appends to the developer's REAL one — found by reading that
 # file after a live run and seeing "first", "second", "third" in it.
-os.environ["APIV3_JOB_HISTORY_FILE"] = str(
-    Path(tempfile.mkdtemp(prefix="apiv3-tests-")) / "job_history.jsonl"
-)
+_SCRATCH = Path(tempfile.mkdtemp(prefix="apiv3-tests-"))
+os.environ["APIV3_JOB_HISTORY_FILE"] = str(_SCRATCH / "job_history.jsonl")
+# Same reason: a test that posts feedback would otherwise append to the developer's
+# real collection — which, unlike the history, is training data nobody wants seeded
+# with "Der Wiener Kongress" from a test fixture.
+os.environ["APIV3_FEEDBACK_FILE"] = str(_SCRATCH / "feedback.jsonl")
 
 
 @pytest.fixture(autouse=True)

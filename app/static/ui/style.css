@@ -331,3 +331,9 @@ tr.recommended { font-weight: 600; background: var(--bar-bg); }
 .evaluate-form { margin-top: var(--s-4); border-top: 1px solid var(--border); padding-top: var(--s-3); }
 .evaluate-form .ok { color: var(--ok); font-weight: 600; }
 .evaluate-form p:empty { display: none; }
+
+/* ---- correcting a prediction ---- */
+.correction { margin-top: var(--s-4); border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.correction .ok { color: var(--ok); font-weight: 600; }
+.correction .fb-message:empty { display: none; }
+.correction .small { margin-right: var(--s-2); }

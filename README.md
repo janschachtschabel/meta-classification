@@ -250,6 +250,14 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
 ## Endpoints (excerpt)
 
 - **Training:** `POST /train`, `GET /train/status`, `POST /train/stop`, `GET /train/profiles`
+- **Corrections:** `POST /feedback` records that a prediction was wrong and what the
+  right answer was; `GET /feedback/export` returns them as a CSV `/train` reads
+  directly (columns `text` and `labels`, with the separators the request defaults to).
+  Posting is **readonly** — correcting an answer is part of classifying, and the editors
+  who spot the mistakes are the ones without an admin key; the export is admin. Appended
+  and never dropped: this is training data, not a log. An empty `corrected` means "none
+  of these apply" — recorded, and left out of the export, because a row without labels
+  is not something a run can learn from (`APIV3_FEEDBACK_FILE`).
 - **Evaluate a model on a dataset:** `POST /models/{name}/evaluate` — the only honest
   way to say "model B beats model A" is the same rows. Runs as a background job on the
   same worker (so it queues behind a training), appends the result to the bundle's
