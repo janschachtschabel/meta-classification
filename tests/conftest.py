@@ -6,6 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,8 +54,6 @@ class _ScriptedHead:
         return self
 
     def predict_proba(self, x):
-        import numpy as np
-
         # Sparse when a scripted vectorizer produced it, dense when a test handed
         # `cross_val_evaluate` a shared matrix directly.
         dense = x.toarray() if hasattr(x, "toarray") else np.asarray(x)
@@ -79,9 +78,12 @@ class ScriptedCSearch:
     what lets a CV fold's slice look its own rows up again.
     """
 
-    def __init__(self, scored_rows: list[int]) -> None:
-        import numpy as np
+    # Macro F1 the well-scaled candidate reaches under EITHER rule — one missed
+    # positive on label 0 (F1 6/7) and a perfect label 1, averaged. Named once so the
+    # tests read as "the well-scaled candidate's score" rather than a magic constant.
+    well_scaled_f1 = (6 / 7 + 1.0) / 2
 
+    def __init__(self, scored_rows: list[int]) -> None:
         self.y = np.zeros((8, 2), dtype=int)
         self.y[:4, 0] = 1
         self.y[4:, 1] = 1
@@ -92,10 +94,6 @@ class ScriptedCSearch:
         self.row_ids = np.arange(8, dtype=float).reshape(-1, 1)
         # Rows handed to predict_proba, one entry per call, in order.
         self.scored_rows = scored_rows
-
-    # Macro F1 the well-scaled candidate reaches under any rule — the number both
-    # selection rules must agree on for it, spelled out once.
-    well_scaled_f1 = 6 / 7 / 2 + 0.5
 
     def head(self, c, **kwargs):
         return _ScriptedHead(self.tables[c], self.scored_rows)
