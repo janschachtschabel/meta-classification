@@ -77,7 +77,7 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
 
 ## Phase 1 — Shareable models + honest model view (1–2 weeks)
 
-### C1 · Bundle manifest + model card (S–M, 1–2 days)
+### C1 · Bundle manifest + model card (S–M, 1–2 days) — **done 2026-09-09**
 - `manifest.json` member: `sha256` per file, `app_version`, `format_version`,
   `created_at`, `n_labels`, `f1_macro`, `dataset`. Written by `_write_bundle`; verified
   by `_read_bundle` when present (mismatch → `UnsafeModelError`, i.e. 400 on import,
@@ -90,7 +90,7 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   (`_ALLOWED_MEMBERS` + 2). Tests: round-trip keeps hashes; a flipped byte in
   `head.skops` is rejected on import; an old bundle without manifest still loads.
 
-### C2 · Share-link management (S, ½ day)
+### C2 · Share-link management (S, ½ day) — **done 2026-09-09**
 - `GET /share` (admin: id, kind, name, expires_at, downloads) and `DELETE /share/{id}`
   (admin); optional `max_downloads` on create. UI: "Active share links" box on the
   Models and Datasets tabs with Revoke.
@@ -113,7 +113,7 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   archive as bytes before anything reaches the filesystem, and that order is the security
   property. Streaming it means extracting to staging first — a separate change.
 
-### B8 · Per-label diagnostics endpoint (S, ½ day)
+### B8 · Per-label diagnostics endpoint (S, ½ day) — **done 2026-09-09**
 - `GET /models/{name}/labels` → `[{uri, label, f1, threshold, support}]` sorted by F1.
   `support` (positives in training) is added to `metrics.json` at train time
   (`compute_metrics` already has `y_true`). Feeds D1 and the model card.
@@ -137,12 +137,18 @@ Effort: 1 person-day. Risk: none of these changes model behaviour.
   unscored labels last in both directions, 360 px without horizontal scrolling,
   every target ≥ 24×24, dark mode via the tokens, no console/CSP errors.
 
-### P1 · Shared-vectorizer cross-validation (S–M, 1 day incl. benchmark)
+### P1 · Shared-vectorizer cross-validation (S–M, 1 day incl. benchmark) — **blocked: needs the owner's go-ahead**
 - `cross_val_evaluate` accepts a prefitted matrix: `fit_transform` once over all rows,
   slice per fold, reuse for the deploy fit. Profile flag `refit_vectorizer_per_fold`
   (default decided by the benchmark). `scripts/benchmark_shared_vectorizer.py` reports
   macro/micro F1 and wall-clock for both modes on `data_30k_ai.csv` and the
   university target.
+- **Blocked, not skipped:** the gate IS a benchmark, i.e. several full training passes
+  on `data_30k_ai.csv` and the university target. The owner asked on 2026-09-09 to hold
+  off on training because it loads the machine too heavily, so this is the one Phase-1
+  item left open. Everything else in Phase 1 is done. Nothing depends on it: the flag
+  would only change a default, and the default today is the measured-safe one
+  (refit per fold).
 - **Gate:** adopt as default only if |Δ macro F1| < 0.002 on both; expected saving
   ≈ 17 % (`auto`) / 20 % (`best`) at 156 k rows (README: 2.3 min per pass).
 - Files: `app/tuning.py`, `app/deploy.py`, `app/profiles.py`, `config.yaml`, README
