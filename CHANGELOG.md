@@ -4,6 +4,49 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Fixed — three layout faults in the admin UI
+
+- **A radio was being stretched to the full width of its column.** The field rule read
+  `input:not([type="checkbox"]):not([type="file"])` and set `width: 100%`, so it caught
+  radios too: the mark spanned its whole grid column and pushed its own label to the far
+  side of the row. That is why the options looked spread wide and *still* wrapped over
+  several lines. Excluding `[type="radio"]` is the root fix — the first attempt had
+  rearranged the fieldset around the symptom instead.
+- **A long inline hint pushed the min-samples input out of its row.** `Min. Beispiele je
+  Label` carried `(seltenere Labels fallen weg)` inside the `<label>`, which made the
+  label wider than its column. The sentence moved into the help text below, where every
+  other field already keeps its explanation.
+- **The models table was clipped on the right.** `main` was capped at 880px, narrower
+  than the table's own content — name, task, labels, two F1 columns, the evaluation
+  sentence and three buttons. The cap is now `--page-max: 1200px`. Help text keeps its
+  separate 72ch limit, so the wider page does not turn prose into long lines.
+- Mode fieldsets became a grid (`repeat(auto-fit, minmax(14rem, 1fr))`) with each
+  option's hint on its own line under its title and the mark aligned to the first line
+  rather than to the gap between the two.
+
+### Added — the upload-only import rule is asserted, not just documented
+
+- `CLAUDE.md` and both endpoint docstrings state that models and datasets are imported by
+  **file upload only, never by URL fetch**, but nothing failed if someone added a `url=`
+  form field and an HTTP client to satisfy a reasonable-sounding request. It is a
+  security boundary — a server that fetches a caller-supplied URL is an SSRF pivot into
+  whatever the deployment can reach — so `tests/test_no_url_fetch.py` now asserts it.
+- **Two independent halves, because either alone can pass while the property is broken.**
+  The *source* half AST-parses every module under `app/` and fails if one imports an
+  outbound HTTP client. The *contract* half reads the published OpenAPI schema and
+  requires both import endpoints to take `multipart/form-data` with a `file` field, to
+  expose nothing url- or uri-shaped, and not to accept `application/json` — which is how
+  a `url` field usually arrives.
+
+### Docs — Docker is a first-class install path
+
+- The README now covers installation **with** Docker (compose and a plain `docker run`
+  with the three storage variables) and **without** it, the start command for each, and
+  PowerShell equivalents beside the curl examples.
+- Added: how the two API-key roles differ and how to set them, what a minimal `.env`
+  looks like, the three endpoints that stay reachable without a key, and the first-run
+  sequence for the admin UI.
+
 ### Changed — `auto` and `best` split so every label keeps its share (plan item B3)
 
 - **Random splitting balances rows and leaves rare labels to chance.** Measured over 20
