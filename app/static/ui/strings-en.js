@@ -86,7 +86,7 @@ const STRINGS_EN = {
   "query.lines.hint": "Blank lines are skipped. Sent in batches; the answers arrive as a table you can download as CSV.",
   "query.lines.label": "Texts, one per line",
   "query.lines.placeholder": "Der Satz des Pythagoras\nPhotosynthese der Pflanzen\nDer Wiener Kongress",
-  "query.mode.csv": "A CSV file <span class=\"muted\">(the columns the model was trained on)</span>",
+  "query.mode.csv": "A CSV file <span class=\"muted\">(same columns as training)</span>",
   "query.mode.legend": "What do you want to classify?",
   "query.mode.many": "Many texts <span class=\"muted\">(one per line)</span>",
   "query.mode.one": "One text",

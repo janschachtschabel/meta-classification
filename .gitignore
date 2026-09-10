@@ -8,6 +8,11 @@ feedback.jsonl
 models/
 cache/
 data/*.csv
+# .gz too: a gzipped export is still a dataset, and `data/*.csv` does not
+# match `.csv.gz` — a 126 MB file reached a commit before this line existed.
+data/*.csv.gz
+data/*.jsonl
+data/*.jsonl.gz
 # Raw output of the scripts/benchmark_*.py runs — reproducible by re-running them;
 # the conclusions that matter live in docs/model-approach-comparison.md.
 /field_weights_results.json

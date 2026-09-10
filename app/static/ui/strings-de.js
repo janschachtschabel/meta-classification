@@ -87,7 +87,7 @@ const STRINGS_DE = {
   "query.lines.hint": "Leere Zeilen werden übersprungen. Der Versand erfolgt in Paketen; die Antworten erscheinen als Tabelle, die sich als CSV herunterladen lässt.",
   "query.lines.label": "Texte, einer pro Zeile",
   "query.lines.placeholder": "Der Satz des Pythagoras\nPhotosynthese der Pflanzen\nDer Wiener Kongress",
-  "query.mode.csv": "Eine CSV-Datei <span class=\"muted\">(mit den Spalten, auf die das Modell trainiert wurde)</span>",
+  "query.mode.csv": "Eine CSV-Datei <span class=\"muted\">(Spalten wie im Training)</span>",
   "query.mode.legend": "Was möchten Sie klassifizieren?",
   "query.mode.many": "Viele Texte <span class=\"muted\">(einer pro Zeile)</span>",
   "query.mode.one": "Einen Text",

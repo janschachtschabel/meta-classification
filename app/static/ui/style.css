@@ -103,7 +103,10 @@ label.check { display: flex; gap: var(--s-2); align-items: center; font-weight: 
 input, select, textarea, button {
   font: inherit; color: inherit;
 }
-input:not([type="checkbox"]):not([type="file"]), select, textarea {
+/* Radios and checkboxes are not fields you fill in, they are marks you set: the
+   width:100% below stretched a radio across its whole column and pushed its own
+   label to the far side of the row. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea {
   width: 100%; padding: var(--s-2) var(--s-3);
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
 }
@@ -309,11 +312,11 @@ fieldset.modes legend { font-weight: 600; padding: 0 var(--s-1); }
 /* `start`, not `center`: each option is two lines (title + hint), and centring put
    the radio beside the gap between them. */
 fieldset.modes label.check { margin: 0; min-height: 24px; align-items: start; }
-/* The hint goes UNDER its option rather than beside it. Inline, a long translation
-   shrank the option and broke its title mid-phrase — the German CSV hint is a whole
-   subordinate clause, so that is the normal case here, not an edge case. */
+/* The hint sits under its own title: three options side by side give each about a
+   third of the row, and the German CSV hint is a whole subordinate clause. */
 fieldset.modes label.check .muted { display: block; }
-fieldset.modes label.check input { margin-top: 2px; }
+/* Optically centre the mark against the FIRST line of a two-line option. */
+fieldset.modes label.check input { margin-top: 3px; flex: none; }
 /* A file input is excluded from the field padding above, which left it at 23px — one
    pixel under the 24x24 target minimum (WCAG 2.5.8). Applies to every upload field. */
 input[type="file"] { min-height: 24px; padding: var(--s-1) 0; }
