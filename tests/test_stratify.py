@@ -162,26 +162,34 @@ def test_cross_val_evaluate_can_take_stratified_folds(monkeypatch):
     assert sorted(seen[0].tolist()) == list(range(60))
 
 
-def test_a_profile_can_ask_for_stratified_splits_and_defaults_not_to(tmp_path):
-    """B3's on-switch, off until the benchmark's gate is met. The yaml half catches a
-    parser that ignores the key, which the defaults alone cannot see."""
+def test_the_cv_profiles_stratify_and_the_holdout_one_does_not(tmp_path):
+    """B3, adopted exactly as far as it was measured.
+
+    `benchmark_stratified_splits.py` isolates the FOLD splitter: C is fixed so the
+    deployed model cannot move, and only the thresholds — read off the out-of-fold
+    probabilities — respond to the draw. On that path stratifying is worth +0.0050
+    macro F1 and nearly halves the run-to-run spread (sd 0.0031 -> 0.0017).
+
+    The holdout splitter is wired the same way but is NOT covered by that measurement:
+    there, stratifying moves rows between train/val/test, so it changes the deployed
+    model as well, and a fair comparison needs a test split held fixed across both arms.
+    `fast` is the only holdout profile, so it keeps the random splitter until that
+    measurement exists. The code default stays False for the same reason: a profile
+    added to config.yaml tomorrow gets the measured-nothing option, not a guess.
+    """
     from app.profiles import Profile, load_training_config
     from app.settings import get_settings
 
     assert Profile("x").stratified_splits is False
-    for profile in load_training_config(get_settings().config_file).profiles.values():
-        assert profile.stratified_splits is False, f"{profile.name} must not stratify yet"
-
-    config_file = tmp_path / "config.yaml"
-    config_file.write_text(
-        """profiles:
-  strat:
-    C_grid: [1.0]
-    stratified_splits: true
-""",
-        encoding="utf-8",
+    shipped = load_training_config(get_settings().config_file).profiles
+    stratifying = {name for name, p in shipped.items() if p.stratified_splits}
+    assert stratifying == {"auto", "best"}, (
+        f"only the CV profiles were measured; got {sorted(stratifying)}"
     )
-    assert load_training_config(config_file).get("strat").stratified_splits is True
+    assert shipped["fast"].cv_folds == 0, (
+        "the exception is justified by `fast` being the holdout profile — if that "
+        "changes, the reason for excluding it changes too"
+    )
 
 
 def test_both_training_paths_hand_the_profile_flag_to_their_splitter(tmp_path, monkeypatch):

@@ -4,6 +4,36 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed — `auto` and `best` split so every label keeps its share (plan item B3)
+
+- **Random splitting balances rows and leaves rare labels to chance.** Measured over 20
+  seeds on data_30k_ai, the rarest label (20 positives, the `min_samples` floor) lands
+  anywhere from 1 to 4 positives in a validation split whose fair share is 3 — and macro
+  F1 weights it exactly as heavily as the label with 2 476. `app/stratify.py` replaces
+  that with multilabel iterative stratification.
+- 🟢 **Measured and adopted for the CV profiles.** 26 450 rows × 48 labels, C fixed at
+  32, five fold draws:
+
+  | | random folds | stratified folds |
+  |---|---|---|
+  | macro F1 | 0.7075 | **0.7125** (+0.0050) |
+  | spread of that number across draws | sd 0.0031 | **sd 0.0017** |
+  | per-label F1 spread across draws | mean 0.0172 | **mean 0.0152** |
+  | worst per-label spread | 0.1493 | **0.1227** |
+
+  Both halves of the plan's gate met: macro F1 not worse (it improved), per-label F1
+  steadier. The headline is the second row — the reported number stops wobbling with the
+  draw, which is what makes two training runs comparable at all.
+- **Turned on for `auto` and `best` only, and the code default stays off.** That is the
+  measurement boundary, not caution about the mechanism. The benchmark isolates the fold
+  splitter: `C` is fixed so the deployed model cannot move and only the thresholds — read
+  off the out-of-fold probabilities — respond to the draw. On the **holdout** path
+  stratifying also moves rows between train/val/test, so it changes the model itself, and
+  a fair comparison there needs a test split held fixed across both arms. `fast` is the
+  only holdout profile and keeps the random splitter until that measurement exists.
+- Nothing starves to zero either way (0 such cases in 20 seeds × 48 labels), so this buys
+  stability rather than rescuing a label that could not otherwise be learned.
+
 ### Measured — two ways to choose a decision threshold, neither adopted (plan items C2, B4)
 
 Both proposals changed how a per-label cut is picked. Both are now measured on held-out

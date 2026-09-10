@@ -49,6 +49,13 @@ profiles:
     max_word_features: 200000
 
   auto:
+    # 🟢 Measured 2026-09-10 (benchmark_stratified_splits.py, data_30k_ai, 5 fold
+    # draws): keeping every label's share in every fold is worth +0.0050 macro F1 and
+    # nearly halves the run-to-run spread of the reported number (sd 0.0031 -> 0.0017),
+    # with per-label F1 steadier too (sd 0.0172 -> 0.0152). Set per profile rather than
+    # globally: `fast` splits holdout, where stratifying also moves rows between
+    # train/val/test and so changes the model itself — unmeasured, so it stays random.
+    stratified_splits: true
     description: "Word+char TF-IDF, 3-fold CV, 3 C values. The recommended default."
     tune_threshold: true
     threshold_per_label: true
@@ -61,6 +68,13 @@ profiles:
     C_grid: [2.0, 8.0, 32.0]
 
   best:
+    # 🟢 Measured 2026-09-10 (benchmark_stratified_splits.py, data_30k_ai, 5 fold
+    # draws): keeping every label's share in every fold is worth +0.0050 macro F1 and
+    # nearly halves the run-to-run spread of the reported number (sd 0.0031 -> 0.0017),
+    # with per-label F1 steadier too (sd 0.0172 -> 0.0152). Set per profile rather than
+    # globally: `fast` splits holdout, where stratifying also moves rows between
+    # train/val/test and so changes the model itself — unmeasured, so it stays random.
+    stratified_splits: true
     description: "Word+char TF-IDF, 5-fold CV. Most accurate evaluation; ~1.9x auto."
     tune_threshold: true
     threshold_per_label: true

@@ -140,10 +140,21 @@ class Profile:
     # seeds on data_30k_ai, the rarest label (20 positives, the min_samples floor) lands
     # anywhere from 1 to 4 positives in a 15% validation split whose share is 3, and
     # macro F1 weights it exactly as heavily as the label with 2 476.
-    # ⚪ UNMEASURED, hence off: plan item B3, gated by benchmark_stratified_splits.py on
-    # macro F1 not worse AND per-label F1 varying less across seeds. Nothing starves to
-    # zero here (0 such cases in 20 seeds x 48 labels), so this is about stability
-    # rather than about rescuing a label that could not be learned at all.
+    # 🟢 Measured 2026-09-10 on data_30k_ai (26 450 rows x 48 labels, C fixed at 32,
+    # 5 fold draws, benchmark_stratified_splits.py), FOLD path:
+    #     macro F1        0.7075 -> 0.7125  (+0.0050), and its spread across draws
+    #                     sd 0.0031 -> 0.0017 — the reported number stops wobbling
+    #     per-label F1 sd across draws: mean 0.0172 -> 0.0152, worst 0.1493 -> 0.1227
+    # Both halves of the plan's gate met, so `auto` and `best` switch it on in
+    # config.yaml. Nothing starves to zero here (0 such cases in 20 seeds x 48 labels):
+    # this buys stability, not a label that could not otherwise be learned.
+    # The DEFAULT stays False, and that is the measurement boundary rather than caution
+    # about the mechanism. The benchmark isolates the fold splitter — C is fixed so the
+    # deployed model cannot move and only the thresholds respond to the draw. On the
+    # HOLDOUT path stratifying also moves rows between train/val/test, so it changes the
+    # model itself, and a fair comparison there needs a test split held fixed across both
+    # arms. `fast` is the only holdout profile and keeps the random splitter until that
+    # measurement exists.
     stratified_splits: bool = False
 
 
