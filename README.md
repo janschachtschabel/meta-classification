@@ -15,27 +15,154 @@ It covers all features of the previous version: **training** on your own CSV met
 
 ## Installation
 
-Requires **Python ≥ 3.11**.
+Two paths. **Docker** needs nothing but Docker and gives you a pinned, non-root
+container with a persistent volume. **Without Docker** you need **Python ≥ 3.11** and get
+a checkout you can edit and re-run in seconds — the better choice while developing.
+
+Either way, start from the keys: copy `.env.example` to `.env` and set the two API keys
+(see [API keys and access](#api-keys-and-access) below).
 
 ```bash
-# from the repo root
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # a key worth using, twice
+```
+
+### A · With Docker
+
+```bash
+docker compose up -d                 # builds the image on first run, reads .env itself
+docker compose logs -f               # follow the startup
+```
+
+`docker-compose.yml` binds to `127.0.0.1:8000` on purpose — put nginx/caddy in front for
+TLS — and keeps datasets and models in the named volume `classification-data`, so
+`docker compose down` is safe and only `down -v` deletes your data.
+
+To run the published image instead of building, the CI publishes
+`ghcr.io/<owner>/<repo>:main` (the name follows the GitHub repository):
+
+```bash
+docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
+  -e APIV3_API_KEY_ADMIN=your-admin-key \
+  -e APIV3_API_KEY_READONLY=your-readonly-key \
+  -e APIV3_DATA_DIR=/data/datasets \
+  -e APIV3_MODELS_DIR=/data/models \
+  -e APIV3_SHARE_LINKS_FILE=/data/share_links.json \
+  -v classification-data:/data \
+  ghcr.io/<owner>/<repo>:main
+```
+
+The three path variables are what make the volume the source of truth; without them the
+container would write inside its own filesystem and lose everything on the next `docker
+run`. `docker compose` sets them for you.
+
+### B · Without Docker
+
+```bash
 python -m venv .venv && . .venv/Scripts/activate   # Windows
 # source .venv/bin/activate                         # Linux/Mac
 pip install -r requirements.txt -c requirements.lock   # lock = the tested versions
-cp .env.example .env   # set your API keys (see docs/configuration.md for all options)
 ```
+
+Datasets then live in `./data`, models in `./models`. Both are created on first use.
 
 ## Start
 
+### With Docker
+
 ```bash
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-# Swagger UI: http://127.0.0.1:8000/docs
-# Admin UI:   http://127.0.0.1:8000/ui/
+docker compose up -d          # start (or restart after a config change)
+docker compose down           # stop, keeping datasets and models
+docker compose down -v        # stop AND delete the volume — datasets and models are gone
 ```
 
-**Admin UI** (`/ui/`): a self-contained static page (vanilla JS, no build step, no external assets) for datasets (upload, download, share links, delete), training with live progress (several label fields at once → the UI queues one training per field sequentially and derives the model names as `base_field`), model management (metrics, download, share links, import, delete) and test queries. Sign in with an API key — it is kept in `sessionStorage` (gone when the tab closes) and sent as `X-API-Key` on every request, so the page needs no extra auth mechanism; readonly keys can query, management actions need the admin key. The UI mirrors the server's auth setting exactly like `/docs`: with `APIV3_AUTH_ENABLED=false` it skips the sign-in entirely (badge "Auth deaktiviert — voller Zugriff" / "auth disabled — full access"). The UI speaks **German and English**, switchable in the top bar: the language is resolved as stored choice → browser preference → German, and every string lives in `app/static/ui/strings-de.js` / `strings-en.js` (plain JSON in a one-line assignment, so `tests/test_ui_i18n.py` can read it as data and hold both languages to the same key set). Every tab carries a built-in plain-language help section ("Was bedeuten die Ergebnisse?" etc.); a full non-technical walkthrough for editorial users is in [`docs/ui-guide.md`](docs/ui-guide.md) (German, matching its audience). Disable the UI with `APIV3_UI_ENABLED=false`.
+### Without Docker
 
-All endpoints require the `X-API-Key` header with one of two keys (roles): the **admin key** (`APIV3_API_KEY_ADMIN`) guards the critical/expensive endpoints — `/train`, `/train/stop` and all dataset/model management (import, export, delete, analyze) — while the **readonly key** (`APIV3_API_KEY_READONLY`) suffices for classification and status (`/predict*`, `/train/status`, listings). Exceptions needing no key: `/health`, `/metrics` (operational gauges only) and `GET /share/{id}` — a share link is a **bearer capability** (the unguessable id plus its expiry are the authorization, so it can be handed to someone without a key; creating links stays admin-only). For purely local use set `APIV3_AUTH_ENABLED=false` in `.env`.
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Add `--reload` while developing. For a run that must outlive your terminal, use a service
+manager (systemd, NSSM) rather than a background shell — a training can take hours, and a
+closed terminal takes the run with it.
+
+Either way you get:
+
+| | |
+|---|---|
+| **Admin UI** | http://127.0.0.1:8000/ui/ |
+| **Swagger / OpenAPI** | http://127.0.0.1:8000/docs |
+| **Health check** | http://127.0.0.1:8000/health (no key needed) |
+
+## API keys and access
+
+There are exactly **two roles**, both sent in the `X-API-Key` header:
+
+| Role | Variable | May do |
+|---|---|---|
+| **admin** | `APIV3_API_KEY_ADMIN` | Everything: `/train`, `/train/stop`, and all dataset/model management — import, export, delete, analyze |
+| **readonly** | `APIV3_API_KEY_READONLY` | Classification and status: `/predict*`, `/train/status`, listings |
+
+Generate each one properly — these are bearer secrets, not names:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+and put them in `.env`, which both `docker compose` and a local start read:
+
+```ini
+APIV3_AUTH_ENABLED=true
+APIV3_API_KEY_ADMIN=<the first generated value>
+APIV3_API_KEY_READONLY=<the second generated value>
+```
+
+That is the whole minimum. [`.env.example`](.env.example) carries the same two keys plus
+every other option with a comment explaining what it costs;
+[`docs/configuration.md`](docs/configuration.md) is the full reference.
+
+**Three endpoints need no key at all:** `/health` and `/metrics` (operational gauges
+only), and `GET /share/{id}` — a share link is a *bearer capability*, the unguessable id
+plus its expiry are the authorization, so it can be handed to someone who has no key.
+Creating such links stays admin-only.
+
+**For purely local use** set `APIV3_AUTH_ENABLED=false`. The `X-API-Key` header then
+becomes optional and `/docs` and `/ui/` skip the sign-in — convenient on your own
+machine, and not something to expose to a network.
+
+## The admin UI
+
+Open http://127.0.0.1:8000/ui/ and sign in with one of the two keys — a readonly key can
+query, everything that changes state needs the admin key. The key is kept in
+`sessionStorage`, so it is gone when the tab closes, and sent as `X-API-Key` on every
+request. With `APIV3_AUTH_ENABLED=false` the sign-in is skipped entirely and the top bar
+says so.
+
+A first run, in the order the tabs are arranged:
+
+1. **Datensätze / Datasets** — upload a CSV (or drop it into `data/`), then open it to see
+   how many rows carry a label and how the labels are distributed. Worth doing before
+   training, not after.
+2. **Training** — pick the dataset, the text columns, the label column and a profile
+   (`fast` for a first look, `auto` for a model you deploy, `best` when accuracy matters
+   more than the wait). **Vor dem Training prüfen** reads the whole dataset and reports how
+   many labels clear your threshold and roughly what the run will cost — the moment before
+   an hour of CPU is exactly when that is worth knowing.
+3. **Abfrage / Query** — type a text and classify it. Leave *Top-k* empty to see what the
+   model actually decides; set it to rank a fixed number regardless of thresholds.
+   *Baseline-Diff* shows how much of the answer comes from the text rather than the label's
+   base rate; *Label-F1* shows how reliable that label was in evaluation.
+4. **Modelle / Models** — metrics per model, export as a ZIP (verifiable via its
+   `manifest.json` checksums), share links, delete.
+
+The page is a self-contained static file: vanilla JS, no build step, no external assets,
+nothing loaded from a CDN. It speaks **German and English**, switchable in the top bar
+(stored choice → browser preference → German); every string lives in
+`app/static/ui/strings-de.js` / `strings-en.js` as plain JSON in a one-line assignment, so
+`tests/test_ui_i18n.py` reads it as data and holds both languages to the same key set.
+Each tab carries a built-in plain-language help section. A full non-technical walkthrough
+for editorial users is [`docs/ui-guide.md`](docs/ui-guide.md) (German, matching its
+audience). Disable the UI entirely with `APIV3_UI_ENABLED=false`.
 
 ## Workflow
 
@@ -64,6 +191,50 @@ curl -X POST localhost:8000/predict -H "X-API-Key: $RO_KEY" -H "Content-Type: ap
 ```
 
 With `APIV3_AUTH_ENABLED=false` the `X-API-Key` header is optional.
+
+**On Windows PowerShell** the single-quoted JSON above does not survive the shell. Use
+`curl.exe` (not the `curl` alias, which is `Invoke-WebRequest`) with escaped quotes, or
+`Invoke-RestMethod`:
+
+```powershell
+$headers = @{ "X-API-Key" = $env:ADMIN_KEY }
+$body = @{
+  dataset_name = "data_30k.csv"; model_name = "subjects"
+  text_columns = @("properties.cclom:title","properties.cclom:general_description")
+  label_column = "properties.ccm:taxonid"; optimize_parameters = "auto"
+  label_filter = "http://w3id.org/openeduhub/vocabs/discipline/"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/train -Headers $headers `
+  -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri http://localhost:8000/train/status -Headers $headers | Format-List
+```
+
+### More calls
+
+```bash
+# Upload a dataset (admin). .csv and .csv.gz both work.
+curl -X POST localhost:8000/datasets/import -H "X-API-Key: $ADMIN_KEY" \
+  -F "file=@export.csv.gz"
+
+# What is available
+curl localhost:8000/datasets -H "X-API-Key: $RO_KEY"
+curl localhost:8000/models   -H "X-API-Key: $RO_KEY"
+
+# What a model is and how good it is (labels, thresholds, metrics)
+curl localhost:8000/models/subjects -H "X-API-Key: $RO_KEY"
+
+# Several texts at once, and the model's own decision instead of a fixed top-k
+curl -X POST localhost:8000/predict -H "X-API-Key: $RO_KEY" -H "Content-Type: application/json" \
+  -d '{"texts": ["Bruchrechnung", "Photosynthese im Blatt"], "model_name": "subjects"}'
+
+# Stop a running training (admin) — the bundle is only published on success,
+# so stopping never leaves a half-written model behind
+curl -X POST localhost:8000/train/stop -H "X-API-Key: $ADMIN_KEY"
+```
+
+Omitting `top_k` is the normal case: the model then returns every label above its own
+tuned threshold. Pass `top_k: N` when you want a ranking of fixed length regardless of
+thresholds — each entry carries `above_threshold` so forced ones stay recognisable.
 
 ### Weighting text fields (`text_column_weights`)
 
@@ -519,7 +690,7 @@ For hosting in other ML serving systems:
 
 ## Deployment
 
-- **Docker (local):** `docker compose up -d` — set `APIV3_API_KEY_ADMIN` / `APIV3_API_KEY_READONLY` in `.env` first; datasets and models persist in the `classification-data` volume.
+- **Docker (local):** see [Installation](#installation) — `docker compose up -d`, state in the `classification-data` volume. This section covers what comes after that: running it somewhere other than your own machine.
 - **Kubernetes:** Helm chart in [`deploy/helm/classification-api`](deploy/helm/classification-api/README.md) — StatefulSet with exactly **1 replica** (process-local state + one PVC), probes on `/health`, API keys via chart secret.
 - **CI/CD:** GitHub Actions ([`.github/workflows/`](.github/workflows)) run the three quality gates and publish the image to GHCR; GitLab ([`.gitlab-ci.yml`](.gitlab-ci.yml)) mirrors that for self-hosted registries + Helm-chart push (credentials via CI/CD variables only).
 
@@ -564,7 +735,7 @@ above is the right form for everything at once.
 ```bash
 pip install -r requirements.txt -c requirements.lock
 pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
-python -m pytest tests -q                          # 313 tests
+python -m pytest tests -q                          # 331 tests
 python -m ruff check app tests scripts             # lint
 python -m mypy app --config-file pyproject.toml    # types
 ```
