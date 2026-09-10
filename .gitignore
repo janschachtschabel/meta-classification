@@ -20,6 +20,7 @@ data/*.csv
 /selection_rule_results_seed*.json
 /threshold_shrinkage_results_seed*.json
 /threshold_grid_results_seed*.json
+/stratified_splits_results.json
 # Exported model bundles staged for hand-off — regenerable via POST /models/{name}/export
 # and far too large for the repo (a subject model is ~40 MB zipped).
 fertige-modelle/
