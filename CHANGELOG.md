@@ -2,7 +2,7 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased]
+## [3.2.0] — 2026-09-10
 
 ### Fixed — three layout faults in the admin UI
 
