@@ -1,7 +1,7 @@
 # Plan — lower the training peak memory, same model (api_v3), 2026-09-11
 
-**Status: APPROVED 2026-09-11 ("den Plan umsetzen"); implemented on branch
-`feat/training-memory`.** Later the same day the owner settled the open questions and
+**Status: APPROVED 2026-09-11 ("den Plan umsetzen"); Phases 0–4 implemented on branch
+`feat/training-memory`, each phase's result under its gate.** Later the same day the owner settled the open questions and
 widened the scope: `auto` as an explicit value, the head-fit threads shown during a
 run and counted in the time estimate, the test container's budget at 6000 MB, and
 Phase 4 in scope and measured — see "Decisions" at the end and tasks 1.6–1.8 and
@@ -218,6 +218,16 @@ def fit_transform_exact(vec: TfidfVectorizer, texts, chunk_rows=20_000) -> csr_m
 def transform_chunked(vec, texts, chunk_rows=20_000)  # vstack of per-chunk transforms
 ```
 
+**As built** (the sketch above was refined by measurement, see the Phase 2 result): pass 1
+runs the analyzer ONCE and keeps the un-pruned document-term counts as two int32 arrays
+(`count_terms` → `TermCounts`; one `dict.setdefault` per term, df/tf by `bincount`);
+pass 2 is pure numpy — pick the kept entries, sort each row by first-seen id, renumber —
+done in place over those arrays in blocks of ≤ 1 M entries; the kept term strings are
+rebuilt through one joined string after the un-pruned index is released, so its
+allocator arenas go back to the OS; and `vectorizers.merge_columns` joins word and char
+at 2 × the matrix where scipy's `hstack` needs 3 ×. A second analyzer run in pass 2 (the
+prototype's way) cost 1.6 × the reference's time.
+
 "The same matrix" is meant array for array, not only value for value. The reference
 builds its count matrix with columns in *first-seen* order, sorts each row by that
 order, and only then renumbers the columns alphabetically — so every row of the training
@@ -300,6 +310,58 @@ loaded from disk instead of handed over in memory).
 | 4.3 | `JobRunner` runs trainings through the worker (`APIV3_TRAINING_ISOLATION=process`, default; `thread` keeps today's path and is what the unit suite uses) | `app/jobs.py`, `app/routes/training.py`, `app/settings.py` | a real tiny run through the worker publishes a loadable model; stop and hard stop; a killed child reads as an error naming a likely OOM |
 | 4.4 | Measure: the API process' RSS after two back-to-back 30k runs, thread vs process mode | benchmark script | the numbers, pasted here |
 
+**As built.** The job runner still runs every job on its thread; what the thread runs is
+chosen by the route — `run_training` (`thread`) or `train_worker.run_in_child`
+(`process`), which starts the child and relays. The runner gained two hooks: a run may
+report `worker_pid`, and the status then adds that process' RSS to its own (the
+container limit applies to the sum; the id itself is not shown), and
+`hard_stop_requested()`. Protocol details the tests pin: the child reports its own pid
+(under a Windows venv, `Popen.pid` is the launcher's); it keeps the real stdout for the
+protocol and points fd 1 at stderr, so nothing a library prints can corrupt a line; a
+hard stop closes the child's stdin and the child `os._exit`s on end of input (the parent
+kills it after 10 s otherwise); the API keys are not part of the job spec, the parent's
+pid is — the child's `ThreadBudget` counts the API process' RSS as held
+(`memory.share_budget_with`), so the budget still covers what the container holds, as it
+did when both were one process; a line cut off by a kill is ignored; and a child that
+ends without a result becomes a
+`TrainingProcessError` that names the exit code and the likely OOM kill — shown verbatim,
+like every `UserFacingError`. Tests: `tests/test_train_worker.py` (spec, stage-only
+worker, a real run through the child and through `/train`, stop, kill, death, half a
+line, log level), `tests/test_registry_staging.py`, and the runner's side in
+`test_job_queue.py` / `test_training_memory.py`.
+
+**Result, task 4.4 (2026-09-11)** — `scripts/benchmark_training_isolation.py`: two `auto`
+runs on `data_30k_ai.csv` back to back, in a fresh stand-in for the API process per
+mode. "Serving both" = after both models are loaded, which thread mode has already done
+and process mode does now (what the first `/predict` of each would do).
+
+Windows (dev box):
+
+| Mode | API process at start | after run 1 | after run 2 | serving both | API peak during a run | training peak | time per run |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| thread | 156 MB | 233 MB | 299 MB | 299 MB | 1,229 / 1,287 MB | 1,088 / 1,254 MB | 222 / 209 s |
+| process | 155 MB | 156 MB | 156 MB | 279 MB | **156 / 156 MB** | 1,111 / 1,051 MB | 227 / 216 s |
+
+Linux (the image built from this branch, `docker run --memory 8g`, glibc — what
+production runs):
+
+| Mode | API process at start | after run 1 | after run 2 | serving both | API peak during a run | training peak | time per run |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| thread | 166 MB | 976 MB | 1,237 MB | **1,237 MB** | 1,705 / 1,909 MB | 1,699 / 1,909 MB | 261 / 245 s |
+| process | 166 MB | 166 MB | 166 MB | **321 MB** | 168 / 166 MB | 1,636 / 1,665 MB | 272 / 296 s |
+
+What it shows: on Linux a training in the API process leaves ~0.8 GB behind per run
+that glibc never returns (976 MB after one 30k run, 1,237 MB after two) — the July
+thrash, measured. In a child process the API process ends both runs where it started and
+holds 321 MB once both models serve: **~0.9 GB less after two runs**, and during a run
+it stays at 166 MB instead of 1.7–1.9 GB, so the run's peak counts against the
+container only once, in the process the OOM killer would pick. On Windows the heap
+returns most of it by itself (a residue of ~20 MB once the models are loaded), and there
+the price of the child is visible: +5 and +7 s per run for the interpreter start. The
+Linux times are noisy (four review agents were reading the repository on the same
+machine during that run); the design adds one interpreter start per run, not a
+percentage.
+
 ## Tasks
 
 Each task: failing test first, minimal change, gate run unpiped
@@ -358,6 +420,17 @@ new `resources` block (diff the two files).
 vectorization time ≤ 1.5 × baseline; the `auto`-run `metrics.json` diff from the
 Phase 1 gate stays empty.
 
+**Result (2026-09-11):** ✅ 100k: vectorizer peak **+575 MB** against +1,245 MB for the
+old code in the same benchmark run (**0.46 ×**; 0.45 × the Phase 0 baseline of
++1,281 MB), time 66.8 s against 82.9 s. 30k: +175 MB against +361 MB, 12.3 s against
+14.3 s. The identity step finds matrix, vocabulary, idf and the held-out transform
+identical at both sizes; the largest single term count is 195,989 (100k) and 49,054
+(30k), against the exactness limit of 16,777,216. The `auto` run on `data_30k_ai.csv` is
+still identical to `main`, array for array, and took 183 s against 206 s. The first
+version (a second analyzer run in pass 2) reached only 0.80 × at 1.54 × the time; a
+trace per phase found the rest — scipy's `hstack` at 3 × the matrix, allocator arenas the
+un-pruned index kept resident, and `bincount` scratch of ~450 MB — see "As built" above.
+
 ### Phase 3 — chunked loading (≈ 0.5–1 day)
 
 | # | Task | Files | Test (written first) |
@@ -369,6 +442,11 @@ Phase 1 gate stays empty.
 before the load) ≤ 2 × what the load retains; the baseline ratio comes from task 0.3.
 (The earlier "5.4×" set the whole-file peak against the text kept for the 100k subset —
 two different row sets, not a ratio.)
+
+**Result (2026-09-11):** ✅ whole `data_300k.csv` (340,630 records, 156,174 kept): peak
+**+459 MB** against +1,476 MB, retained +361 MB → **1.27 ×** (baseline 3.5 ×), same time
+(21.5 s against 21.4 s). `data_30k_ai.csv`: +82 MB against +116 MB. The `auto` run on
+`data_30k_ai.csv` with Phases 1–3 in place is still identical to `main`, array for array.
 
 ## Expected effect
 

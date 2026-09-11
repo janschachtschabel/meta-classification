@@ -18,7 +18,9 @@ without changing a single number the model produces.
   `GET /config` reports it next to `effective_n_jobs`; wired through `docker-compose.yml`
   and the Helm chart (`config.compute.trainMemoryMb`).
 - `auto` as an explicit value for `APIV3_N_JOBS`, now its default (`-1` and numbers keep
-  working); `GET /config` says `"auto"` instead of a sentinel.
+  working); `GET /config` says `"auto"` instead of a sentinel. The Docker image,
+  `docker-compose.yml` and the Helm chart default to it too — they pinned `-2` / `-1`,
+  which under the 60 % CPU budget gives the same thread count.
 - **Memory and threads in the status.** `/train/status` gains `rss_mb` (read live),
   `peak_rss_mb` (the run's peak, sampled beside it), `head_fit_threads` and
   `threads_requested`; the status card shows both rows ("3 of 9 — held back by the memory
@@ -30,9 +32,37 @@ without changing a single number the model produces.
   not 6×. The cost table shows the threads; the pre-flight says when a run is held back.
 - `scripts/benchmark_training_memory.py` — peak and retained RSS per pipeline step, every
   step in a process of its own.
+- **Training in a child process** — `APIV3_TRAINING_ISOLATION` (default `process`;
+  `thread` keeps the old in-process path). A run executes in `python -m app.train_worker`
+  (JSON over pipes, nothing pickled): its memory goes back to the OS when it ends instead
+  of staying with the process that serves requests, a hard stop ends it at once, and an
+  OOM kill fails the job with a message naming the likely cause instead of taking the API
+  down. The child only stages the bundle; the API process publishes it under its own disk
+  lock. The memory budget covers both processes: the child counts the API process'
+  memory as held. `/train/status` counts the child's memory in `rss_mb`; `GET /config` reports the
+  mode; wired through `docker-compose.yml` and the Helm chart
+  (`config.compute.trainingIsolation`). The cost: an interpreter start per run, and the
+  first `/predict` of a new model loads it from disk.
+- `scripts/benchmark_training_isolation.py` — what two back-to-back trainings leave in
+  the API process, thread against process mode. In the Linux container, after two 30k
+  `auto` runs with both models loaded: 1,237 MB in thread mode, 321 MB in process mode;
+  during a run the API process stays at 166 MB instead of 1.7–1.9 GB.
 
 ### Changed
 
+- **The TF-IDF vocabularies are counted in two passes** (`app/vocabulary.py`) instead of
+  building scikit-learn's count matrix over every n-gram before pruning — the same matrix,
+  vocabulary and idf as `fit_transform`, array for array (pinned by tests; beyond 2^24
+  occurrences of one term, where float32 sums stop being exact, it falls back to
+  scikit-learn). At 100 000 rows the vectorizer peak fell from +1.25 GB to +0.58 GB, and
+  the step got faster (66.8 s against 82.9 s). The word and char matrices are joined at
+  2× the matrix instead of scipy's 3×; validation and test rows are transformed in chunks.
+- **The CSV is read in chunks** (the loader moved from `data.py` to
+  `app/dataset_load.py`): loading the whole `data_300k.csv` peaks at +0.46 GB instead of
+  +1.48 GB, with the same result. A file that turns out not to be UTF-8 restarts the read
+  as cp1252 rather than mixing encodings.
+- Every error written for the operator is shown verbatim on `/train/status`, not only
+  input errors; everything else stays sanitized.
 - The word and character vocabularies are fitted one after the other: concurrently their
   peaks added up, for no time saving (the analyzer holds the GIL).
 - A CV fold releases its matrices, vectorizer and last head before the next fold
