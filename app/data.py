@@ -1,8 +1,11 @@
 """CSV reading, text cleaning, label preparation and train/val/test splitting.
 
 Kept deliberately free of heavy ML imports so it loads fast and is easy to test.
-Low-RAM oriented: CSVs are read with ``usecols`` and ``dtype=str``. Read-only
-inspection/statistics for the API live in ``dataset_stats`` (which consumes this).
+The pieces here are what reads a CSV at all (``read_csv``: UTF-8 with a cp1252
+fallback, empty/malformed files as ``TrainingInputError``) and what a row becomes.
+Assembling a training dataset out of them — in blocks of rows, the one step that
+holds a whole dataset — is ``dataset_load``; read-only inspection/statistics for the
+API live in ``dataset_stats``. Both consume this module, never the reverse.
 """
 
 from __future__ import annotations

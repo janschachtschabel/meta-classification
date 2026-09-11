@@ -322,13 +322,21 @@ hard stop closes the child's stdin and the child `os._exit`s on end of input (th
 kills it after 10 s otherwise); the API keys are not part of the job spec, the parent's
 pid is — the child's `ThreadBudget` counts the API process' RSS as held
 (`memory.share_budget_with`), so the budget still covers what the container holds, as it
-did when both were one process; a line cut off by a kill is ignored; and a child that
-ends without a result becomes a
-`TrainingProcessError` that names the exit code and the likely OOM kill — shown verbatim,
-like every `UserFacingError`. Tests: `tests/test_train_worker.py` (spec, stage-only
-worker, a real run through the child and through `/train`, stop, kill, death, half a
-line, log level), `tests/test_registry_staging.py`, and the runner's side in
-`test_job_queue.py` / `test_training_memory.py`.
+did when both were one process, and the paths in it are resolved, because the child's
+working directory is not the API's; the child's environment carries neither key; output
+that is no message of ours — half a line from a kill, bytes that are not UTF-8, JSON that
+is not an object — is skipped instead of ending the run; the child raises its own
+`oom_score_adj`, so the kernel's OOM killer picks it and not the API (checked in the
+image: the non-root user may, 0 → 1000; no help where a whole container is killed at
+once, which Kubernetes ≥ 1.28 does on cgroup v2 unless the kubelet's
+`singleProcessOOMKill` is set — there the budget of Phase 1 is what holds a run); and a
+child that ends without a result becomes a `TrainingProcessError` naming the exit code,
+and the likely OOM kill when that code says signal 9 — shown verbatim, like every
+`UserFacingError`. Tests: `tests/test_train_worker.py` (spec and paths, no keys,
+stage-only worker, a real run through the child and through `/train`, stop, kill, death,
+unreadable output, a parent that fails mid-save, the orphan guard, log level),
+`tests/test_registry_staging.py`, and the runner's side in `test_job_queue.py` /
+`test_training_memory.py`.
 
 **Result, task 4.4 (2026-09-11)** — `scripts/benchmark_training_isolation.py`: two `auto`
 runs on `data_30k_ai.csv` back to back, in a fresh stand-in for the API process per
@@ -490,7 +498,8 @@ it. The `.wslconfig` change (VM memory) remains the owner's decision.
   proportion to the threads it removes — only when a budget is active, and visible in
   the status line.
 - **Platforms.** RSS via `/proc` and `psapi` are exercised here (Linux container,
-  Windows dev box); macOS falls back to `resource` and is untested.
+  Windows dev box); macOS reads 0 — its stdlib knows only the lifetime peak, which is
+  not a current reading — so no budget is applied there and nothing is reported.
 
 ## Decisions (the three former open questions, settled by the owner 2026-09-11)
 

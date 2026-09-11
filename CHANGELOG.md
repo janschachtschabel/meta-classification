@@ -37,7 +37,9 @@ without changing a single number the model produces.
   (JSON over pipes, nothing pickled): its memory goes back to the OS when it ends instead
   of staying with the process that serves requests, a hard stop ends it at once, and an
   OOM kill fails the job with a message naming the likely cause instead of taking the API
-  down. The child only stages the bundle; the API process publishes it under its own disk
+  down — the child raises its own `oom_score_adj` so the kernel picks it, which holds
+  wherever the whole container is not killed at once (on Kubernetes ≥ 1.28 with cgroup v2
+  it is, unless the kubelet's `singleProcessOOMKill` is set). The child only stages the bundle; the API process publishes it under its own disk
   lock. The memory budget covers both processes: the child counts the API process'
   memory as held. `/train/status` counts the child's memory in `rss_mb`; `GET /config` reports the
   mode; wired through `docker-compose.yml` and the Helm chart

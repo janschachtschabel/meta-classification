@@ -176,8 +176,11 @@ async def status(_: str = Depends(require_role("readonly"))) -> dict:
     `message`, `elapsed_seconds`, `eta_seconds` (estimated time remaining),
     `seconds_since_heartbeat` (age of the newest progress signal while running; it keeps
     growing when the training thread stalls silently — long values mean "possibly hung",
-    while `elapsed_seconds` grows either way), `rss_mb` (the process' resident memory,
-    read at request time), `peak_rss_mb` (the most the current or last run needed),
+    while `elapsed_seconds` grows either way), `rss_mb` (resident memory read at request
+    time: this process, plus the training process while a run has one — the container's
+    limit applies to the sum), `peak_rss_mb` (the most the current or last run held),
+    `head_fit_threads` and `threads_requested` (what the newest head fit runs on, against
+    what the CPU budget offered: fewer means the memory budget is holding the run back),
     `model_name`, `results` (metrics on completion), `error`. **Auth:** readonly.
     """
     return job_runner.snapshot()

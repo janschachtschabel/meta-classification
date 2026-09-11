@@ -135,8 +135,11 @@ config:
     ## (slower, same model) instead of being OOM-killed. 0 = no cap.
     trainMemoryMb: "auto"
     ## @param config.compute.trainingIsolation Where a training runs. "process" = in a child process
-    ## of the API: its memory goes back to the OS when it ends, and an OOM kill fails the job
-    ## instead of restarting the pod. "thread" = inside the API process.
+    ## of the API: its memory goes back to the OS when it ends, and the child is the one the
+    ## kernel's OOM killer picks. Note for Kubernetes: since 1.28 the kubelet kills every process
+    ## of a container on cgroup v2 (opt out with the kubelet's singleProcessOOMKill, 1.32+), so
+    ## there an OOM still restarts the pod and config.compute.trainMemoryMb is what prevents it.
+    ## "thread" = inside the API process.
     trainingIsolation: "process"
     ## @param config.compute.solver Linear-head solver — newton-cg keeps float32 and releases the GIL (see README)
     solver: "newton-cg"
