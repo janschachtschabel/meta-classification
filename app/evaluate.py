@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from .data import load_dataset
+from .dataset_load import load_dataset
 from .errors import TrainingInputError
 from .registry import Registry
 from .settings import Settings

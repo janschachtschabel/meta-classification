@@ -31,7 +31,8 @@ sys.path.insert(0, str(BASE))
 
 from joblib import parallel_backend  # noqa: E402
 
-from app.data import load_dataset, prepare_targets  # noqa: E402
+from app.data import prepare_targets  # noqa: E402
+from app.dataset_load import load_dataset  # noqa: E402
 from app.tuning import cross_val_evaluate  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 

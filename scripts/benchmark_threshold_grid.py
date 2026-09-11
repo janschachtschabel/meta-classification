@@ -30,7 +30,8 @@ import numpy as np  # noqa: E402
 from joblib import parallel_backend  # noqa: E402
 
 from app.classifier import make_head  # noqa: E402
-from app.data import load_dataset, prepare_targets, three_way_split  # noqa: E402
+from app.data import prepare_targets, three_way_split  # noqa: E402
+from app.dataset_load import load_dataset  # noqa: E402
 from app.thresholds import macro_f1, tune_threshold_columns  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 

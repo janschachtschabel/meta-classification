@@ -41,7 +41,8 @@ from joblib import parallel_backend  # noqa: E402
 from scipy.sparse import hstack  # noqa: E402
 
 from app.classifier import make_head  # noqa: E402
-from app.data import load_dataset, prepare_targets  # noqa: E402
+from app.data import prepare_targets  # noqa: E402
+from app.dataset_load import load_dataset  # noqa: E402
 from app.memory import MiB, PeakSampler, ThreadBudget, matrix_bytes, rss_bytes  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 from app.vocabulary import count_terms  # noqa: E402

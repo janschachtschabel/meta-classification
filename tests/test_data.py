@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app import data
+from app import data, dataset_load
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tiny.csv"
 TEXT_COLS = ["properties.cclom:title", "properties.cclom:general_keyword"]
@@ -84,7 +84,7 @@ def test_load_dataset_falls_back_to_cp1252(tmp_path):
         "Brüche üben und Größen;Mathematik;math\n"
     )
     csv.write_bytes(content.encode("cp1252"))  # 'ü'/'ö' -> 0xFC/0xF6, invalid UTF-8
-    loaded = data.load_dataset(csv, TEXT_COLS, LABEL_COL)
+    loaded = dataset_load.load_dataset(csv, TEXT_COLS, LABEL_COL)
     assert loaded.texts and "Brüche" in loaded.texts[0]
 
 
@@ -94,14 +94,14 @@ def test_load_dataset_maps_empty_csv_to_training_input_error(tmp_path):
     csv = tmp_path / "empty.csv"
     csv.write_bytes(b"")
     try:
-        data.load_dataset(csv, TEXT_COLS, LABEL_COL)
+        dataset_load.load_dataset(csv, TEXT_COLS, LABEL_COL)
     except TrainingInputError:
         return
     raise AssertionError("empty CSV should raise TrainingInputError, not a raw pandas error")
 
 
 def test_load_dataset_reads_fixture():
-    loaded = data.load_dataset(FIXTURE, TEXT_COLS, LABEL_COL)
+    loaded = dataset_load.load_dataset(FIXTURE, TEXT_COLS, LABEL_COL)
     assert len(loaded.texts) == 36
     assert len(loaded.label_lists) == 36
     assert loaded.uri_to_label["uri:math"] == "Mathematik"
@@ -177,7 +177,7 @@ def test_container_labels_never_become_trainable_classes(tmp_path):
         "http://x/vocabs/discipline/380;title three;keyword\n",
         encoding="utf-8",
     )
-    loaded = data.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
+    loaded = dataset_load.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
 
     trained = {label for labs in loaded.label_lists for label in labs}
     assert trained == {"http://x/vocabs/discipline/120", "http://x/vocabs/discipline/380"}
@@ -199,7 +199,7 @@ def test_label_hierarchy_levels_are_kept_only_containers_go(tmp_path):
         "http://x/v/n1,http://x/v/n09,http://x/v/;title;keyword\n",
         encoding="utf-8",
     )
-    loaded = data.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
+    loaded = dataset_load.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
     assert loaded.label_lists == [["http://x/v/n1", "http://x/v/n09"]]
 
 
@@ -216,7 +216,7 @@ def test_display_names_are_never_misattributed_when_a_name_contains_a_comma(tmp_
         ("uri:a,uri:b", "Physik,Chemie"),  # aligned -> trustworthy
         ("uri:c,uri:d", "Germanistik (Deutsch, germanische Sprachen),Sport"),
     ])
-    loaded = data.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
+    loaded = dataset_load.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
 
     assert loaded.uri_to_label["uri:a"] == "Physik"
     assert loaded.uri_to_label["uri:b"] == "Chemie"
@@ -239,7 +239,7 @@ def test_unattributable_display_names_are_dropped_rather_than_guessed(tmp_path):
         # nothing in the text says where the boundary is.
         ("uri:x,uri:y", "Rechts, Wirtschaft, Soziales,Kunst, Musik"),
     ])
-    loaded = data.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
+    loaded = dataset_load.load_dataset(csv, TEXT_COLS, LABEL_COL, min_text_length=0)
     assert "uri:x" not in loaded.uri_to_label
     assert "uri:y" not in loaded.uri_to_label
 
@@ -251,7 +251,7 @@ def test_authoritative_label_names_override_the_csv(tmp_path):
     because a comma-corrupted export cannot be fully repaired from the export alone.
     """
     csv = _displayname_csv(tmp_path, [("uri:a,uri:b", "Falsch,Auch falsch")])
-    loaded = data.load_dataset(
+    loaded = dataset_load.load_dataset(
         csv, TEXT_COLS, LABEL_COL, min_text_length=0,
         label_names={"uri:a": "Physik", "uri:c": "Nicht im Datensatz"},
     )
@@ -272,10 +272,10 @@ def test_text_column_weights_repeat_a_field_in_the_combined_text(tmp_path):
     )
     cols = ["properties.cclom:title", "properties.cclom:general_description"]
 
-    plain = data.load_dataset(csv, cols, LABEL_COL)
+    plain = dataset_load.load_dataset(csv, cols, LABEL_COL)
     assert plain.texts == ["Bruch lange Beschreibung"]
 
-    weighted = data.load_dataset(
+    weighted = dataset_load.load_dataset(
         csv, cols, LABEL_COL, text_column_weights={"properties.cclom:title": 3}
     )
     assert weighted.texts == ["Bruch Bruch Bruch lange Beschreibung"]
@@ -288,7 +288,7 @@ def test_text_column_weights_ignore_columns_absent_from_the_csv(tmp_path):
     csv.write_text(
         "properties.cclom:title;properties.ccm:taxonid\nBruch;math\n", encoding="utf-8"
     )
-    loaded = data.load_dataset(
+    loaded = dataset_load.load_dataset(
         csv,
         ["properties.cclom:title", "properties.cclom:general_description"],
         LABEL_COL,

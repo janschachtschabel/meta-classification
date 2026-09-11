@@ -25,7 +25,8 @@ from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.metrics import f1_score, precision_score, recall_score  # noqa: E402
 from sklearn.multiclass import OneVsRestClassifier  # noqa: E402
 
-from app.data import load_dataset, prepare_targets, three_way_split  # noqa: E402
+from app.data import prepare_targets, three_way_split  # noqa: E402
+from app.dataset_load import load_dataset  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 
 SEED = 42

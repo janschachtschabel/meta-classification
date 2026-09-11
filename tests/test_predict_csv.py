@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app import data, predict_csv
+from app import data, dataset_load, predict_csv
 from app.classifier import Prediction
 from app.errors import TrainingInputError
 
@@ -61,7 +61,7 @@ def test_the_text_is_assembled_exactly_as_training_would_have_built_it(tmp_path)
     path = _csv(tmp_path, rows)
     weights = {"title": 2}
 
-    training = data.load_dataset(
+    training = dataset_load.load_dataset(
         path, TEXT_COLS, LABEL_COL, separator=";", text_column_weights=weights,
         drop_duplicates=False,
     )

@@ -43,7 +43,8 @@ import numpy as np  # noqa: E402
 from joblib import parallel_backend  # noqa: E402
 
 from app.classifier import make_head  # noqa: E402
-from app.data import load_dataset, prepare_targets, three_way_split  # noqa: E402
+from app.data import prepare_targets, three_way_split  # noqa: E402
+from app.dataset_load import load_dataset  # noqa: E402
 from app.profiles import load_training_config  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.tuning import compute_metrics, cross_val_evaluate  # noqa: E402

@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from . import data as data_mod
+from .dataset_load import load_dataset
 from .errors import TrainingInputError
 from .profiles import TrainingConfig
 from .settings import Settings
@@ -135,7 +136,7 @@ def prepare_data(
 
     # --- Load + clean (read/clean/filter sub-steps shown via phase_detail) ---
     on_progress(phase="loading", progress=5, message="Loading and preparing dataset...")
-    loaded = data_mod.load_dataset(
+    loaded = load_dataset(
         dataset_path,
         req["text_columns"],
         req["label_column"],

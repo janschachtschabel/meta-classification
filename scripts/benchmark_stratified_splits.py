@@ -37,7 +37,8 @@ from joblib import parallel_backend  # noqa: E402
 from sklearn.metrics import f1_score  # noqa: E402
 
 from app.classifier import make_head  # noqa: E402
-from app.data import load_dataset, prepare_targets, three_way_split  # noqa: E402
+from app.data import prepare_targets, three_way_split  # noqa: E402
+from app.dataset_load import load_dataset  # noqa: E402
 from app.profiles import load_training_config  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.thresholds import apply_thresholds  # noqa: E402

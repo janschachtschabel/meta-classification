@@ -21,7 +21,8 @@ from pathlib import Path
 import pandas as pd
 
 from .classifier import ClassifierModel
-from .data import combine_text_columns, read_csv
+from .data import read_csv
+from .dataset_load import combine_text_columns
 from .errors import TrainingInputError
 
 # Rows per read/predict step. The model vectorizes a whole chunk at once, so bigger is

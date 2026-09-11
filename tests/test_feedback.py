@@ -107,7 +107,7 @@ def test_the_export_actually_loads_as_a_dataset(store, tmp_path):
     and see the rows come back. Asserting a header string would prove nothing about
     whether it trains.
     """
-    from app.data import load_dataset
+    from app.dataset_load import load_dataset
 
     feedback.append(_correction("Der Wiener Kongress von 1815", ["uri:hist"]))
     feedback.append(_correction("Bruchrechnung und Gleichungen", ["uri:math", "uri:stats"]))

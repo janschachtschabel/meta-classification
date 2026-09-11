@@ -2,8 +2,8 @@
 sample plus label/text statistics and basic validation.
 
 Split out of ``data`` so the load/clean/target-prep core stays focused; this
-module only *consumes* that core (``load_dataset``, ``read_csv``) — the
-dependency is one-directional (stats -> data), never the reverse.
+module only *consumes* that core (``dataset_load.load_dataset``, ``read_csv``) —
+the dependency is one-directional (stats -> data), never the reverse.
 """
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .data import auto_min_samples, load_dataset, read_csv, split_labels
+from .data import auto_min_samples, read_csv, split_labels
+from .dataset_load import load_dataset
 from .profiles import CapacityPlan, estimated_minutes
 
 _SHIPPED_PROFILES = ("fast", "auto", "best")
