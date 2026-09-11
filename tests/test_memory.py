@@ -36,6 +36,32 @@ def test_rss_grows_while_a_large_array_is_alive():
     assert during - before >= 40 * MiB
 
 
+def test_rss_of_another_process_is_readable_by_its_id():
+    """A training in a child process: the status reads the child's memory by its id."""
+    import os
+    import subprocess
+    import sys
+
+    own = rss_bytes(os.getpid())
+    assert abs(own - rss_bytes()) < 32 * MiB  # the same process, read both ways
+
+    # b"x" * n writes every page; a zeroed bytearray may never become resident. The child
+    # reports its own id: under a Windows venv, Popen's pid is the launcher's, not the
+    # interpreter's — the reason the training worker reports its id the same way.
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import os, sys; block = b'x' * (96 << 20); "
+                               "print(os.getpid(), flush=True); sys.stdin.read()"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        pid = int(child.stdout.readline())
+        assert rss_bytes(pid) >= 64 * MiB
+    finally:
+        child.communicate(timeout=10)
+    # Ended: nothing raises, and none of its 96 MB is reported. (Linux reads 0; Windows
+    # keeps a terminated process queryable while a handle to it is open — a few KB.)
+    assert rss_bytes(pid) < MiB
+
+
 def test_peak_sampler_keeps_a_peak_that_is_already_gone():
     """The head fit's solver copies live and die inside one call, where no progress
     callback ever looks — only a sampler running beside it sees them."""

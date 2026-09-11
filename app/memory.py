@@ -58,6 +58,9 @@ if sys.platform == "win32":
             ("PeakPagefileUsage", ctypes.c_size_t),
         ]
 
+    # PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ: enough to read the counters.
+    _QUERY_ACCESS = 0x1000 | 0x0010
+
     @functools.cache
     def _psapi() -> tuple[Any, Any]:
         kernel32 = ctypes.WinDLL("kernel32")
@@ -65,36 +68,47 @@ if sys.platform == "win32":
         # HANDLE is pointer-sized. Without the restype the pseudo-handle (-1) comes back
         # truncated to a 32-bit int and every call fails, reading 0 everywhere.
         kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
         psapi.GetProcessMemoryInfo.argtypes = [
             ctypes.c_void_p, ctypes.POINTER(_MemoryCounters), ctypes.c_ulong,
         ]
         psapi.GetProcessMemoryInfo.restype = ctypes.c_int
         return kernel32, psapi
 
-    def _windows_working_set() -> int:
+    def _windows_working_set(pid: int | None) -> int:
         kernel32, psapi = _psapi()
-        counters = _MemoryCounters()
-        counters.cb = ctypes.sizeof(counters)
-        if not psapi.GetProcessMemoryInfo(
-            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
-        ):
-            return 0
-        return int(counters.WorkingSetSize)
+        handle = (kernel32.GetCurrentProcess() if pid is None
+                  else kernel32.OpenProcess(_QUERY_ACCESS, False, pid))
+        if not handle:
+            return 0  # gone, or not ours to read
+        try:
+            counters = _MemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+                return 0
+            return int(counters.WorkingSetSize)
+        finally:
+            if pid is not None:
+                kernel32.CloseHandle(handle)
 
 
-def rss_bytes() -> int:
-    """Resident set size of this process in bytes; 0 when the platform gives no reading.
+def rss_bytes(pid: int | None = None) -> int:
+    """Resident set size of this process — or of process ``pid`` — in bytes; 0 when the
+    platform gives no reading or the process is gone.
 
     macOS reads 0: its stdlib only knows the lifetime PEAK (``ru_maxrss``), and a peak
     passed off as a current reading would make every budget decision wrong.
     """
     try:
         if sys.platform.startswith("linux"):
-            with open("/proc/self/statm", "rb") as handle:
+            with open(f"/proc/{pid or 'self'}/statm", "rb") as handle:
                 resident_pages = int(handle.read().split()[1])
             return resident_pages * os.sysconf("SC_PAGE_SIZE")
         if sys.platform == "win32":
-            return _windows_working_set()
+            return _windows_working_set(pid)
     except (OSError, ValueError, IndexError):
         pass
     return 0
