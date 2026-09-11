@@ -86,7 +86,9 @@ def load_dataset(
 
     UTF-8 first; a file that turns out not to be UTF-8 anywhere is read again from the
     start as cp1252 (common for German metadata exports), whatever was read before is
-    discarded — the whole-file reader behaved the same way.
+    discarded — the whole-file reader behaved the same way. The blocks before the first
+    non-UTF-8 byte have been cleaned by then, so such a file costs up to one extra
+    cleaning pass; resuming mid-file instead would mix two decodings of one file.
     """
     path = Path(path)
     header = read_csv(path, sep=separator, nrows=0)
@@ -134,10 +136,15 @@ def _read_blocks(
     path: Path, encoding: str, *, separator: str, usecols: list[str], chunk_rows: int
 ) -> Iterator[pd.DataFrame]:
     """The CSV in blocks of rows, only the needed columns, every cell as text. Empty or
-    malformed CSVs surface as ``TrainingInputError`` (-> 400), like ``data.read_csv``."""
+    malformed CSVs surface as ``TrainingInputError`` (-> 400), like ``data.read_csv``.
+
+    ``engine="c"``: a separator longer than one character would otherwise switch pandas
+    to its python engine and be read as a regular expression. The API allows one
+    character; this refuses the rest (ValueError), as the whole-file read did.
+    """
     try:
         with pd.read_csv(path, sep=separator, usecols=usecols, dtype=str, encoding=encoding,
-                         chunksize=chunk_rows) as reader:
+                         chunksize=chunk_rows, engine="c") as reader:
             yield from reader
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
         raise TrainingInputError(f"The CSV is empty or malformed: {exc}") from exc

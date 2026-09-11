@@ -136,6 +136,17 @@ def test_a_cp1252_byte_deep_in_the_file_restarts_the_whole_read(tmp_path):
     assert len(load_dataset(path, ["title"], "labels", chunk_rows=1000).texts) == 40_000
 
 
+def test_a_separator_pandas_would_read_as_a_regex_is_refused(tmp_path):
+    """pandas parses a multi-character separator as a regular expression, on its python
+    engine — a pattern and a file crafted together can make that parse crawl. The API
+    accepts one character only; the loader refuses the rest itself, as the whole-file
+    read did (its low_memory=False had no python-engine counterpart)."""
+    path = tmp_path / "doubled.csv"
+    path.write_text("title;;labels\nBruchrechnung üben;;uri:math\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="regex"):
+        load_dataset(path, ["title"], "labels", separator=";;")
+
+
 def test_a_malformed_row_in_a_later_block_is_an_input_error(tmp_path):
     """The header parses and so do the first blocks; the quote that never closes sits in
     the last one. It must still reach the operator as the crafted 400, not a raw 500."""
