@@ -1,4 +1,7 @@
-"""Model management: list, details, evaluate, delete, export, import, share download."""
+"""Model management: list, details, evaluate, delete, export, import.
+
+The share-link routes, which serve models and datasets alike, are in
+:mod:`app.routes.share`."""
 
 from __future__ import annotations
 
@@ -21,7 +24,6 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from .. import data as data_mod
 from ..evaluate import run_evaluation
 from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter, train_limit
@@ -35,7 +37,7 @@ from ..sharing import get_share_store
 router = APIRouter(tags=["Models"])
 
 
-def _staged_zip_response(name: str) -> FileResponse:
+def staged_zip_response(name: str) -> FileResponse:
     """Pack the bundle into a staging file and stream that file back.
 
     The archive is not built in memory: a production bundle is 50-180 MB and the byte
@@ -174,7 +176,7 @@ async def export_model(
     # Zipping a production bundle (100+ MB skops) takes seconds of CPU/disk —
     # run it in a worker thread so /health and predicts stay responsive (same
     # rationale as the predict cold-load offload).
-    return await asyncio.to_thread(_staged_zip_response, model_name)
+    return await asyncio.to_thread(staged_zip_response, model_name)
 
 
 @router.post("/models/import", summary="Import a model (file upload only)")
@@ -217,66 +219,6 @@ async def import_model(
     except (UnsafeModelError, ValueError) as exc:
         raise HTTPException(400, f"Invalid or unsafe model archive: {exc}") from exc
     return {"status": "imported", **info}
-
-
-@router.get("/share", summary="List active share links")
-async def list_share_links(_: str = Depends(require_role("admin"))) -> list[dict]:
-    """Every share link that has not expired: id, kind, name, created and expiry.
-
-    A share link is a bearer capability — the id IS the authorization — so this
-    listing hands out the secrets themselves and stays admin-only, unlike the
-    download route it describes. **Auth:** admin.
-    """
-    return get_share_store().list()
-
-
-@router.delete("/share/{share_id}", summary="Revoke a share link")
-@limiter.limit(default_limit)
-async def revoke_share_link(
-    request: Request, share_id: str, _: str = Depends(require_role("admin")),
-) -> dict:
-    """Withdraw a share link before it expires.
-
-    What was already downloaded cannot be recalled, but the link stops working — the
-    point of an expiring capability you can end early. **Auth:** admin · rate limit
-    active.
-    """
-    if not get_share_store().revoke(share_id):
-        raise HTTPException(404, "Share link not found or already expired.")
-    return {"status": "revoked", "share_id": share_id}
-
-
-@router.get("/share/{share_id}", summary="Download a shared resource")
-@limiter.limit(export_limit)  # public endpoint: throttle share-id brute-forcing
-async def download_shared(
-    request: Request,
-    share_id: str,
-    settings: Settings = Depends(get_settings),
-) -> Response:
-    """Download a previously exported share resource (model ZIP or dataset CSV).
-
-    The share link is a **bearer capability**: the unguessable id (`secrets.token_urlsafe`,
-    96 bits) plus its expiry ARE the authorization, so no API key is required — a link
-    can be handed to someone without a key. Creating links stays admin-only; guard the
-    id like a secret. Expired or unknown links return 404. **Auth:** none (bearer link).
-    """
-    info = get_share_store().resolve(share_id)
-    if info is None:
-        raise HTTPException(404, "Share link not found or expired.")
-    if info["kind"] == "model":
-        registry = get_registry()
-        if not registry.exists(info["name"]):
-            raise HTTPException(404, "Model no longer exists.")
-        # Same blocking-zip offload as the authenticated export route.
-        return await asyncio.to_thread(_staged_zip_response, info["name"])
-    dataset_path = settings.data_dir / info["name"]
-    if not dataset_path.exists():
-        raise HTTPException(404, "Dataset no longer exists.")
-    # Same gzip/CSV distinction as the authenticated export route: a share link is the path a
-    # recipient WITHOUT a key uses, so it is the one most likely opened in a browser — where
-    # a text/csv header on gzip bytes yields a decompressed file saved under its .gz name.
-    media_type = "application/gzip" if data_mod.is_gzipped(info["name"]) else "text/csv"
-    return FileResponse(dataset_path, filename=info["name"], media_type=media_type)
 
 
 @router.post("/models/{model_name}/evaluate", status_code=202,

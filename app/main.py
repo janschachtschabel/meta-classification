@@ -16,7 +16,7 @@ from . import __version__
 from .jobs import job_runner
 from .limiter import limiter
 from .registry import Registry, get_registry
-from .routes import datasets, feedback, models, predict, predict_bulk, system, training
+from .routes import datasets, feedback, models, predict, predict_bulk, share, system, training
 from .settings import Settings, get_settings
 
 logging.basicConfig(
@@ -276,6 +276,7 @@ def create_app() -> FastAPI:
     app.include_router(predict.router)
     app.include_router(predict_bulk.router)
     app.include_router(models.router)
+    app.include_router(share.router)
     app.include_router(datasets.router)
     app.include_router(feedback.router)
 

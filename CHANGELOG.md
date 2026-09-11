@@ -26,6 +26,13 @@ hung on a name after its owner was gone, or before it arrived.
   entry, so after a retrain `M` still answered with the old weights. Deleting now drops
   every cache key that names the bundle.
 
+### Changed
+
+- The share-link routes (`GET /share`, `DELETE /share/{id}`, `GET /share/{id}`) moved from
+  `routes/models.py` to `routes/share.py`: a link serves a model or a dataset, so managing
+  links is not model management. Code moved verbatim; the OpenAPI document is
+  byte-identical before and after, and `models.py` is back under 300 lines (276).
+
 ### Tests
 
 - The suite no longer writes into the developer's real `share_links.json` (three live
