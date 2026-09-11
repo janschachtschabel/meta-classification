@@ -20,7 +20,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from .vocabulary import fit_transform_exact, transform_chunked
+from .vocabulary import fit_transform_exact, row_blocks, transform_chunked
 
 
 def merge_columns(left: csr_matrix, right: csr_matrix, block_rows: int = 20_000) -> csr_matrix:
@@ -41,8 +41,7 @@ def merge_columns(left: csr_matrix, right: csr_matrix, block_rows: int = 20_000)
     indptr = left.indptr.astype(index_dtype) + right.indptr.astype(index_dtype)
     data = np.empty(nnz, dtype=left.dtype)
     indices = np.empty(nnz, dtype=index_dtype)
-    for start in range(0, n_rows, block_rows):
-        stop = min(start + block_rows, n_rows)
+    for start, stop in row_blocks(indptr, block_rows):
         lo, hi = left.indptr[start], left.indptr[stop]
         # A left entry at p in row r lands at p + (right's entries before row r).
         at = np.arange(lo, hi) + np.repeat(right.indptr[start:stop], np.diff(left.indptr[start:stop + 1]))

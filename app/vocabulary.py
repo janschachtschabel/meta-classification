@@ -59,11 +59,22 @@ class TermCounts:
     counts: np.ndarray
 
     def document_frequencies(self) -> np.ndarray:
-        return np.bincount(self.ids, minlength=self.n_terms)
+        return self._per_term(weighted=False).astype(np.int64)
 
     def term_frequencies(self) -> np.ndarray:
         # float64 sums of integer counts: exact far beyond _EXACT_TF_LIMIT.
-        return np.bincount(self.ids, weights=self.counts, minlength=self.n_terms)
+        return self._per_term(weighted=True)
+
+    def _per_term(self, *, weighted: bool) -> np.ndarray:
+        # In blocks: over all entries at once, bincount copies the int32 ids to int64
+        # and the weights to float64 — 450 MB of scratch for char 5-grams at 100k rows,
+        # the largest allocation of the whole fit.
+        total = np.zeros(self.n_terms, dtype=np.float64)
+        for lo in range(0, len(self.ids), _BLOCK_ENTRIES):
+            ids = self.ids[lo:lo + _BLOCK_ENTRIES]
+            weights = self.counts[lo:lo + _BLOCK_ENTRIES] if weighted else None
+            total += np.bincount(ids, weights=weights, minlength=self.n_terms)
+        return total
 
 
 def count_terms(analyze: Callable[[str], list[str]], texts: Sequence[str]) -> TermCounts:
@@ -118,9 +129,10 @@ def select_terms(
     return [terms[i] for i in kept], first_seen[kept]
 
 
-def _row_blocks(indptr: np.ndarray, max_rows: int) -> list[tuple[int, int]]:
-    """Consecutive row ranges of at most ``max_rows`` rows and ``_BLOCK_ENTRIES`` entries
-    (a single longer row still makes a block of its own)."""
+def row_blocks(indptr: np.ndarray, max_rows: int) -> list[tuple[int, int]]:
+    """Consecutive row ranges of a CSR ``indptr``: at most ``max_rows`` rows and about a
+    million entries each (a single longer row still makes a block of its own), so that
+    per-entry scratch arrays stay small however long the documents are."""
     n_rows, blocks, start = len(indptr) - 1, [], 0
     while start < n_rows:
         fits = int(np.searchsorted(indptr, indptr[start] + _BLOCK_ENTRIES, side="right")) - 1
@@ -145,7 +157,7 @@ def _kept_counts(counted: TermCounts, first_seen: np.ndarray, dtype: type,
     source = counted.indptr
     n_rows = len(source) - 1
     indptr = np.zeros(n_rows + 1, dtype=np.int64)
-    blocks = _row_blocks(source, chunk_rows)
+    blocks = row_blocks(source, chunk_rows)
     for start, stop in blocks:  # sweep 1: how many entries each row keeps
         kept = column_of_id[counted.ids[source[start]:source[stop]]] >= 0
         rows = np.repeat(np.arange(stop - start), np.diff(source[start:stop + 1]))
