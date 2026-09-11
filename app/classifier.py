@@ -25,10 +25,11 @@ def make_head(
 
     ``n_jobs`` sets per-label parallelism. The float32-preserving, GIL-releasing
     solvers 'newton-cg' (the API's configured default) and 'saga' let joblib's
-    'threading' backend train all labels on ONE shared matrix (all cores, ~1x
-    RAM). 'lbfgs' frees the GIL too but upcasts to float64 (2x matrix);
-    'liblinear' is GIL-bound and parallelises only via processes (copying the
-    matrix per worker).
+    'threading' backend train all labels on ONE shared input matrix; each
+    concurrent fit's solver buffers (~2-2.5x the matrix for newton-cg) come on
+    top, which is why training sizes ``n_jobs`` with ``memory.ThreadBudget``.
+    'lbfgs' frees the GIL too but upcasts to float64 (2x matrix); 'liblinear' is
+    GIL-bound and parallelises only via processes (copying the matrix per worker).
 
     ``tol`` is left to scikit-learn (1e-4) unless a caller asks for something
     else, and it is OMITTED rather than passed through as a default so there is

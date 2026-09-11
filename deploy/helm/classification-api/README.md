@@ -70,6 +70,7 @@ readonly = predict/status). Swagger UI: `https://<host>/docs`.
 | `config.app.corsOrigins`                | Comma-separated allowed browser origins (empty = none)                   | `""`          |
 | `config.app.logLevel`                   | Log level                                                                | `INFO`        |
 | `config.compute.nJobs`                  | CPU cores for training (`-1` all, `-2` leave one free)                   | `-1`          |
+| `config.compute.trainMemoryMb`          | Training memory budget in MiB (`auto` = 85 % of the memory limit, `0` = none) | `auto`   |
 | `config.compute.solver`                 | Linear-head solver (float32-preserving `newton-cg`)                      | `newton-cg`   |
 | `config.compute.parallelBackend`        | joblib backend (threading = one shared matrix)                           | `threading`   |
 | `config.compute.tfidfMaxWordFeatures`   | Word n-gram feature cap (RAM lever)                                      | `80000`       |

@@ -35,6 +35,9 @@ services:
       # ---- Compute (see README "Resources & tuning") ----
       # -2 = leave one core free so the host stays responsive during training.
       APIV3_N_JOBS: ${APIV3_N_JOBS:--2}
+      # auto = 85 % of the container's memory limit (deploy.resources / --memory): the
+      # head-fit threads are sized to it, so a big run slows down instead of being killed.
+      APIV3_TRAIN_MEMORY_MB: ${APIV3_TRAIN_MEMORY_MB:-auto}
 
       # ---- Model cache ----
       # Comma-separated model names to preload on startup and keep resident, so

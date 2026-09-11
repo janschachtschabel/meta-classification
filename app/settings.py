@@ -159,7 +159,8 @@ class Settings(BaseSettings):
     tfidf_max_char_features: int = 120_000
     # Linear-head solver + joblib backend. 'newton-cg' (default) and 'saga' KEEP
     # the float32 matrix (RAM-safe at scale) and release the GIL, so 'threading'
-    # trains all labels on ONE shared matrix (all cores, ~1x RAM). 'newton-cg'
+    # trains all labels on ONE shared input matrix (each fit's solver buffers come on
+    # top; train_memory_mb sizes the threads accordingly). 'newton-cg'
     # converges fast; 'saga' is slow on high-dim TF-IDF. 'lbfgs'/'liblinear'
     # upcast to float64 (2x matrix RAM) — ok on small data; pair the GIL-bound
     # 'liblinear' with the 'loky' backend.

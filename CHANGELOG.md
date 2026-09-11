@@ -2,6 +2,45 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — training memory (2026-09-11)
+
+A training run on the full WLO export (426 724 records) was OOM-killed in an 8 GB
+container while it fitted its first head — a phase that logs nothing. Where a run's memory
+goes was measured step by step (`docs/plans/2026-09-11-training-memory.md`) and cut
+without changing a single number the model produces.
+
+### Added
+
+- **A memory budget for training** — `APIV3_TRAIN_MEMORY_MB` (default `auto` = 85 % of
+  the container's memory limit; a number in MiB; `0` = no cap). Every concurrent newton-cg
+  fit holds ~2–2.5× the feature matrix in solver buffers, so before each head fit the run
+  takes only as many threads as fit into the budget: slower, never a different model.
+  `GET /config` reports it next to `effective_n_jobs`; wired through `docker-compose.yml`
+  and the Helm chart (`config.compute.trainMemoryMb`).
+- `auto` as an explicit value for `APIV3_N_JOBS`, now its default (`-1` and numbers keep
+  working); `GET /config` says `"auto"` instead of a sentinel.
+- **Memory and threads in the status.** `/train/status` gains `rss_mb` (read live),
+  `peak_rss_mb` (the run's peak, sampled beside it), `head_fit_threads` and
+  `threads_requested`; the status card shows both rows ("3 of 9 — held back by the memory
+  budget"). Every phase logs the memory it starts from, `metrics.json` records a
+  `resources` block (peak, budget, requested/min/max threads) and `/train/history` the peak.
+- `POST /datasets/analyze` predicts each profile's head-fit threads under the server's CPU
+  and memory budgets (`planned_head_fit_threads`, `threads_requested`) and counts them in
+  `estimated_minutes` along the measured thread curve: 6 threads fit 3.2× faster than one,
+  not 6×. The cost table shows the threads; the pre-flight says when a run is held back.
+- `scripts/benchmark_training_memory.py` — peak and retained RSS per pipeline step, every
+  step in a process of its own.
+
+### Changed
+
+- The word and character vocabularies are fitted one after the other: concurrently their
+  peaks added up, for no time saving (the analyzer holds the GIL).
+- A CV fold releases its matrices, vectorizer and last head before the next fold
+  vectorizes, and the shared CV matrix is gone before the deploy fit.
+- README "Memory" / "On 8 GB": the "all cores share one matrix, ~1× RAM" claim described
+  the input matrix only — the head-fit threads multiply the fit memory (measured 11.9× the
+  matrix at 6 threads).
+
 ## [Unreleased] — reused names (2026-09-11)
 
 A check for problems with reused model and dataset names found three, each reproduced

@@ -129,6 +129,11 @@ config:
     ## -1 follows a resized limit automatically. APIV3_CPU_MAX_PERCENT (default 60) then keeps part
     ## of that quota free so /predict stays responsive while a training runs.
     nJobs: -1
+    ## @param config.compute.trainMemoryMb Memory budget for a training run in MiB. "auto" = 85 % of
+    ## resources.limits.memory, read from the cgroup at runtime: every concurrent head fit holds
+    ## ~2-2.5x the feature matrix, so a run that would outgrow the budget fits on fewer threads
+    ## (slower, same model) instead of being OOM-killed. 0 = no cap.
+    trainMemoryMb: "auto"
     ## @param config.compute.solver Linear-head solver — newton-cg keeps float32 and releases the GIL (see README)
     solver: "newton-cg"
     ## @param config.compute.parallelBackend joblib backend — threading shares ONE sparse matrix across cores
@@ -260,7 +265,8 @@ resources:
     ## @param resources.limits.cpu Set CPU limit on resources — the app detects this CFS quota at
     ## runtime and sizes training threads from it (see config.compute.nJobs)
     cpu: 4000m
-    ## @param resources.limits.memory Set memory limit on resources
+    ## @param resources.limits.memory Set memory limit on resources — the app reads this limit at
+    ## runtime and sizes the head-fit threads to 85 % of it (see config.compute.trainMemoryMb)
     memory: 8Gi
   requests:
     ## @param resources.requests.cpu Set CPU for requests on resources
