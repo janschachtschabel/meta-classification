@@ -159,7 +159,8 @@ def child(step: str, args) -> dict:
         same_t = all(np.array_equal(getattr(ref_t, a), getattr(cur_t, a))
                      for a in ("data", "indices", "indptr"))
         # How far this corpus is from the two-pass fit's exactness limit (2**24).
-        max_tf = max(int(count_terms(v.build_analyzer(), texts)[2].max()) for v in (word, char))
+        max_tf = max(int(count_terms(v.build_analyzer(), texts).term_frequencies().max())
+                     for v in (word, char))
         return {"result": f"matrix identical={same}, vocabulary+idf identical={same_fit}, "
                           f"held-out transform identical={same_t}, "
                           f"largest term count {max_tf:,} (limit {2**24:,})",
