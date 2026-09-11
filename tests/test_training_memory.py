@@ -1,9 +1,11 @@
-"""What a training run reports about its memory.
+"""What a training run holds in memory, and what it reports about it.
 
 A run on the full WLO export was OOM-killed on 2026-09-11 inside a phase that logs
 nothing, so neither the status nor the log could say how close it had come, and nothing
-recorded what the next run would need. These tests pin the reporting: live and peak RSS
-in the status, the peak in the bundle and in the job history, one log line per phase.
+recorded what the next run would need. These tests pin the reporting (live and peak RSS
+in the status, the peak in the bundle and in the job history, one log line per phase),
+the head-fit threads a memory budget allows, and that no phase keeps the previous
+phase's matrices alive while it builds its own.
 """
 
 import json
@@ -11,9 +13,12 @@ import logging
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 
+import numpy as np
 import pytest
+from scipy import sparse
 
 from app import job_history
 from app.jobs import JobRunner
@@ -190,6 +195,80 @@ def test_a_throttled_run_says_so_in_its_progress(tmp_path, monkeypatch, cv_folds
     search = [d for d in details if "C=" in d]
     assert search and all(d.endswith("· 1 thread") for d in search), details
     assert any("final model" in d and "1 thread" in d for d in details), details
+
+
+class _RecordingVectorizer:
+    """Row ids as the only feature (what the scripted heads read back), and a weak
+    reference to everything it builds — so a test can ask what is still alive."""
+
+    built: list = []
+
+    def fit_transform(self, texts):
+        _RecordingVectorizer.built.append(weakref.ref(self))
+        return self.transform(texts)
+
+    def transform(self, texts):
+        matrix = sparse.csr_matrix(np.array([[float(text)] for text in texts]))
+        _RecordingVectorizer.built.append(weakref.ref(matrix))
+        return matrix
+
+
+def _alive() -> list:
+    return [ref for ref in _RecordingVectorizer.built if ref() is not None]
+
+
+def test_a_fold_releases_its_matrices_before_the_next_fold_vectorizes(scripted_c_search):
+    """Fold k's matrices and vectorizer used to stay bound until fold k+1's were
+    assigned — so the next fold's vectorization peak sat on top of them."""
+    from app.tuning import cross_val_evaluate
+
+    _RecordingVectorizer.built = []
+    alive_when_fitting: list[int] = []
+
+    class Checked(_RecordingVectorizer):
+        def fit_transform(self, texts):
+            alive_when_fitting.append(len(_alive()))
+            return super().fit_transform(texts)
+
+    texts = [str(i) for i in range(8)]
+    result = cross_val_evaluate(Checked, texts, scripted_c_search.y, ["c0", "c1"],
+                                k=2, c_grid=[1.0, 2.0], seed=0)
+
+    assert result is not None
+    assert alive_when_fitting == [0, 0], "a previous fold's objects were still alive"
+
+
+def test_the_shared_matrix_is_released_before_the_deploy_fit_vectorizes(
+    scripted_c_search, monkeypatch
+):
+    """With one matrix shared across the folds, that matrix is dead weight once the
+    folds are done — it must not sit under the deploy vectorization's peak."""
+    from app import deploy
+    from app.prepare import Prepared
+    from app.profiles import Profile
+
+    _RecordingVectorizer.built = []
+    alive_when_fitting: list[int] = []
+
+    class Checked(_RecordingVectorizer):
+        def fit_transform(self, texts):
+            alive_when_fitting.append(len(_alive()))
+            return super().fit_transform(texts)
+
+    monkeypatch.setattr(deploy, "TfidfBackend", lambda **kwargs: Checked())
+    everything = np.arange(8)
+    prep = Prepared(
+        texts=np.array([str(i) for i in everything]), y_all=scripted_c_search.y,
+        classes=["c0", "c1"], task_type="multilabel", avg_labels=1.0, min_samples=1,
+        text_column_weights={}, train_idx=everything, val_idx=everything,
+        test_idx=everything, uri_to_label={"c0": "c0", "c1": "c1"},
+    )
+    profile = Profile("t", c_grid=[1.0, 2.0], cv_folds=2, refit_vectorizer_per_fold=False)
+    deploy.fit_evaluate_deploy(prep, Settings(), profile, cv_folds=2,
+                               on_progress=lambda **_: None, should_stop=lambda: False)
+
+    assert len(alive_when_fitting) == 2  # the shared matrix, then the deploy fit
+    assert alive_when_fitting[-1] == 0, "the shared matrix outlived the folds"
 
 
 def test_every_phase_leaves_a_memory_line_in_the_log(tmp_path, caplog):

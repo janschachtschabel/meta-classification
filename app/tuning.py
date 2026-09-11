@@ -218,6 +218,9 @@ def cross_val_evaluate(
             vec = make_vectorizer()
             x_tr = vec.fit_transform([texts[i] for i in tr])
             x_te = vec.transform([texts[i] for i in te])
+            # Its vocabulary is not needed past the two matrices; kept, it would sit
+            # under every head fit of this fold.
+            del vec
         else:
             x_tr, x_te = matrix[tr], matrix[te]
         for c in c_grid:
@@ -229,9 +232,15 @@ def cross_val_evaluate(
             head = make_head(c, n_jobs=jobs, solver=solver, tol=tol)
             head.fit(x_tr, y[tr])
             oof[c][te] = head.predict_proba(x_te).astype(np.float32)
+            # Its coefficients are in the out-of-fold buffer now; the next fit need not
+            # build its own on top of them.
+            del head
             done += 1
             if on_step is not None:
                 on_step(done, total_fits, f"Fold {fold}/{k}: C={c} ({done}/{total_fits} fits)")
+        # Released BEFORE the next fold vectorizes. Merely rebinding the names there
+        # happens only once the next fold's matrices exist, so both folds would stack up.
+        del x_tr, x_te
     thresholds_apply = tune_threshold and not is_single_label(task_type)
     if select_on_tuned_thresholds and thresholds_apply:
         best_c, global_t, columns = _best_under_own_thresholds(

@@ -227,6 +227,9 @@ def fit_evaluate_deploy(
                     phase_detail=f"{detail}{_threads_note(thread_budget)}",
                 ),
             )
+            # The folds are done with it; the deploy fit vectorizes on its own and must
+            # not build its matrix on top of this one.
+            shared_matrix = None
             deploy_idx = np.arange(len(texts))
         else:
             selected = select_on_split(
