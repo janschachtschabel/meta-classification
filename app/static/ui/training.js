@@ -198,9 +198,15 @@ function preflightSummary(body, labelFields) {
     : minutes < 1
       ? t("train.preflight.underAMinuteOn", { profile: esc(profile) })
       : t("train.preflight.onProfile", { profile: esc(profile), cost: costLabel(minutes) });
+  // Said only when the memory budget holds the run back: that is what makes a long
+  // estimate long, and a full thread count is not news.
+  const planned = (body.planned_head_fit_threads || {})[profile];
+  const held = Number.isFinite(minutes) && planned < body.threads_requested
+    ? t("train.preflight.threadsLimited", { used: planned, requested: body.threads_requested })
+    : "";
   return `<p><strong>${t("train.preflight.size", {
       rows: body.total_samples, labels: body.unique_labels })}</strong>
-      ${cost}${labelFields.length > 1
+      ${cost}${held}${labelFields.length > 1
         ? t("train.preflight.perModel", { count: labelFields.length }) : ""}.</p>
     <p>${kept === undefined
       ? t("train.preflight.keepsUnknown", { threshold: current })

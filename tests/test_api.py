@@ -509,6 +509,11 @@ def test_analyze_recommends_a_threshold_and_prices_the_run():
     # output of a linear model at that size, not a bug. The STRICT ordering is a claim
     # about the model and is pinned where it means something (test_cost_estimate.py).
     assert estimate["fast"] <= estimate["auto"] <= estimate["best"]
+    # The threads each estimate assumed, so a slow estimate explains itself: the deploy
+    # fit's count under this server's CPU and memory budgets, never above the request.
+    assert set(body["planned_head_fit_threads"]) == set(estimate)
+    assert all(1 <= threads <= body["threads_requested"]
+               for threads in body["planned_head_fit_threads"].values())
 
 
 def test_analyze_wrong_column_returns_400_with_message():

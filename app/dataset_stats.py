@@ -13,7 +13,9 @@ from pathlib import Path
 import numpy as np
 
 from .data import auto_min_samples, load_dataset, read_csv, split_labels
-from .profiles import estimated_minutes
+from .profiles import CapacityPlan, estimated_minutes
+
+_SHIPPED_PROFILES = ("fast", "auto", "best")
 
 
 def sample_rows(path: str | Path, *, separator: str = ";", n: int = 5) -> dict:
@@ -34,8 +36,13 @@ def analyze_dataset(
     separator: str = ";",
     label_separator: str = ",",
     label_filter: str | None = None,
+    plan: CapacityPlan | None = None,
 ) -> dict:
-    """Comprehensive dataset statistics for the /datasets/analyze endpoint."""
+    """Comprehensive dataset statistics for the /datasets/analyze endpoint.
+
+    ``plan`` is what this server grants a run right now; with it the estimate counts the
+    head-fit threads each profile would get, and says how many (``None``: the anchor's).
+    """
     data = load_dataset(
         path,
         text_columns,
@@ -54,6 +61,8 @@ def analyze_dataset(
             counts[lab] = counts.get(lab, 0) + 1
     top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
     total = len(data.texts)
+    costed = [name for name in _SHIPPED_PROFILES if estimated_minutes(name, total) is not None]
+    threads = {name: plan.head_fit_threads(name, total) for name in costed} if plan else {}
     return {
         "file": str(path),
         "total_samples": total,
@@ -65,9 +74,12 @@ def analyze_dataset(
         # recommendation, which is what turns it from a number into a decision.
         "recommended_min_samples_per_label": auto_min_samples(total),
         "estimated_minutes": {
-            name: minutes for name in ("fast", "auto", "best")
-            if (minutes := estimated_minutes(name, total)) is not None
+            name: estimated_minutes(name, total, threads.get(name)) for name in costed
         },
+        # The threads each estimate assumed: the deploy fit's, under this server's CPU and
+        # memory budgets. Fewer than requested is a run the memory budget will slow down.
+        **({"planned_head_fit_threads": threads, "threads_requested": plan.requested_threads}
+           if plan else {}),
         "text_statistics": {
             "mean_length_chars": float(lengths.mean()),
             "median_length_chars": float(np.median(lengths)),

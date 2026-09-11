@@ -122,6 +122,17 @@ def memory_limit_bytes(cgroup_root: Path = Path("/sys/fs/cgroup")) -> int | None
     return None
 
 
+def threads_within(requested: int, budget_bytes: int | None, *, held_bytes: int,
+                   matrix_bytes: int) -> int:
+    """How many fits on a matrix of ``matrix_bytes`` fit into the budget next to what is
+    already held — never more than ``requested``, never fewer than 1 (a run over budget
+    fits one head at a time rather than not at all). No budget grants the request."""
+    if budget_bytes is None or matrix_bytes <= 0:
+        return requested
+    fits = int((budget_bytes - held_bytes) // (FIT_COPIES_PER_THREAD * matrix_bytes))
+    return max(1, min(requested, fits))
+
+
 def matrix_bytes(matrix: Any) -> int:
     """Bytes a feature matrix holds: a sparse matrix's three arrays, or a dense buffer."""
     if hasattr(matrix, "indptr"):
@@ -194,17 +205,15 @@ class ThreadBudget:
     def for_matrix(self, matrix: Any) -> int:
         threads = self.requested
         if self.budget_bytes is not None:
-            per_fit = FIT_COPIES_PER_THREAD * matrix_bytes(matrix)
-            if per_fit > 0:
-                held = rss_bytes()
-                fits = int((self.budget_bytes - held) // per_fit)
-                threads = max(1, min(self.requested, fits))
-                if threads < self.requested and (not self.chosen or self.chosen[-1] != threads):
-                    logger.info(
-                        "Memory budget: head fits use %d of %d threads (budget %d MB, "
-                        "process %d MB, matrix %d MB)", threads, self.requested,
-                        self.budget_bytes // MiB, held // MiB, matrix_bytes(matrix) // MiB,
-                    )
+            held, size = rss_bytes(), matrix_bytes(matrix)
+            threads = threads_within(self.requested, self.budget_bytes, held_bytes=held,
+                                     matrix_bytes=size)
+            if threads < self.requested and (not self.chosen or self.chosen[-1] != threads):
+                logger.info(
+                    "Memory budget: head fits use %d of %d threads (budget %d MB, "
+                    "process %d MB, matrix %d MB)", threads, self.requested,
+                    self.budget_bytes // MiB, held // MiB, size // MiB,
+                )
         self.chosen.append(threads)
         if self.on_choice is not None:
             self.on_choice(threads)

@@ -27,6 +27,7 @@ const STRINGS_DE = {
   "common.seconds": "{count} s",
   "common.shareLink": "Freigabelink",
   "common.textColumnsMulti": "Textspalten (Strg-Klick für mehrere)",
+  "common.threadsOf": "{used} von {requested}",
   "common.underAMinute": "unter einer Minute",
 
   "errors.adminRequired": "Für diese Aktion wird der Admin-API-Schlüssel gebraucht.",
@@ -189,6 +190,7 @@ const STRINGS_DE = {
   "train.preflight.underAMinuteOn": "Mit <code>{profile}</code> dauert das unter einer Minute",
   "train.preflight.perModel": " — je Modell, und Sie haben {count} geplant",
   "train.preflight.size": "{rows} Zeilen, {labels} Labels.",
+  "train.preflight.threadsLimited": " — auf {used} von {requested} Threads, vom Speicherbudget gebremst",
   "train.preflight.thresholdSet": "Schwellenwert auf {value} gesetzt.",
   "train.preflight.useValue": "{value} übernehmen",
   "train.profile.label": "Profil",
@@ -235,7 +237,6 @@ const STRINGS_DE = {
   "trainStatus.state.stopped": "gestoppt",
   "trainStatus.stop": "Training stoppen",
   "trainStatus.stopRequested": "Stopp angefordert — Warteschlange geleert.",
-  "trainStatus.threads": "{used} von {requested}",
   "trainStatus.threadsLimited": "{used} von {requested} — vom Speicherbudget gebremst",
 
   "models.action.info": "Info",
@@ -349,7 +350,7 @@ const STRINGS_DE = {
   "datasetDetail.analyzeNote": "Liest jede Zeile, bei einem großen Export dauert das also einen Moment.",
   "datasetDetail.beforeTraining": "Bevor darauf trainiert wird",
   "datasetDetail.costHeading": "Was ein Lauf kosten würde",
-  "datasetDetail.costNote": "<strong>Schätzungen.</strong> Hochgerechnet aus einem gemessenen Lauf (156.373 Zeilen auf <code>auto</code> in 40 Min.) und linear in der Zeilenzahl, wie der Row-Scaling-Benchmark ergeben hat. Die Schätzung kennt weder Ihre Label-Zahl noch Ihre Maschine — lesen Sie sie als „Kaffeepause oder Nachmittag“, nicht als Zeitplan.",
+  "datasetDetail.costNote": "<strong>Schätzungen.</strong> Hochgerechnet aus einem gemessenen Lauf (156.373 Zeilen auf <code>auto</code> in 40 Min.), linear in der Zeilenzahl, wie der Row-Scaling-Benchmark ergeben hat, und für die Head-Fit-Threads, die dieser Server unter seinem CPU- und Speicherbudget gewährt — die Zahl des größten Fits, im Zweifel also zu lang. Die Schätzung kennt weder Ihre Label-Zahl noch die Geschwindigkeit Ihrer Kerne — lesen Sie sie als „Kaffeepause oder Nachmittag“, nicht als Zeitplan.",
   "datasetDetail.rareWarning": {"one": "{count} davon hat weniger als 10 Beispiele. Ein Label, das das Modell kaum gesehen hat, schneidet schlecht ab, wie gut der Lauf auch ist.", "other": "{count} davon haben weniger als 10 Beispiele. Ein Label, das das Modell kaum gesehen hat, schneidet schlecht ab, wie gut der Lauf auch ist."},
   "datasetDetail.recommended": "für diese Größe empfohlen",
   "datasetDetail.subtitle": "{columns} Spalten · die ersten {rows} Zeilen gezeigt",
@@ -358,6 +359,8 @@ const STRINGS_DE = {
   "datasetDetail.table.labelsKept": "behaltene Labels",
   "datasetDetail.table.minExamples": "min. Beispiele",
   "datasetDetail.table.profile": "Profil",
+  "datasetDetail.table.threads": "Head-Fit-Threads",
+  "datasetDetail.threadsLimited": "{used} von {requested} · Speicherbudget",
   "datasetDetail.thresholdHeading": "Wie viele Labels einen Schwellenwert überstehen",
   "datasetDetail.thresholdNote": "Ein Label fallen zu lassen ist eine Entscheidung, kein Detail: alles unterhalb des gewählten Werts wird aus dem Training entfernt und kann nie vorhergesagt werden. Die markierte Zeile ist, was die Größenheuristik wählen würde — ein Ausgangspunkt, keine Antwort."
 };

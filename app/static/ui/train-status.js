@@ -135,7 +135,7 @@ function threadsLine(s) {
   const params = { used: s.head_fit_threads, requested: s.threads_requested };
   return s.head_fit_threads < s.threads_requested
     ? t("trainStatus.threadsLimited", params)
-    : t("trainStatus.threads", params);
+    : t("common.threadsOf", params);
 }
 
 /* What is waiting behind the running run — read from the server, so it survives this

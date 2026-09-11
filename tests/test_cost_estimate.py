@@ -3,7 +3,16 @@ anyone spends an afternoon on it."""
 
 import pytest
 
-from app.profiles import ANCHOR_MINUTES, ANCHOR_ROWS, estimated_minutes
+from app.profiles import (
+    ANCHOR_MINUTES,
+    ANCHOR_ROWS,
+    ANCHOR_THREADS,
+    CapacityPlan,
+    estimated_minutes,
+    head_fit_seconds_ratio,
+)
+
+MiB = 1024 * 1024
 
 
 def test_the_estimate_reproduces_the_run_it_is_anchored_on():
@@ -38,3 +47,54 @@ def test_an_unknown_profile_gets_no_estimate_rather_than_a_made_up_one():
     supports."""
     assert estimated_minutes("experimental", 10_000) is None
     assert estimated_minutes("auto", 0) == 0.0
+
+
+def test_the_anchor_thread_count_reproduces_the_anchor_run():
+    """The anchor ran on 9 threads; telling the model so must not move its one number."""
+    assert estimated_minutes("auto", ANCHOR_ROWS, threads=ANCHOR_THREADS) == pytest.approx(
+        ANCHOR_MINUTES)
+
+
+def test_fewer_head_fit_threads_take_longer_but_do_not_divide_the_time():
+    """A run the memory budget holds to 3 threads is slower than on 9 — but not 3x
+    slower: vectorization does not use the threads at all, and the fits themselves
+    scale far from linearly."""
+    rows = 300_000
+    nine = estimated_minutes("auto", rows, threads=9)
+    three = estimated_minutes("auto", rows, threads=3)
+    one = estimated_minutes("auto", rows, threads=1)
+    assert nine < three < one
+    assert three < 3 * nine
+
+
+@pytest.mark.parametrize(("measured", "where"), [(60.4 / 19.2, "30k rows"),
+                                                 (387.0 / 120.5, "100k rows")])
+def test_the_thread_curve_reproduces_the_measured_fits(measured, where):
+    """benchmark_training_memory.py, 2026-09-11: one thread against six, the same fit.
+    6 threads were 3.1-3.2x faster than 1, nowhere near 6x — the curve the estimate uses
+    has to give back what was measured, like the anchor has to give back its 40.2 min."""
+    assert head_fit_seconds_ratio(1, 6) == pytest.approx(measured, rel=0.05), where
+
+
+def test_without_a_memory_budget_a_run_gets_every_thread_the_cpu_grants():
+    plan = CapacityPlan(requested_threads=9, budget_bytes=None, held_bytes=300 * MiB,
+                        use_char={"auto": True})
+    assert plan.head_fit_threads("auto", 1_000_000) == 9
+
+
+def test_the_8_gb_container_holds_a_300k_run_to_fewer_threads():
+    """The owner's test container: 6000 MB budget. At 300k rows the word+char deploy
+    matrix is ~0.9 GB, so each concurrent fit needs ~2.2 GB — one fits next to the
+    texts and the matrix, nine would not. Word-only builds a fifth of the matrix."""
+    plan = CapacityPlan(requested_threads=9, budget_bytes=6000 * MiB, held_bytes=300 * MiB,
+                        use_char={"auto": True, "fast": False})
+    char_threads = plan.head_fit_threads("auto", 300_000)
+    word_threads = plan.head_fit_threads("fast", 300_000)
+    assert 1 <= char_threads < word_threads <= 9
+    assert plan.head_fit_threads("auto", 10_000) == 9, "a small run is not held back"
+
+
+def test_a_run_that_cannot_fit_at_all_still_gets_one_thread():
+    plan = CapacityPlan(requested_threads=9, budget_bytes=100 * MiB, held_bytes=300 * MiB,
+                        use_char={"auto": True})
+    assert plan.head_fit_threads("auto", 300_000) == 1

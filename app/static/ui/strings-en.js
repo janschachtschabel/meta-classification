@@ -26,6 +26,7 @@ const STRINGS_EN = {
   "common.seconds": "{count}s",
   "common.shareLink": "Share link",
   "common.textColumnsMulti": "Text columns (Ctrl-click for several)",
+  "common.threadsOf": "{used} of {requested}",
   "common.underAMinute": "under a minute",
 
   "errors.adminRequired": "This action needs the admin API key.",
@@ -188,6 +189,7 @@ const STRINGS_EN = {
   "train.preflight.underAMinuteOn": "On <code>{profile}</code> that takes under a minute",
   "train.preflight.perModel": " — per model, and you planned {count}",
   "train.preflight.size": "{rows} rows, {labels} labels.",
+  "train.preflight.threadsLimited": " — on {used} of {requested} threads, held back by the memory budget",
   "train.preflight.thresholdSet": "Threshold set to {value}.",
   "train.preflight.useValue": "Use {value}",
   "train.profile.label": "Profile",
@@ -234,7 +236,6 @@ const STRINGS_EN = {
   "trainStatus.state.stopped": "stopped",
   "trainStatus.stop": "Stop training",
   "trainStatus.stopRequested": "Stop requested — queue cleared.",
-  "trainStatus.threads": "{used} of {requested}",
   "trainStatus.threadsLimited": "{used} of {requested} — held back by the memory budget",
 
   "models.action.info": "Info",
@@ -348,7 +349,7 @@ const STRINGS_EN = {
   "datasetDetail.analyzeNote": "Reads every row, so this takes a moment on a large export.",
   "datasetDetail.beforeTraining": "Before training on it",
   "datasetDetail.costHeading": "What a run would cost",
-  "datasetDetail.costNote": "<strong>Estimates.</strong> Scaled from one measured run (156 373 rows on <code>auto</code> in 40 min) and linear in the row count, which is what the row scaling benchmark found. It cannot see your label count or your machine, so treat it as \"coffee break or afternoon\", not as a schedule.",
+  "datasetDetail.costNote": "<strong>Estimates.</strong> Scaled from one measured run (156 373 rows on <code>auto</code> in 40 min), linear in the row count as the row scaling benchmark found, and for the head-fit threads this server will grant under its CPU and memory budgets — the count of the largest fit, so it errs long. It cannot see your label count or how fast your cores are, so treat it as \"coffee break or afternoon\", not as a schedule.",
   "datasetDetail.rareWarning": {"one": "{count} of them has fewer than 10 examples. A label the model barely saw will score badly however good the run is.", "other": "{count} of them have fewer than 10 examples. A label the model barely saw will score badly however good the run is."},
   "datasetDetail.recommended": "recommended for this size",
   "datasetDetail.subtitle": "{columns} columns · first {rows} rows shown",
@@ -357,6 +358,8 @@ const STRINGS_EN = {
   "datasetDetail.table.labelsKept": "labels kept",
   "datasetDetail.table.minExamples": "min. examples",
   "datasetDetail.table.profile": "Profile",
+  "datasetDetail.table.threads": "head-fit threads",
+  "datasetDetail.threadsLimited": "{used} of {requested} · memory budget",
   "datasetDetail.thresholdHeading": "How many labels survive a threshold",
   "datasetDetail.thresholdNote": "Dropping a label is a decision, not a detail: everything below the value you pick is removed from training and can never be predicted. The marked row is what the size heuristic would choose — it is a starting point, not an answer."
 };

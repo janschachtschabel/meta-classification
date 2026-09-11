@@ -23,6 +23,8 @@ from .. import data as data_mod
 from .. import dataset_stats as stats_mod
 from ..errors import TrainingInputError
 from ..limiter import default_limit, export_limit, limiter
+from ..memory import rss_bytes
+from ..profiles import CapacityPlan, load_training_config
 from ..schemas import AnalyzeRequest, ExportRequest, ValidateRequest
 from ..security import require_role, safe_name, spool_upload_capped
 from ..settings import Settings, get_settings
@@ -113,10 +115,20 @@ def analyze(request: Request, req: AnalyzeRequest, _: str = Depends(require_role
     choose `min_samples_per_label` and a `label_filter`. **Auth:** admin.
     """
     path = _dataset_path(req.dataset_name, settings)
+    # Read before the analysis loads the file: what a run would start from is what the
+    # process holds now, not the analysis' own transient copy of the dataset.
+    plan = CapacityPlan(
+        requested_threads=settings.effective_n_jobs(),
+        budget_bytes=settings.effective_train_memory_bytes(),
+        held_bytes=rss_bytes(),
+        use_char={name: profile.use_char
+                  for name, profile in load_training_config(settings.config_file).profiles.items()},
+    )
     try:
         return stats_mod.analyze_dataset(
             path, req.text_columns, req.label_column,
             separator=req.csv_separator, label_separator=req.label_separator, label_filter=req.label_filter,
+            plan=plan,
         )
     except TrainingInputError as exc:
         # Crafted, safe message (e.g. wrong column name + available columns) -> 400.

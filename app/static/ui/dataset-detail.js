@@ -46,10 +46,21 @@ function costLabel(minutes) {
   return t("common.hours", { count: Number((minutes / 60).toFixed(1)) });
 }
 
-function costRows(estimate) {
-  return Object.entries(estimate).map(([profile, minutes]) => `<tr>
+function costRows(body) {
+  const threads = body.planned_head_fit_threads || {};
+  return Object.entries(body.estimated_minutes || {}).map(([profile, minutes]) => `<tr>
     <td>${esc(profile)}</td>
-    <td class="num">${costLabel(minutes)}</td></tr>`).join("");
+    <td class="num">${costLabel(minutes)}</td>
+    <td class="num">${threadsCell(threads[profile], body.threads_requested)}</td></tr>`).join("");
+}
+
+/* The head-fit threads an estimate assumed. Fewer than the CPU budget allows is a run
+   the memory budget will slow down — the reason a long estimate is long. */
+function threadsCell(used, requested) {
+  if (used == null || requested == null) return "–";
+  return used < requested
+    ? t("datasetDetail.threadsLimited", { used, requested })
+    : t("common.threadsOf", { used, requested });
 }
 
 function analysisHtml(body) {
@@ -68,8 +79,9 @@ function analysisHtml(body) {
     <h4>${t("datasetDetail.costHeading")}</h4>
     <div class="table-wrap"><table>
       <thead><tr><th>${t("datasetDetail.table.profile")}</th>
-        <th class="num">${t("datasetDetail.table.estimate")}</th></tr></thead>
-      <tbody>${costRows(body.estimated_minutes || {})}</tbody>
+        <th class="num">${t("datasetDetail.table.estimate")}</th>
+        <th class="num">${t("datasetDetail.table.threads")}</th></tr></thead>
+      <tbody>${costRows(body)}</tbody>
     </table></div>
     <p class="muted">${t("datasetDetail.costNote")}</p>
   </div>`;
