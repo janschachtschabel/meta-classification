@@ -1,9 +1,11 @@
 # Plan — lower the training peak memory, same model (api_v3), 2026-09-11
 
 **Status: APPROVED 2026-09-11 ("den Plan umsetzen"); implemented on branch
-`feat/training-memory`.** The owner left the three open questions to the proposals —
-see "Decisions" at the end. Companion to `docs/plans/2026-09-08-ergaenzungsplan.md`
-(same conventions).
+`feat/training-memory`.** Later the same day the owner settled the open questions and
+widened the scope: `auto` as an explicit value, the head-fit threads shown during a
+run and counted in the time estimate, the test container's budget at 6000 MB, and
+Phase 4 in scope and measured — see "Decisions" at the end and tasks 1.6–1.8 and
+Phase 4. Companion to `docs/plans/2026-09-08-ergaenzungsplan.md` (same conventions).
 
 ## Goal
 
@@ -130,7 +132,7 @@ alone would **not** have saved this run; bounding the head-fit threads would.
 | **B** | **Output-identical engineering** (chosen): bound the head-fit threads by a memory budget; fit the two vectorizers one after the other; build the vocabulary in two passes so nothing beyond the kept terms is ever materialised; stream the CSV; release phase objects explicitly; make the peak visible. | Every step verified bit-identical; costs wall-clock only where the alternative is an OOM. |
 | C | `HashingVectorizer` (no vocabulary, constant memory) | Hash collisions change the features; no `vocabulary.json`, no explain, bundle format 3. Rejected. |
 | D | Another solver: `lbfgs` needs no `hX` but upcasts X to float64 per fit (same order of memory) and converges to a different optimum; `saga` is slow on high-dimensional TF-IDF and also changes the optimum. | Rejected — not "the same model". |
-| E | Run the fitting in a child process | Does not lower the peak of one run; it removes the residue between runs and returns memory to the OS. Kept as optional Phase 4. |
+| E | Run the fitting in a child process | Does not lower the peak of one run; it removes the residue between runs, returns memory to the OS, and turns an OOM kill of the run into a job error instead of a dead API. Phase 4 (in scope since the owner's decision). |
 
 ## Global constraints (from CLAUDE.md, unchanged)
 
@@ -257,13 +259,30 @@ Nothing reads the block back, so `bundle_meta` needs no change. The job history
 entry gets `peak_rss_mb` too — that is where "will 8 GB be enough?" gets its answer
 next time.
 
-### Phase 4 (optional, decide after Phases 0–3 are measured)
+### Phase 4 — training in a child process (in scope since 2026-09-11)
 
-Run `run_training` in a child process (`multiprocessing` with the `spawn` context on
-both platforms; progress over a pipe, cooperative stop via the existing flag turned
-into a shared `Event`, exit code → job error). Zero residue, memory returned to the OS,
-and the July "second training thrashes" memory item closes for good. Larger change to
-`jobs.py` (~1 day plus a day of Windows/Linux verification); not part of this contract.
+Run `run_training` in a child process started with `subprocess` (`python -m
+app.train_worker`), not `multiprocessing`: the job spec goes in as JSON on stdin,
+progress and the result come back as JSON lines on stdout, the child's log goes to the
+inherited stderr — no pickle anywhere, the same on Windows and Linux. A cooperative
+stop is a `{"stop": true}` line; a hard stop kills the child instead of abandoning a
+thread that keeps training. The child writes the bundle into the registry's hidden
+staging directory and the parent publishes it under its own disk lock, so the one-lock
+rule of `registry.py` survives the process boundary.
+
+What it buys: the process that serves the API never holds a training's memory — every
+byte goes back to the OS when the child exits (the July "second training thrashes"
+item), and an OOM kill takes the child, not the API: the job ends in an error that
+says so instead of the container restarting. What it costs: a fresh interpreter per
+run (~1–2 s of imports) and a cold first `/predict` of the new model (the bundle is
+loaded from disk instead of handed over in memory).
+
+| # | Task | Files | Test (written first) |
+|---|---|---|---|
+| 4.1 | `registry.stage` / `registry.publish` split out of `save` (behaviour-preserving) | `app/registry.py` | existing registry tests green; a staged bundle is invisible until published |
+| 4.2 | `app/train_worker.py`: JSON spec in, JSON-lines progress/result out, stop line, exit codes | new module | spec round-trip; progress lines; a `TrainingInputError` becomes a user-facing error line |
+| 4.3 | `JobRunner` runs trainings through the worker (`APIV3_TRAINING_ISOLATION=process`, default; `thread` keeps today's path and is what the unit suite uses) | `app/jobs.py`, `app/routes/training.py`, `app/settings.py` | a real tiny run through the worker publishes a loadable model; stop and hard stop; a killed child reads as an error naming a likely OOM |
+| 4.4 | Measure: the API process' RSS after two back-to-back 30k runs, thread vs process mode | benchmark script | the numbers, pasted here |
 
 ## Tasks
 
@@ -288,6 +307,9 @@ one commit. Step 0 of every phase: re-invoke `/better-coding-workflow`.
 | 1.3 | Sequential word → char in `TfidfBackend.fit_transform` and `fit` | `app/vectorizers.py`, new `tests/test_vectorizers.py` | the matrix equals `hstack` of the two vectorizers fitted separately (`(a != b).nnz == 0`); `transform` unchanged |
 | 1.4 | Release phase objects: `del x_tr, x_te, vec, head` at the end of every CV fold (today fold *k*'s matrices are still alive while fold *k+1* vectorizes); drop `shared_matrix` before the deploy fit. No `gc.collect()`: nothing in a fold is cyclic, so refcounting frees it on `del`, and a full collection per fold would only traverse the heap. `select_on_split`'s matrices already die with its frame on return. | `app/tuning.py`, `app/deploy.py` | Behavioural tests stay green; the effect is a benchmark number (task 0.3), stated as such in the commit |
 | 1.5 | Docs: README "Memory" paragraph corrected (threads multiply the *fit* memory), `configuration.md` row, CHANGELOG `[Unreleased]` | docs | — |
+| 1.6 | `auto` as an explicit value: `APIV3_N_JOBS=auto` (= `-1`, the default) and `APIV3_TRAIN_MEMORY_MB=auto` (the default); `GET /config` reports `"auto"` rather than a sentinel | `app/settings.py`, `app/responses.py`, `.env.example`, `docs/configuration.md` | env `auto` parses for both; `-1`/numbers keep working; `/config` shows `"auto"` |
+| 1.7 | The threads a run is using, shown while it runs: `/train/status` carries `head_fit_threads` (the current fit's) and `threads_requested`; the status card shows "3 of 9 threads (memory budget)" | `app/deploy.py`, `app/static/ui/*` | a throttled tiny run reports `head_fit_threads=1`, `threads_requested=3` through `on_progress`; `test_ui_i18n` green |
+| 1.8 | The time estimate counts the threads: `POST /datasets/analyze` predicts the deploy fit's thread count for the dataset under the current CPU and memory budgets (`planned_head_fit_threads`) and `estimated_minutes` scales the head-fit share of the anchor run (9 threads) by a measured speedup curve — not by 1/threads: 6 threads fit 3.1× faster than 1, not 6× | `app/memory.py`, `app/profiles.py`, `app/dataset_stats.py`, `app/static/ui/*` | the prediction arithmetic; fewer threads → a longer estimate, the anchor thread count reproduces the published 40.2 min |
 
 **Gate for Phase 1** (benchmark, 100k subset): head-fit peak with `APIV3_TRAIN_MEMORY_MB`
 set to *(current RSS + 3 × matrix)* stays under that budget; vectorizer peak ≤ 0.75 × the
@@ -363,12 +385,14 @@ it. The `.wslconfig` change (VM memory) remains the owner's decision.
 - **Platforms.** RSS via `/proc` and `psapi` are exercised here (Linux container,
   Windows dev box); macOS falls back to `resource` and is untested.
 
-## Decisions (the three former open questions)
+## Decisions (the three former open questions, settled by the owner 2026-09-11)
 
-1. **Budget default:** the cgroup memory limit minus 15 % when the container has one;
-   `APIV3_TRAIN_MEMORY_MB` overrides it, `0` disables the cap. Without a limit (bare
-   metal, Windows, Docker without `--memory`) nothing changes.
-2. **`peak_rss_mb`** goes into the bundle's `metrics.json` under `resources` *and* into
-   the job history.
-3. **Phase 4** is re-decided with the Phase 3 benchmark numbers in hand; it is not part
-   of this implementation.
+1. **Budget default:** `APIV3_TRAIN_MEMORY_MB=auto` — the cgroup memory limit minus
+   15 % when the container has one, otherwise no cap; a number overrides it, `0`
+   disables it. The `apiv3-test` container runs with **6000 MB** for testing (its env
+   file, not the image). The head-fit thread count itself is automatic as well
+   (`APIV3_N_JOBS=auto`), shown during the run and counted in the time estimate.
+2. **`peak_rss_mb`** is a measurement, not a setting: what a run needed at most. It
+   costs one number, so it goes into the bundle's `metrics.json` under `resources` *and*
+   into the job history.
+3. **Phase 4** is in scope: implemented and measured (tasks 4.1–4.4).
