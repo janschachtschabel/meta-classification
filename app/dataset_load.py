@@ -3,12 +3,17 @@
 Split out of ``data``, which keeps the per-row pieces this is assembled from
 (``read_csv``, ``clean_text``, ``split_labels``). Loading is the one step that holds a
 whole dataset at once, so it is where a training run's first memory peak is decided.
+
+The CSV is read in blocks of rows. Read whole, the file sat in memory three times over
+— the frame, the combined text, the cleaned text: +1.5 GB for a 558 MB export
+(docs/plans/2026-09-11-training-memory.md). In blocks, each of those is one block long,
+and only what the dataset keeps accumulates.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -17,19 +22,8 @@ from .data import clean_text, read_csv, split_labels
 from .errors import TrainingInputError
 from .label_names import pair_names
 
-
-def _clean_in_chunks(series: pd.Series, on_progress: Callable[[str], None] | None) -> pd.Series:
-    """Apply clean_text per row; chunked so long runs can report row progress."""
-    n = len(series)
-    step = 50_000
-    if n <= step or on_progress is None:
-        return series.map(clean_text)
-    parts: list[pd.Series] = []
-    for start in range(0, n, step):
-        parts.append(series.iloc[start:start + step].map(clean_text))
-        done = min(start + step, n)
-        on_progress(f"Cleaning texts … {done:,}/{n:,} rows")
-    return pd.concat(parts)
+# Rows per block: the step the loader already reported its cleaning progress in.
+CHUNK_ROWS = 50_000
 
 
 @dataclass
@@ -78,15 +72,21 @@ def load_dataset(
     text_column_weights: dict[str, int] | None = None,
     label_names: dict[str, str] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    chunk_rows: int = CHUNK_ROWS,
 ) -> LoadedData:
     """Load a CSV and return cleaned texts + label lists.
 
-    Only the needed columns are read (low RAM). A ``<label>_DISPLAYNAME`` column
-    (if present) is used to build a URI->human-readable-label mapping.
+    Only the needed columns are read, ``chunk_rows`` rows at a time (low RAM). A
+    ``<label>_DISPLAYNAME`` column (if present) is used to build a URI->human-readable-
+    label mapping.
 
     ``text_column_weights`` maps a column to how often its text is repeated in the
     combined training text (default 1) — see :func:`combine_text_columns`. Weights for
     columns the CSV does not have are ignored, exactly like the columns themselves.
+
+    UTF-8 first; a file that turns out not to be UTF-8 anywhere is read again from the
+    start as cp1252 (common for German metadata exports), whatever was read before is
+    discarded — the whole-file reader behaved the same way.
     """
     path = Path(path)
     header = read_csv(path, sep=separator, nrows=0)
@@ -109,44 +109,98 @@ def load_dataset(
             on_progress(msg)
 
     emit("Reading CSV file …")
-    df = read_csv(path, sep=separator, usecols=usecols, dtype=str, low_memory=False)
-
-    texts = _clean_in_chunks(combine_text_columns(df, text_cols, text_column_weights), on_progress)
-
-    label_series = df[label_column]
-    uri_to_label: dict[str, str] = {}
-    if has_dn:
-        for uri_cell, name_cell in zip(label_series.fillna(""), df[dn_col].fillna(""), strict=False):
-            for uri, name in pair_names(
-                split_labels(uri_cell, label_separator),
-                split_labels(name_cell, label_separator),
-            ):
-                uri_to_label.setdefault(uri, name)
-    if label_names:
-        # An external vocabulary is authoritative: it overrides CSV-derived names and
-        # fills the ones no row could attribute. Narrowed to labels this dataset uses,
-        # so a full vocabulary file does not bloat every bundle.
-        used = {uri for cell in label_series.fillna("") for uri in split_labels(cell, label_separator)}
-        uri_to_label.update(
-            {uri: name for uri, name in label_names.items() if uri in used and name}
+    for encoding in ("utf-8", "cp1252"):
+        collector = _Collector(
+            text_cols=text_cols, label_column=label_column, dn_col=dn_col if has_dn else None,
+            label_separator=label_separator, label_filter=label_filter,
+            min_text_length=min_text_length, drop_duplicates=drop_duplicates,
+            weights=text_column_weights,
         )
-
-    label_lists = [split_labels(cell, label_separator) for cell in label_series]
-    if label_filter:
-        label_lists = [[lab for lab in labs if label_filter in lab] for labs in label_lists]
-
-    emit("Filtering short/empty and duplicate rows …")
-    out_texts: list[str] = []
-    out_labels: list[list[str]] = []
-    seen: set[str] = set()
-    for text, labels in zip(texts.tolist(), label_lists, strict=False):
-        if len(text) < min_text_length or not labels:
+        try:
+            for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
+                                      chunk_rows=chunk_rows):
+                collector.add(block)
+                emit(f"Reading and cleaning … {collector.rows_read:,} rows")
+        except UnicodeDecodeError:
+            if encoding == "cp1252":
+                raise
+            emit("Not UTF-8 — reading the file again as Windows-1252 …")
             continue
-        if drop_duplicates:
-            if text in seen:
-                continue
-            seen.add(text)
-        out_texts.append(text)
-        out_labels.append(labels)
+        return collector.result(label_names)
+    raise AssertionError("unreachable: the cp1252 attempt returns or raises")
 
-    return LoadedData(texts=out_texts, label_lists=out_labels, uri_to_label=uri_to_label)
+
+def _read_blocks(
+    path: Path, encoding: str, *, separator: str, usecols: list[str], chunk_rows: int
+) -> Iterator[pd.DataFrame]:
+    """The CSV in blocks of rows, only the needed columns, every cell as text. Empty or
+    malformed CSVs surface as ``TrainingInputError`` (-> 400), like ``data.read_csv``."""
+    try:
+        with pd.read_csv(path, sep=separator, usecols=usecols, dtype=str, encoding=encoding,
+                         chunksize=chunk_rows) as reader:
+            yield from reader
+    except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise TrainingInputError(f"The CSV is empty or malformed: {exc}") from exc
+
+
+@dataclass
+class _Collector:
+    """The dataset being loaded, one block of rows at a time.
+
+    Everything that spans blocks lives here, so a block boundary can change nothing: the
+    texts already kept (the first occurrence wins across the whole file), the display
+    names (the first pairing wins), and the labels in use (the authoritative names are
+    narrowed to them once, at the end).
+    """
+
+    text_cols: list[str]
+    label_column: str
+    dn_col: str | None  # None: the CSV has no display-name column
+    label_separator: str
+    label_filter: str | None
+    min_text_length: int
+    drop_duplicates: bool
+    weights: dict[str, int] | None
+    texts: list[str] = field(default_factory=list)
+    label_lists: list[list[str]] = field(default_factory=list)
+    uri_to_label: dict[str, str] = field(default_factory=dict)
+    used: set[str] = field(default_factory=set)
+    seen: set[str] = field(default_factory=set)
+    rows_read: int = 0
+
+    def add(self, frame: pd.DataFrame) -> None:
+        cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
+        label_series = frame[self.label_column]
+        if self.dn_col is not None:
+            names = frame[self.dn_col].fillna("")
+            for uri_cell, name_cell in zip(label_series.fillna(""), names, strict=False):
+                for uri, name in pair_names(
+                    split_labels(uri_cell, self.label_separator),
+                    split_labels(name_cell, self.label_separator),
+                ):
+                    self.uri_to_label.setdefault(uri, name)
+        label_lists = [split_labels(cell, self.label_separator) for cell in label_series]
+        self.used.update(uri for labels in label_lists for uri in labels)
+        if self.label_filter:
+            label_lists = [[lab for lab in labs if self.label_filter in lab] for labs in label_lists]
+        for text, labels in zip(cleaned.tolist(), label_lists, strict=False):
+            if len(text) < self.min_text_length or not labels:
+                continue
+            if self.drop_duplicates:
+                if text in self.seen:
+                    continue
+                self.seen.add(text)
+            self.texts.append(text)
+            self.label_lists.append(labels)
+        self.rows_read += len(frame)
+
+    def result(self, label_names: dict[str, str] | None) -> LoadedData:
+        if label_names:
+            # An external vocabulary is authoritative: it overrides CSV-derived names and
+            # fills the ones no row could attribute. Narrowed to labels this dataset uses,
+            # so a full vocabulary file does not bloat every bundle.
+            self.uri_to_label.update(
+                {uri: name for uri, name in label_names.items() if uri in self.used and name}
+            )
+        return LoadedData(texts=self.texts, label_lists=self.label_lists,
+                          uri_to_label=self.uri_to_label)
