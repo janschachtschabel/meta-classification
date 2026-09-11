@@ -78,6 +78,31 @@ def test_the_job_spec_crosses_the_boundary_intact_and_without_secrets(tmp_path):
     assert child_settings.model_dump(exclude=SECRETS) == settings.model_dump(exclude=SECRETS)
 
 
+def test_relative_paths_mean_the_same_place_in_the_child(tmp_path, monkeypatch):
+    """The child runs in the package root, not in the API's working directory: a relative
+    APIV3_MODELS_DIR named another place there, and the child staged where the parent
+    never publishes from."""
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(data_dir=Path("data"), models_dir=Path("models"), auth_enabled=False)
+    config = _config()
+    spec = job_spec(_request(), settings, config, config.get("fast"))
+    assert spec["settings"]["models_dir"] == str((tmp_path / "models").resolve())
+    assert spec["settings"]["data_dir"] == str((tmp_path / "data").resolve())
+
+
+def test_the_child_holds_no_api_key_not_even_from_its_environment(tmp_path, monkeypatch):
+    """Leaving the keys out of the spec was not enough: the child inherited the
+    environment, and its Settings read APIV3_API_KEY_* from there (and from .env) again."""
+    monkeypatch.setenv("APIV3_API_KEY_ADMIN", "env-admin-secret")
+    monkeypatch.setenv("APIV3_API_KEY_READONLY", "env-readonly-secret")
+    _, child_settings, _, _ = read_job(_spec(tmp_path))
+    assert child_settings.api_key_admin is None and child_settings.api_key_readonly is None
+
+    env = train_worker._child_env()
+    assert not [name for name in env if name.upper().startswith("APIV3_API_KEY")]
+    assert env.get("PATH") == os.environ.get("PATH"), "everything else is inherited"
+
+
 def test_the_worker_stages_a_bundle_that_only_the_parent_publishes(tmp_path):
     messages: list[dict] = []
     assert serve(_spec(tmp_path), messages.append, should_stop=lambda: False) == 0

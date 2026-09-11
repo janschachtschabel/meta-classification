@@ -43,8 +43,10 @@ from .settings import Settings
 
 logger = logging.getLogger("api_v3.jobs")
 
-# Never sent to the child: it trains and saves, it authenticates nobody.
+# Never given to the child, neither in the spec nor through its environment: it trains
+# and saves, it authenticates nobody.
 SECRET_SETTINGS = frozenset({"api_key_admin", "api_key_readonly"})
+_SECRET_ENV = frozenset(f"APIV3_{name.upper()}" for name in SECRET_SETTINGS)
 # How long a stopped child may take to exit before it is killed outright.
 _EXIT_GRACE_SECONDS = 10
 # Where `python -m app.train_worker` resolves the package from.
@@ -53,9 +55,15 @@ _APP_ROOT = Path(__file__).resolve().parent.parent
 
 def job_spec(req: dict, settings: Settings, training_cfg: TrainingConfig, profile: Profile) -> dict:
     """Everything a child needs to run ``run_training`` as the parent would have."""
+    settings_doc = settings.model_dump(mode="json", exclude=set(SECRET_SETTINGS))
+    # A relative path means this process' working directory; the child runs in the
+    # package root, where the same string would name another place.
+    for name, value in settings:
+        if isinstance(value, Path) and name in settings_doc:
+            settings_doc[name] = str(value.resolve())
     return {
         "req": req,
-        "settings": settings.model_dump(mode="json", exclude=set(SECRET_SETTINGS)),
+        "settings": settings_doc,
         "training_config": dataclasses.asdict(training_cfg),
         "profile": dataclasses.asdict(profile),
         # The child's memory budget covers this process too: the limit is the container's.
@@ -67,8 +75,17 @@ def read_job(spec: dict) -> tuple[dict, Settings, TrainingConfig, Profile]:
     """The inverse of :func:`job_spec`, in the child."""
     config = dict(spec["training_config"])
     config["profiles"] = {name: Profile(**fields) for name, fields in config["profiles"].items()}
-    return (spec["req"], Settings(**spec["settings"]), TrainingConfig(**config),
-            Profile(**spec["profile"]))
+    # Explicit None: init arguments win over the environment and .env, which the
+    # settings would otherwise read the keys from again.
+    settings = Settings(**spec["settings"], **dict.fromkeys(SECRET_SETTINGS))
+    return spec["req"], settings, TrainingConfig(**config), Profile(**spec["profile"])
+
+
+def _child_env() -> dict[str, str]:
+    """This process' environment minus the API keys (matched regardless of case, as the
+    settings match them)."""
+    return {name: value for name, value in os.environ.items()
+            if name.upper() not in _SECRET_ENV}
 
 
 class _StagingRegistry(Registry):
@@ -173,9 +190,9 @@ def run_in_child(
     name = req["model_name"]
     # errors="replace": a byte that is not UTF-8 must cost one unreadable line, not the
     # reader thread and with it every line after.
-    child = subprocess.Popen(_worker_command(), cwd=_APP_ROOT, stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE, text=True, encoding="utf-8",
-                             errors="replace")
+    child = subprocess.Popen(_worker_command(), cwd=_APP_ROOT, env=_child_env(),
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                             encoding="utf-8", errors="replace")
     outcome: dict[str, Any] = {}
     try:
         # A child that died on start cannot take the job; its exit code says why below.
