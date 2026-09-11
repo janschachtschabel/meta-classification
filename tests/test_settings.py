@@ -1,8 +1,13 @@
-"""Tests for runtime settings resolution (CPU budget for training)."""
+"""Tests for runtime settings resolution (CPU and memory budget for training)."""
 
+
+import pytest
+from pydantic import ValidationError
 
 from app import settings as settings_mod
 from app.settings import Settings
+
+GiB = 1024**3
 
 
 def test_effective_n_jobs_caps_at_cpu_percent(monkeypatch):
@@ -115,6 +120,36 @@ def test_available_cpus_falls_back_to_cpu_count(monkeypatch):
     monkeypatch.setattr(settings_mod, "_affinity_cpus", lambda: None)
     monkeypatch.setattr(settings_mod, "_cgroup_cpu_quota", lambda: None)
     assert settings_mod.available_cpus() == 8
+
+
+def test_train_memory_budget_is_set_in_megabytes(monkeypatch):
+    monkeypatch.setenv("APIV3_TRAIN_MEMORY_MB", "1024")
+    assert Settings().effective_train_memory_bytes() == 1024 * 1024**2
+
+
+def test_train_memory_budget_defaults_to_the_container_limit_minus_headroom(monkeypatch):
+    """The 8 GB container that OOM-killed the wlo_max run: without a setting, the budget
+    is what the cgroup allows minus 15 % for the API, the interpreter and the allocator's
+    slack — 6.8 GiB of 8."""
+    monkeypatch.setattr(settings_mod, "memory_limit_bytes", lambda: 8 * GiB)
+    assert Settings().effective_train_memory_bytes() == int(8 * GiB * 0.85)
+
+
+def test_train_memory_budget_zero_disables_the_cap(monkeypatch):
+    monkeypatch.setattr(settings_mod, "memory_limit_bytes", lambda: 8 * GiB)
+    assert Settings(train_memory_mb=0).effective_train_memory_bytes() is None
+
+
+def test_train_memory_budget_without_a_container_limit_changes_nothing(monkeypatch):
+    """Bare metal, Windows, Docker without --memory: no limit known, no cap — the run
+    keeps every thread the CPU budget gives it, exactly as before."""
+    monkeypatch.setattr(settings_mod, "memory_limit_bytes", lambda: None)
+    assert Settings().effective_train_memory_bytes() is None
+
+
+def test_a_negative_train_memory_budget_is_refused():
+    with pytest.raises(ValidationError):
+        Settings(train_memory_mb=-1)
 
 
 def test_the_suite_never_writes_the_repositorys_own_state_files():

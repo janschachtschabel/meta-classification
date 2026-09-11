@@ -24,6 +24,8 @@ class ConfigResponse(BaseModel):
     n_jobs: int
     cpu_max_percent: int
     effective_n_jobs: int
+    train_memory_mb: int | None
+    effective_train_memory_mb: int | None
     tfidf_max_word_features: int
     tfidf_max_char_features: int
     max_models_in_memory: int

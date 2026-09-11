@@ -324,6 +324,14 @@ def test_config_endpoint_exposes_safe_fields_without_secrets(monkeypatch, tmp_pa
     assert "admin-key" not in resp.text and "ro-key" not in resp.text
 
 
+def test_config_reports_the_training_memory_budget_it_resolved(monkeypatch, tmp_path):
+    """Next to effective_n_jobs: the other number that decides how a run is shaped."""
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_TRAIN_MEMORY_MB="2048")
+    body = client.get("/config", headers=RO).json()
+    assert body["train_memory_mb"] == 2048
+    assert body["effective_train_memory_mb"] == 2048
+
+
 def test_content_security_policy_covers_app_and_self_hosted_docs(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path)
     csp = client.get("/health").headers.get("Content-Security-Policy", "")
@@ -357,6 +365,7 @@ def test_health_and_config_response_models_preserve_exact_keys(monkeypatch, tmp_
     assert config.status_code == 200, config.text
     assert set(config.json()) == {
         "n_jobs", "cpu_max_percent", "effective_n_jobs",
+        "train_memory_mb", "effective_train_memory_mb",
         "tfidf_max_word_features", "tfidf_max_char_features", "max_models_in_memory",
         "effective_max_models_in_memory",
         "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb",

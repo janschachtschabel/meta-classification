@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 
 from .. import __version__
 from ..jobs import job_runner
+from ..memory import MiB
 from ..registry import get_registry
 from ..responses import ConfigResponse, HealthResponse
 from ..security import require_role
@@ -69,13 +70,19 @@ async def config(
 ) -> dict:
     """Non-sensitive configuration including resource parameters (no API keys).
 
-    Includes ``n_jobs`` (CPU cores), the TF-IDF feature caps (RAM lever),
-    ``max_models_in_memory`` and the auth / rate-limit status. **Auth:** readonly.
+    Includes ``n_jobs`` (CPU cores), the training memory budget that bounds the head-fit
+    threads, the TF-IDF feature caps (RAM lever), ``max_models_in_memory`` and the
+    auth / rate-limit status. **Auth:** readonly.
     """
     return {
         "n_jobs": settings.n_jobs,
         "cpu_max_percent": settings.cpu_max_percent,
         "effective_n_jobs": settings.effective_n_jobs(),  # what training will actually use
+        "train_memory_mb": settings.train_memory_mb,
+        # Resolved (explicit value, or the container limit minus headroom); None = no cap.
+        "effective_train_memory_mb": (
+            budget // MiB if (budget := settings.effective_train_memory_bytes()) else None
+        ),
         "tfidf_max_word_features": settings.tfidf_max_word_features,
         "tfidf_max_char_features": settings.tfidf_max_char_features,
         "max_models_in_memory": settings.max_models_in_memory,

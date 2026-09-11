@@ -13,8 +13,15 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .memory import MiB, memory_limit_bytes
+
 # Anchor default paths to the api_v3 folder so the app works from any CWD.
 _BASE = Path(__file__).resolve().parent.parent
+
+# Share of a container's memory limit a training run may plan with when no explicit
+# budget is set. The rest is for the API serving alongside, the interpreter and the
+# allocator's slack; the head-fit thread factor is conservative on top of it.
+_TRAIN_MEMORY_SHARE = 0.85
 
 
 def _affinity_cpus() -> int | None:
@@ -140,6 +147,12 @@ class Settings(BaseSettings):
     # Default 60: training never occupies more than ~60% of the CPU, keeping the
     # API responsive and leaving headroom for other work. 100 disables the cap.
     cpu_max_percent: int = Field(60, ge=1, le=100)
+    # Memory budget for a training run, in MiB. Every concurrent head fit holds ~2.5x
+    # the feature matrix in solver buffers, so the budget bounds the head-fit threads:
+    # a run that would outgrow it trains with fewer threads (slower) instead of being
+    # OOM-killed. None = 85 % of the container's cgroup memory limit when there is
+    # one, otherwise no cap; 0 = no cap. Never changes the model, only the speed.
+    train_memory_mb: int | None = Field(None, ge=0)
     # TF-IDF vocabulary caps = the main RAM/quality lever. Lower = less RAM.
     tfidf_max_word_features: int = 80_000
     tfidf_max_char_features: int = 120_000
@@ -193,6 +206,18 @@ class Settings(BaseSettings):
         requested = self.n_jobs if self.n_jobs > 0 else max(1, cores + 1 + self.n_jobs)
         budget = max(1, (cores * self.cpu_max_percent) // 100)
         return max(1, min(requested, budget))
+
+    def effective_train_memory_bytes(self) -> int | None:
+        """Memory a training run may plan its head-fit threads with; None = no cap.
+
+        An explicit ``train_memory_mb`` wins (``0`` switches the cap off). Otherwise the
+        container's cgroup limit minus headroom — the limit the kernel enforces by
+        killing the process, which is exactly the failure this budget exists to avoid.
+        """
+        if self.train_memory_mb is not None:
+            return self.train_memory_mb * MiB if self.train_memory_mb > 0 else None
+        limit = memory_limit_bytes()
+        return int(limit * _TRAIN_MEMORY_SHARE) if limit is not None else None
 
     def ensure_dirs(self) -> None:
         """Create storage directories if they do not exist."""
