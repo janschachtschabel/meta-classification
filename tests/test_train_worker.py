@@ -131,6 +131,8 @@ def _run(tmp_path, settings: Settings | None = None, **kwargs) -> tuple[dict, Re
     settings, config = settings or _settings(tmp_path), _config()
     registry = _registry(settings)
     progress: list[dict] = []
+    # A child that never answers must fail this suite, not hang it.
+    kwargs.setdefault("kill_requested", _deadline(180))
     result = run_in_child(_request(), settings, config, config.get("fast"), registry,
                           on_progress=lambda **fields: progress.append(fields), **kwargs)
     return result, registry, progress
@@ -160,12 +162,16 @@ def test_a_stop_ends_the_child_run_without_a_model(tmp_path):
     assert not registry.exists("tiny_model") and not _staging(registry)
 
 
-def test_a_kill_ends_the_child_at_once(tmp_path):
+def test_a_kill_ends_the_child_at_once(tmp_path, monkeypatch):
+    """At once means the child hears the closed pipe and goes — not that the parent waits
+    out the grace period and kills it. With a grace of a minute, the run still ends in
+    seconds only if the child ended itself."""
+    monkeypatch.setattr(train_worker, "_EXIT_GRACE_SECONDS", 60)
     started = time.monotonic()
     result, registry, _ = _run(tmp_path, should_stop=lambda: False, kill_requested=lambda: True)
     assert result == {}
     assert not registry.exists("tiny_model") and not _staging(registry)
-    assert time.monotonic() - started < 30
+    assert time.monotonic() - started < 8
 
 
 def test_a_child_that_dies_without_an_answer_says_so(tmp_path, monkeypatch):
@@ -267,19 +273,34 @@ def _start_worker(tmp_path) -> subprocess.Popen:
     return child
 
 
+def _ended_alone(child: subprocess.Popen, within: float) -> None:
+    """The child ended by itself, promptly, with the end-of-input code."""
+    started = time.monotonic()
+    try:
+        assert child.wait(timeout=60) == 3
+        assert time.monotonic() - started < within
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_a_child_whose_parent_is_gone_ends_at_once(tmp_path):
+    """What an API process that died looks like from the child: its end of the pipe is
+    closed. Nothing else would stop a training nobody is waiting for any more."""
+    child = _start_worker(tmp_path)
+    child.stdin.close()
+    _ended_alone(child, within=10)
+
+
 def test_a_line_the_child_cannot_read_does_not_cost_it_its_stop_listener(tmp_path):
     """The stop listener is also what ends a child whose parent is gone. A line it cannot
     parse killed it, and the end of input that followed went unheard: the child trained
     on to the end (exit 0) instead of ending at once (exit 3)."""
     child = _start_worker(tmp_path)
-    try:
-        child.stdin.write("not a message\n")
-        child.stdin.close()
-        assert child.wait(timeout=60) == 3
-    finally:
-        if child.poll() is None:
-            child.kill()
-            child.wait()
+    child.stdin.write("not a message\n")
+    child.stdin.close()
+    _ended_alone(child, within=10)
 
 
 def test_a_child_killed_in_the_middle_of_a_line_still_says_why(tmp_path, monkeypatch):
@@ -331,6 +352,9 @@ def test_the_train_route_runs_a_training_in_a_child_process(tmp_path, monkeypatc
             status = client.get("/train/status").json()
         assert status["status"] == "completed", status
         assert "child_model" in client.get("/models").text
+        # Proof that the model came from a CHILD: an in-process run would have put it in
+        # the cache on the way past; a published bundle is loaded on first use.
+        assert get_registry().in_memory_count() == 0
     finally:
         get_settings.cache_clear()
         get_registry.cache_clear()
