@@ -1913,3 +1913,53 @@ def test_a_loosened_selection_tolerance_never_reaches_the_deploy_fit(tmp_path, m
     )
     assert selection and set(selection) == {1e-3}, f"the C search ignored it: {selection}"
     assert deployed == [None], f"the deploy fit was loosened too: {deployed}"
+
+
+def _bundle_bytes(registry: Registry, name: str) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in sorted((registry.dir / name).iterdir())}
+
+
+def test_save_never_replaces_an_existing_model_unless_told_to(tmp_path):
+    """save() used to rmtree whatever held the name, trusting /train to have
+    refused existing names -- but that check runs at SUBMIT time, and a model
+    imported while the run waited in the queue was destroyed by it later
+    (import accepted with the name queued: reproduced before this change)."""
+    import pytest
+
+    settings = _settings(tmp_path)
+    config = _config()
+    registry = _registry(settings)
+    run_training(_request(), settings, config, config.get("fast"), registry,
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+    before = _bundle_bytes(registry, "tiny_model")
+    model, metadata = registry.load_fresh("tiny_model")
+
+    with pytest.raises(FileExistsError):
+        registry.save("tiny_model", model, {**metadata, "marker": "second"})
+    assert _bundle_bytes(registry, "tiny_model") == before
+    assert not [p for p in registry.dir.iterdir() if p.name.startswith(".")], "no staging left"
+
+    registry.save("tiny_model", model, {**metadata, "marker": "second"}, overwrite=True)
+    assert registry.load_fresh("tiny_model")[1]["marker"] == "second"
+
+
+def test_a_training_whose_name_was_taken_while_queued_fails_before_training(tmp_path):
+    """The run re-checks at START: minutes of fitting for a save that must be
+    refused help nobody, and the reason has to reach the operator verbatim."""
+    import pytest
+
+    from app.errors import TrainingInputError
+
+    settings = _settings(tmp_path)
+    config = _config()
+    registry = _registry(settings)
+    run_training(_request(), settings, config, config.get("fast"), registry,
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+    before = _bundle_bytes(registry, "tiny_model")
+    progress: list[dict] = []
+
+    with pytest.raises(TrainingInputError, match="tiny_model"):
+        run_training(_request(), settings, config, config.get("fast"), registry,
+                     on_progress=lambda **kw: progress.append(kw), should_stop=lambda: False)
+    assert progress == [], "refused before any work started"
+    assert _bundle_bytes(registry, "tiny_model") == before

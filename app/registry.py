@@ -112,18 +112,27 @@ class Registry:
         model: ClassifierModel,
         metadata: dict,
         on_step: Callable[[str], None] = lambda _msg: None,
+        *,
+        overwrite: bool = False,
     ) -> None:
         """Write the bundle atomically: stage in a hidden tmp dir, then rename.
 
         A crash mid-write can only leave a hidden ``.name.tmp`` dir behind
-        (invisible to list()/exists()) — never a half-readable model. Overwriting
-        an existing name is NOT atomic (rmtree, then rename); acceptable because
-        /train refuses existing names — revisit if direct overwrite callers appear.
+        (invisible to list()/exists()) — never a half-readable model.
+
+        An existing bundle is replaced only with ``overwrite=True`` (the
+        label-pruning repair script); otherwise ``FileExistsError``, checked
+        before staging and again under the disk lock. /train refuses existing
+        names at SUBMIT time, which does not cover a model imported while the
+        run waited in the queue — trusting it let a queued run destroy that
+        import. Replacing is not atomic (rmtree, then rename).
 
         ``on_step`` is called with a short description before each sub-step; the
         training job routes it into progress updates so even a very slow save
         keeps emitting a liveness heartbeat.
         """
+        if not overwrite and self.exists(name):
+            raise FileExistsError(name)
         tmp = self._tmp_path(name)
         # Stage the (possibly multi-minute) skops dump WITHOUT the disk lock: the
         # tmp dir is uniquely named and invisible to readers (list()/exists() skip
@@ -135,6 +144,9 @@ class Registry:
         with self._disk_lock:
             target = self._path(name)
             if target.exists():
+                if not overwrite:  # appeared while we staged
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    raise FileExistsError(name)
                 shutil.rmtree(target)
             # Stepping again after the dumps marks them finished — otherwise a
             # stall here would be indistinguishable from one inside the last dump.

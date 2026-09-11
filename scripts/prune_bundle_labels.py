@@ -112,7 +112,8 @@ def prune(registry: Registry, name: str, *, apply: bool) -> bool:
     backup = registry.dir / f"{name}{_BACKUP_SUFFIX}"
     if not backup.exists():
         shutil.copytree(registry.dir / name, backup)
-    registry.save(name, model, metadata)
+    # Repairing a bundle in place is the one deliberate overwrite.
+    registry.save(name, model, metadata, overwrite=True)
     print(f"  written (backup: {backup.name})")
     return True
 

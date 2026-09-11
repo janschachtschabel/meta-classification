@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 
 from .classifier import ClassifierModel
 from .deploy import Fitted, fit_evaluate_deploy
+from .errors import TrainingInputError
 from .prepare import Prepared, prepare_data
 from .profiles import Profile, TrainingConfig
 from .registry import Registry
@@ -119,6 +120,14 @@ def run_training(
     imports — a second Registry instance would have its own locks and silently
     bypass that serialization.
     """
+    # /train refused the name when the run was SUBMITTED; a model imported while
+    # it waited in the queue now holds it. Refuse before minutes of fitting, with
+    # the reason (TrainingInputError reaches the operator verbatim).
+    if registry.exists(req["model_name"]):
+        raise TrainingInputError(
+            f"Model '{req['model_name']}' already exists — it was created while this training "
+            "was queued. Delete it or train under another name."
+        )
     start = time.time()
     # Most specific wins: request > profile > config. The profile carries the mode that
     # suits its size class, but an explicit request value still overrides it.

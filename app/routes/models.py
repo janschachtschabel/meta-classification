@@ -203,6 +203,11 @@ async def import_model(
     status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
     if status_busy or job_runner.active_model_name() == name:
         raise HTTPException(409, f"A training for model '{name}' is currently running; retry after it finishes.")
+    # A QUEUED run holds the name too: it was accepted first, and the import
+    # would make it fail when its turn comes.
+    if name in job_runner.queued_names():
+        raise HTTPException(409, f"A training for model '{name}' is queued; retry after it finishes, "
+                                 "or import under another name.")
     data = await read_upload_capped(file, settings.max_upload_mb * 1024 * 1024)
     try:
         # Validation loads both skops files — seconds of CPU; off the event loop.

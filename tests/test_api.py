@@ -425,6 +425,38 @@ def test_import_rejected_while_training_same_name():
         job_runner.update(status="idle", model_name=None)
 
 
+def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
+    """The running check above missed the queue: an import under a name that a
+    queued training will save was accepted (reproduced before this change), and
+    that training would later have replaced it."""
+    import threading
+
+    from app.jobs import job_runner
+
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    started, release = threading.Event(), threading.Event()
+
+    def blocker(**_):
+        started.set()
+        release.wait(30)
+
+    job_runner.submit(blocker, model_name="queue_blocker")
+    try:
+        assert started.wait(5)
+        assert job_runner.submit(lambda **_: None, model_name="queued_import") == 1
+        files = {"file": ("q.zip", bundle, "application/zip")}
+        response = client.post("/models/import", files=files, data={"new_name": "queued_import"},
+                               headers=ADMIN)
+        assert response.status_code == 409
+        assert "queued" in response.json()["detail"]
+    finally:
+        release.set()
+        deadline = time.time() + 10
+        while (job_runner.is_running() or job_runner.queued_names()) and time.time() < deadline:
+            time.sleep(0.05)
+    assert "queued_import" not in client.get("/models", headers=RO).text
+
+
 def test_datasets_endpoints():
     listing = client.get("/datasets", headers=RO)
     assert listing.status_code == 200
