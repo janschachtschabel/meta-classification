@@ -36,6 +36,10 @@ CHUNK_ROWS = 20_000
 # 2**24 occurrences of one term; past that, exact integer counts could break a tie
 # differently. Such a fit is handed back to the reference instead.
 _EXACT_TF_LIMIT = 2**24
+# Entries per pass-2 block. Its temporaries (row numbers, sort order, masks: ~40 bytes an
+# entry) stay near 40 MB however long the documents are — 20 000 rows of char 5-grams
+# are 5.6 M entries, and blocks that size cost ~250 MB of scratch at 100k rows.
+_BLOCK_ENTRIES = 1 << 20
 
 
 @dataclass
@@ -114,38 +118,56 @@ def select_terms(
     return [terms[i] for i in kept], first_seen[kept]
 
 
+def _row_blocks(indptr: np.ndarray, max_rows: int) -> list[tuple[int, int]]:
+    """Consecutive row ranges of at most ``max_rows`` rows and ``_BLOCK_ENTRIES`` entries
+    (a single longer row still makes a block of its own)."""
+    n_rows, blocks, start = len(indptr) - 1, [], 0
+    while start < n_rows:
+        fits = int(np.searchsorted(indptr, indptr[start] + _BLOCK_ENTRIES, side="right")) - 1
+        stop = min(max(fits, start + 1), start + max_rows, n_rows)
+        blocks.append((start, stop))
+        start = stop
+    return blocks
+
+
 def _kept_counts(counted: TermCounts, first_seen: np.ndarray, dtype: type,
                  chunk_rows: int) -> sp.csr_matrix:
     """Pass 2: the kept terms' counts, laid out exactly like the reference's matrix —
-    each row's entries by first-seen id, columns numbered alphabetically."""
+    each row's entries by first-seen id, columns numbered alphabetically.
+
+    In place: the kept entries overwrite pass 1's arrays front to back — a block never
+    writes past its own start, and reads all it needs before it writes — so no second
+    set of arrays is allocated. The result therefore sits in buffers sized for the
+    un-pruned entries, and ``counted`` is used up.
+    """
     column_of_id = np.full(counted.n_terms, -1, dtype=np.intc)
     column_of_id[first_seen] = np.arange(len(first_seen), dtype=np.intc)
-    n_rows = len(counted.indptr) - 1
+    source = counted.indptr
+    n_rows = len(source) - 1
     indptr = np.zeros(n_rows + 1, dtype=np.int64)
-
-    def block(start: int, stop: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        lo, hi = counted.indptr[start], counted.indptr[stop]
-        columns = column_of_id[counted.ids[lo:hi]]
-        keep = columns >= 0
-        rows = np.repeat(np.arange(start, stop), np.diff(counted.indptr[start:stop + 1]))[keep]
-        return rows, keep, columns
-
-    # Two sweeps so the output is allocated once, at its final size: count, then fill.
-    for start in range(0, n_rows, chunk_rows):
-        stop = min(start + chunk_rows, n_rows)
-        rows, _keep, _columns = block(start, stop)
-        indptr[start + 1:stop + 1] = np.bincount(rows - start, minlength=stop - start)
+    blocks = _row_blocks(source, chunk_rows)
+    for start, stop in blocks:  # sweep 1: how many entries each row keeps
+        kept = column_of_id[counted.ids[source[start]:source[stop]]] >= 0
+        rows = np.repeat(np.arange(stop - start), np.diff(source[start:stop + 1]))
+        indptr[start + 1:stop + 1] = np.bincount(rows[kept], minlength=stop - start)
     np.cumsum(indptr, out=indptr)
-    indices = np.empty(indptr[-1], dtype=np.intc)
-    data = np.empty(indptr[-1], dtype=dtype)
-    for start in range(0, n_rows, chunk_rows):
-        stop = min(start + chunk_rows, n_rows)
-        rows, keep, columns = block(start, stop)
-        lo, hi = counted.indptr[start], counted.indptr[stop]
-        order = np.lexsort((counted.ids[lo:hi][keep], rows))  # by row, then first-seen id
-        indices[indptr[start]:indptr[stop]] = columns[keep][order]
-        data[indptr[start]:indptr[stop]] = counted.counts[lo:hi][keep][order]
-    return sp.csr_matrix((data, indices, indptr), shape=(n_rows, len(first_seen)))
+    indices = counted.ids
+    # float32 data fits the int32 count buffer it replaces; any other width gets its own.
+    in_place = np.dtype(dtype).itemsize == counted.counts.itemsize
+    data = counted.counts.view(dtype) if in_place else np.empty(indptr[-1], dtype=dtype)
+    for start, stop in blocks:  # sweep 2: write them, front to back
+        lo, hi = source[start], source[stop]
+        ids = counted.ids[lo:hi]
+        columns = column_of_id[ids]
+        kept = columns >= 0
+        rows = np.repeat(np.arange(stop - start), np.diff(source[start:stop + 1]))[kept]
+        order = np.lexsort((ids[kept], rows))  # by row, then first-seen id
+        values = counted.counts[lo:hi][kept][order]  # copies, taken before the writes
+        kept_columns = columns[kept][order]
+        indices[indptr[start]:indptr[stop]] = kept_columns
+        data[indptr[start]:indptr[stop]] = values
+    nnz = int(indptr[-1])
+    return sp.csr_matrix((data[:nnz], indices[:nnz], indptr), shape=(n_rows, len(first_seen)))
 
 
 def fit_transform_exact(
@@ -158,6 +180,10 @@ def fit_transform_exact(
     ``use_idf=False``, an inverted ``ngram_range`` — and a term counted past float32
     precision go to the reference unchanged. Invalid input fails with the reference's
     own errors.
+
+    The matrix may sit in buffers sized for the UN-pruned entries (pass 2 works in
+    place): a caller that keeps it for long copies it, which ``TfidfBackend`` does or
+    merges it into a fresh matrix anyway.
     """
     low_n, high_n = vec.ngram_range
     if (vec.vocabulary is not None or vec.binary or not vec.use_idf or low_n > high_n

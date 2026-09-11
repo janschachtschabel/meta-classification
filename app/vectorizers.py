@@ -119,9 +119,12 @@ class TfidfBackend:
         return merge_columns(word, transform_chunked(self.char_vec, texts))
 
     def fit_transform(self, texts: list[str]):
-        # One after the other, each in two passes — see the module docstring.
+        # One after the other, each in two passes — see the module docstring. The copy
+        # sizes the word matrix to its entries: the two-pass fit leaves it in buffers
+        # sized for every n-gram (a third more at 100k rows), and it outlives the whole
+        # char fit. The char matrix needs no copy — merge_columns builds a fresh one.
         self.word_vec = self._make("word", self.word_ngram, self.max_word_features)
-        word = fit_transform_exact(self.word_vec, texts)
+        word = fit_transform_exact(self.word_vec, texts).copy()
         if not self.use_char:
             self.char_vec = None
             return word.tocsr()
