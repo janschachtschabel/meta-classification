@@ -1987,3 +1987,41 @@ def test_deleting_a_model_forgets_every_spelling_it_was_cached_under(tmp_path):
     registry.delete("tiny_model")
     with pytest.raises(FileNotFoundError):
         registry.get("TINY_MODEL")
+
+
+def test_the_label_pruning_script_repairs_a_bundle_end_to_end(tmp_path):
+    """scripts/prune_bundle_labels.py rewrites an EXISTING bundle -- the one
+    deliberate overwrite now that registry.save refuses existing names by
+    default. Nothing ran that path end to end: without its overwrite=True every
+    repair would die with FileExistsError. Training filters container labels
+    now, so the test plants one the way an old bundle carries it, then repairs."""
+    import importlib.util
+
+    settings = _settings(tmp_path)
+    config = _config()
+    registry = _registry(settings)
+    # Multilabel: the script proves kept columns unchanged, which only holds when
+    # every class has its own independent probability column.
+    run_training({**_request(), "task_type": "multilabel"}, settings, config, config.get("fast"), registry,
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+    model, metadata = registry.load_fresh("tiny_model")
+    old, container = model.classes[0], "uri:vocab/"  # a trailing "/" names a namespace
+    model.classes = [container if c == old else c for c in model.classes]
+    per_label = (metadata.get("metrics") or {}).get("per_label_f1") or {}
+    for mapping in (model.uri_to_label, model.per_label_thresholds, model.per_label_f1, per_label):
+        if old in mapping:
+            mapping[container] = mapping.pop(old)
+    registry.save("tiny_model", model, metadata, overwrite=True)
+
+    spec = importlib.util.spec_from_file_location(
+        "prune_bundle_labels", Path(__file__).resolve().parents[1] / "scripts" / "prune_bundle_labels.py")
+    assert spec is not None and spec.loader is not None
+    prune_script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prune_script)
+
+    assert prune_script.prune(registry, "tiny_model", apply=True) is True
+    repaired, repaired_meta = registry.load_fresh("tiny_model")
+    assert container not in repaired.classes
+    assert len(repaired.classes) == len(model.classes) - 1
+    assert container not in repaired_meta["metrics"]["per_label_f1"]
+    assert (registry.dir / "tiny_model.prebackup").exists(), "the pre-repair copy is kept"
