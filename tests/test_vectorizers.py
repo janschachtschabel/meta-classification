@@ -10,10 +10,12 @@ import threading
 import time
 
 import numpy as np
-from scipy.sparse import hstack
+import pytest
+from scipy.sparse import csr_matrix, hstack
+from scipy.sparse import random as sparse_random
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from app.vectorizers import TfidfBackend
+from app.vectorizers import TfidfBackend, merge_columns
 
 WORDS = ["Bruchrechnung", "Gleichung", "Geometrie", "Dreieck", "Fläche", "Römer", "Antike",
          "Kaiser", "Reich", "Photosynthese", "Zelle", "Pflanze", "Energie", "Strom", "Spannung",
@@ -23,8 +25,10 @@ TEXTS = [" ".join(WORDS[(i * 7 + j * 3) % len(WORDS)] for j in range(5 + i % 6))
 
 
 def _same_arrays(a, b) -> bool:
-    return (a.shape == b.shape and a.dtype == b.dtype
+    """Same shape, and the same data/indices/indptr arrays — values, dtypes, stored order."""
+    return (a.shape == b.shape
             and all(np.array_equal(getattr(a, name), getattr(b, name))
+                    and getattr(a, name).dtype == getattr(b, name).dtype
                     for name in ("data", "indices", "indptr")))
 
 
@@ -75,6 +79,34 @@ def test_the_word_only_profile_builds_the_word_matrix_alone():
     word = TfidfBackend()._make("word", (1, 2), 40).fit_transform(TEXTS)
     assert backend.char_vec is None
     assert _same_arrays(matrix, word.tocsr())
+
+
+def _scrambled(matrix, rng):
+    """The same CSR matrix with every row's entries in random stored order — the shape of
+    a training matrix, whose rows are in first-seen order, not sorted."""
+    matrix = matrix.tocsr()
+    order = np.concatenate([
+        rng.permutation(np.arange(matrix.indptr[r], matrix.indptr[r + 1]))
+        for r in range(matrix.shape[0])
+    ] or [np.empty(0, dtype=np.intp)]).astype(np.intp)
+    return csr_matrix((matrix.data[order], matrix.indices[order], matrix.indptr),
+                      shape=matrix.shape)
+
+
+@pytest.mark.parametrize(("rows", "left_cols", "right_cols", "density"), [
+    (60, 30, 45, 0.15), (9, 5, 3, 0.0), (1, 1, 1, 1.0), (40, 20, 10, 0.4), (0, 4, 6, 0.5),
+])
+def test_merging_columns_is_scipys_hstack_array_for_array(rows, left_cols, right_cols, density):
+    """scipy's hstack holds both inputs, a concatenated copy of their arrays AND the
+    result (3x the matrix: +994 MB peak at 100k rows); the merge writes each row block
+    straight into the result. It must build the very same arrays — stored order too."""
+    rng = np.random.default_rng(rows + left_cols)
+    left = _scrambled(sparse_random(rows, left_cols, density=density, format="csr",
+                                    dtype=np.float32, random_state=rng), rng)
+    right = _scrambled(sparse_random(rows, right_cols, density=density, format="csr",
+                                     dtype=np.float32, random_state=rng), rng)
+    assert _same_arrays(merge_columns(left, right, block_rows=7),
+                        hstack([left, right], format="csr"))
 
 
 def test_fit_transform_fits_both_vocabularies_in_two_passes_one_after_the_other(monkeypatch):
