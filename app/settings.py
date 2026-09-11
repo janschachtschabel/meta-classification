@@ -154,6 +154,11 @@ class Settings(BaseSettings):
     # OOM-killed. "auto" (default) = 85 % of the container's cgroup memory limit when
     # there is one, otherwise no cap; 0 = no cap. Never changes the model, only the speed.
     train_memory_mb: Annotated[int, Field(ge=0)] | Literal["auto"] = "auto"
+    # Where a training runs. "process" (default): in a child process — every byte of it
+    # goes back to the OS when it ends, and an OOM kill ends the run instead of the API.
+    # "thread": inside the API process (no interpreter start per run; what the unit
+    # suite uses).
+    training_isolation: Literal["process", "thread"] = "process"
     # TF-IDF vocabulary caps = the main RAM/quality lever. Lower = less RAM.
     tfidf_max_word_features: int = 80_000
     tfidf_max_char_features: int = 120_000

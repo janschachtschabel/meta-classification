@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import job_history
@@ -13,6 +15,7 @@ from ..responses import TrainStartedResponse, TrainStopResponse
 from ..schemas import TrainRequest
 from ..security import require_role, safe_name
 from ..settings import Settings, get_settings
+from ..train_worker import run_in_child
 from ..training import run_training
 
 router = APIRouter(tags=["Training"])
@@ -131,11 +134,16 @@ async def train(
     # Not in _REQ_KEYS: it is a nested model, and the pipeline stores plain JSON.
     # exclude_none keeps the bundle from claiming fields the caller left unset.
     req["info"] = body.info.model_dump(exclude_none=True) if body.info else None
+    # In a child process by default (settings.training_isolation): a hard stop ends the
+    # child at once, which a thread cannot offer.
+    target = (run_training if settings.training_isolation == "thread"
+              else partial(run_in_child, kill_requested=job_runner.hard_stop_requested))
     try:
         # The singleton registry is injected so the training save shares its disk
-        # lock with every API-side registry operation.
+        # lock with every API-side registry operation — in process mode it is the one
+        # that publishes what the child staged.
         position = job_runner.submit(
-                           run_training, req, settings, cfg, profile, get_registry(),
+                           target, req, settings, cfg, profile, get_registry(),
                            model_name=body.model_name,
                            # Everything but the documentation block: `info` is what the
                            # model says about itself, not a parameter of the run.

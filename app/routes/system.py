@@ -83,6 +83,7 @@ async def config(
         "effective_train_memory_mb": (
             budget // MiB if (budget := settings.effective_train_memory_bytes()) else None
         ),
+        "training_isolation": settings.training_isolation,
         "tfidf_max_word_features": settings.tfidf_max_word_features,
         "tfidf_max_char_features": settings.tfidf_max_char_features,
         "max_models_in_memory": settings.max_models_in_memory,

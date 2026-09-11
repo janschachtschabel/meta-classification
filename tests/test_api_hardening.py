@@ -332,6 +332,11 @@ def test_config_reports_the_training_memory_budget_it_resolved(monkeypatch, tmp_
     assert body["effective_train_memory_mb"] == 2048
 
 
+def test_config_says_where_a_training_runs(monkeypatch, tmp_path):
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_TRAINING_ISOLATION="process")
+    assert client.get("/config", headers=RO).json()["training_isolation"] == "process"
+
+
 def test_config_says_auto_where_the_budgets_are_automatic(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path)
     body = client.get("/config", headers=RO).json()
@@ -373,7 +378,7 @@ def test_health_and_config_response_models_preserve_exact_keys(monkeypatch, tmp_
     assert config.status_code == 200, config.text
     assert set(config.json()) == {
         "n_jobs", "cpu_max_percent", "effective_n_jobs",
-        "train_memory_mb", "effective_train_memory_mb",
+        "train_memory_mb", "effective_train_memory_mb", "training_isolation",
         "tfidf_max_word_features", "tfidf_max_char_features", "max_models_in_memory",
         "effective_max_models_in_memory",
         "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb",

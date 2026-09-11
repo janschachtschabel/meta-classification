@@ -22,6 +22,10 @@ for _var in [k for k in os.environ if k.startswith("APIV3_")]:
     del os.environ[_var]
 os.environ["APIV3_CORS_ALLOW_ORIGINS"] = ""
 os.environ["APIV3_RATE_LIMIT_ENABLED"] = "true"
+# Trainings through /train run in-process for the suite: an interpreter start per run
+# adds seconds, and tests patch the pipeline in THIS process. tests/test_train_worker.py
+# covers the child-process path the shipped default takes.
+os.environ["APIV3_TRAINING_ISOLATION"] = "thread"
 # Any JobRunner a test constructs writes its outcome to the configured history file.
 # Without this the suite appends to the developer's REAL one — found by reading that
 # file after a live run and seeing "first", "second", "third" in it.

@@ -181,6 +181,15 @@ def test_numbers_still_set_both_budgets(monkeypatch):
     assert settings.effective_train_memory_bytes() == 6000 * 1024**2
 
 
+def test_a_training_runs_in_a_child_process_unless_configured_otherwise():
+    """The process that serves requests should never hold a training's memory. The
+    suite pins "thread" (conftest) for speed; the shipped default is the child process."""
+    assert Settings.model_fields["training_isolation"].default == "process"
+    assert Settings(training_isolation="thread").training_isolation == "thread"
+    with pytest.raises(ValidationError):
+        Settings(training_isolation="fork")
+
+
 def test_the_suite_never_writes_the_repositorys_own_state_files():
     """conftest redirects the job history and the feedback store to a scratch
     dir, but not the share store: after a run, the developer's real

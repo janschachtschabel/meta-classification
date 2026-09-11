@@ -1,0 +1,250 @@
+"""Run one training in a child process: a JSON job spec in, JSON lines out.
+
+A training in a thread of the API process leaves its memory with the process that serves
+requests (the allocator returns little of it to the OS), and an OOM kill takes the API
+down with it. In a child process every byte goes back when the run ends, and a kill ends
+the run, not the server: the job fails with a reason instead of the container restarting.
+
+``subprocess`` and JSON rather than ``multiprocessing``: nothing is pickled, and the
+same code runs on Windows and Linux. The protocol, one JSON object per line:
+
+    stdin  -> {"job": {...}}         the first line: request, settings, config, profile
+    stdin  -> {"stop": true}         later: stop at the next checkpoint
+    stdout <- {"progress": {...}}    every progress update of the run
+    stdout <- {"done": {"result": {...}, "staged": true|false}}
+    stdout <- {"failed": {"message": "...", "user_facing": true|false}}
+
+The child writes the bundle into the registry's hidden staging directory only; the
+parent publishes it under its OWN disk lock, so the one-lock rule of ``registry.py``
+holds across the process boundary. End of stdin means the parent is gone or wants the
+run dead: the child exits at once. Its log goes to the inherited stderr.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import logging
+import os
+import queue
+import subprocess
+import sys
+import threading
+from collections.abc import Callable
+from pathlib import Path
+from typing import IO, Any
+
+from .classifier import ClassifierModel
+from .errors import TrainingInputError, TrainingProcessError
+from .profiles import Profile, TrainingConfig
+from .registry import Registry
+from .settings import Settings
+
+logger = logging.getLogger("api_v3.jobs")
+
+# Never sent to the child: it trains and saves, it authenticates nobody.
+SECRET_SETTINGS = frozenset({"api_key_admin", "api_key_readonly"})
+# How long a stopped child may take to exit before it is killed outright.
+_EXIT_GRACE_SECONDS = 10
+# Where `python -m app.train_worker` resolves the package from.
+_APP_ROOT = Path(__file__).resolve().parent.parent
+
+
+def job_spec(req: dict, settings: Settings, training_cfg: TrainingConfig, profile: Profile) -> dict:
+    """Everything a child needs to run ``run_training`` as the parent would have."""
+    return {
+        "req": req,
+        "settings": settings.model_dump(mode="json", exclude=set(SECRET_SETTINGS)),
+        "training_config": dataclasses.asdict(training_cfg),
+        "profile": dataclasses.asdict(profile),
+    }
+
+
+def read_job(spec: dict) -> tuple[dict, Settings, TrainingConfig, Profile]:
+    """The inverse of :func:`job_spec`, in the child."""
+    config = dict(spec["training_config"])
+    config["profiles"] = {name: Profile(**fields) for name, fields in config["profiles"].items()}
+    return (spec["req"], Settings(**spec["settings"]), TrainingConfig(**config),
+            Profile(**spec["profile"]))
+
+
+class _StagingRegistry(Registry):
+    """``run_training``'s registry in the child: it saves by staging only."""
+
+    staged = False
+
+    def save(self, name: str, model: ClassifierModel, metadata: dict,
+             on_step: Callable[[str], None] = lambda _msg: None, *,
+             overwrite: bool = False) -> None:
+        self.stage(name, model, metadata, on_step, overwrite=overwrite)
+        self.staged = True
+
+
+def serve(spec: dict, emit: Callable[[dict], None], should_stop: Callable[[], bool]) -> int:
+    """The child's work: run the job, report it through ``emit``. Returns the exit code."""
+    from .training import run_training  # the heavy imports belong to the child only
+
+    try:
+        req, settings, training_cfg, profile = read_job(spec)
+        registry = _StagingRegistry(settings.models_dir, settings.max_models_in_memory)
+        result = run_training(req, settings, training_cfg, profile, registry,
+                              on_progress=lambda **fields: emit({"progress": fields}),
+                              should_stop=should_stop)
+    except TrainingInputError as exc:
+        emit({"failed": {"message": str(exc), "user_facing": True}})
+        return 1
+    except Exception:  # noqa: BLE001 - reported, logged, and never with its text
+        logger.exception("Training in the child process failed")
+        emit({"failed": {"message": "Training failed; see server logs for details.",
+                         "user_facing": False}})
+        return 1
+    emit({"done": {"result": result, "staged": registry.staged}})
+    return 0
+
+
+def main() -> int:
+    """Child entry point (``python -m app.train_worker``)."""
+    # The protocol owns the real stdout. Anything else a library prints — at Python or at
+    # C level — goes to stderr instead of corrupting a line the parent is parsing.
+    protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = sys.stderr
+    first = sys.stdin.readline()
+    if not first:
+        return 3  # the parent went away before sending the job
+    spec = json.loads(first)["job"]
+    # Upper-cased like main.py does: `logging` refuses "info", and the child would die
+    # before its first line over a spelling the server accepts.
+    logging.basicConfig(level=str(spec["settings"].get("log_level", "INFO")).upper(),
+                        format="%(asctime)s %(levelname)s [train-worker] %(name)s: %(message)s")
+    stop = threading.Event()
+
+    def listen() -> None:
+        for line in sys.stdin:
+            if json.loads(line).get("stop"):
+                stop.set()
+        os._exit(3)  # stdin closed: the parent is gone or wants this run dead — now
+
+    threading.Thread(target=listen, name="stop-listener", daemon=True).start()
+    lock = threading.Lock()
+
+    def emit(message: dict) -> None:
+        with lock:  # progress can come from the sampler-side threads of the run
+            protocol.write(json.dumps(message) + "\n")
+
+    # This process' own id — on Windows the parent's Popen may only know a venv
+    # launcher — so the status can read the training's live memory.
+    emit({"progress": {"worker_pid": os.getpid()}})
+    code = serve(spec, emit, stop.is_set)
+    protocol.flush()
+    return code
+
+
+def _worker_command() -> list[str]:
+    return [sys.executable, "-m", "app.train_worker"]
+
+
+def run_in_child(
+    req: dict,
+    settings: Settings,
+    training_cfg: TrainingConfig,
+    profile: Profile,
+    registry: Registry,
+    *,
+    on_progress: Callable[..., None],
+    should_stop: Callable[[], bool],
+    kill_requested: Callable[[], bool] = lambda: False,
+) -> dict:
+    """``run_training`` in a child process, for the job runner: same arguments, same
+    result, same exceptions — plus ``kill_requested``, which ends the child at once."""
+    name = req["model_name"]
+    child = subprocess.Popen(_worker_command(), cwd=_APP_ROOT, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, text=True, encoding="utf-8")
+    outcome: dict[str, Any] = {}
+    try:
+        # A child that died on start cannot take the job; its exit code says why below.
+        _send(child.stdin, {"job": job_spec(req, settings, training_cfg, profile)})
+        outcome = _relay(child, on_progress, should_stop, kill_requested)
+    finally:
+        _close(child.stdin)
+        try:
+            code = child.wait(timeout=_EXIT_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            code = child.wait()
+    if "done" in outcome:
+        if outcome["done"]["staged"]:
+            registry.publish(name, on_step=lambda detail: on_progress(phase_detail=detail))
+        return outcome["done"]["result"]
+    registry.discard_staged(name)
+    if "failed" in outcome:
+        failed = outcome["failed"]
+        if failed["user_facing"]:
+            raise TrainingInputError(failed["message"])
+        raise RuntimeError("the training process failed; its traceback is in the log")
+    if kill_requested():
+        return {}
+    raise TrainingProcessError(
+        f"The training process ended without a result (exit code {code}). An exit by "
+        "signal 9 (-9 or 137) is almost always the out-of-memory killer: lower "
+        "APIV3_TRAIN_MEMORY_MB or give the container more memory."
+    )
+
+
+def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
+           should_stop: Callable[[], bool], kill_requested: Callable[[], bool]) -> dict:
+    """Forward the child's progress, pass a stop on, end it on a kill; return its outcome."""
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def pump(stream: IO[str]) -> None:
+        for line in stream:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=pump, args=(child.stdout,), name="child-stdout", daemon=True).start()
+    stop_sent = False
+    while True:
+        if kill_requested():
+            return {}
+        if not stop_sent and should_stop():
+            _send(child.stdin, {"stop": True})
+            stop_sent = True
+        try:
+            line = lines.get(timeout=0.25)
+        except queue.Empty:
+            continue
+        if line is None:
+            return {}  # the child is gone without a word: its exit code tells the rest
+        try:
+            message = json.loads(line)
+        except ValueError:
+            # Half a line: the child was killed mid-write (the OOM killer does not wait
+            # for a newline). What comes next is end of output and the exit code.
+            logger.warning("Training process sent an incomplete line; ignoring it.")
+            continue
+        if "progress" in message:
+            on_progress(**message["progress"])
+        elif "done" in message or "failed" in message:
+            return message
+
+
+def _send(stream: IO[str] | None, message: dict) -> None:
+    if stream is None:
+        return
+    try:
+        stream.write(json.dumps(message) + "\n")
+        stream.flush()
+    except (OSError, ValueError):  # the child already exited and closed its end
+        pass
+
+
+def _close(stream: IO[str] | None) -> None:
+    try:
+        if stream is not None:
+            stream.close()
+    except OSError:
+        pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())
