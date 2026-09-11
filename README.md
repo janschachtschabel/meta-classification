@@ -505,7 +505,7 @@ For Prometheus, `GET /metrics` exposes operational gauges (uptime, models on dis
 
 See [`.env.example`](.env.example) for a ready-to-copy sample and [`docs/configuration.md`](docs/configuration.md) for the **complete reference** — every `APIV3_*` variable with its default, the `config.yaml` training options, per-request overrides, and quick setups for local (no auth) and production.
 
-**Memory:** features are sparse + float32 throughout; intermediate matrices are released (`del`), and the matrix size (`dims`, `nnz`, MB) is logged during training. The solver matters: the default **`newton-cg` keeps float32**, so under the `threading` backend all cores share **one** matrix (no per-core copy, ~1× RAM). `lbfgs`/`liblinear` upcast to float64 per fit (≈2× the matrix).
+**Memory:** features are sparse + float32 throughout; intermediate matrices are released (`del`), and the matrix size (`dims`, `nnz`, MB) is logged during training. The solver matters: the default **`newton-cg` keeps float32**, so under the `threading` backend all cores share **one** matrix (no per-core copy, ~1× RAM). `lbfgs`/`liblinear` upcast to float64 per fit (≈2× the matrix). `scripts/benchmark_training_memory.py` measures the peak and retained RSS of every pipeline step, each in a process of its own.
 
 **On 8 GB / large data:** thanks to the float32 solver + shared matrix, even large datasets run on **all cores**. Measured (15k rows, 200k dims): `newton-cg`/`threading` `n_jobs=8` ≈ **13 s** at ~1 GB fit RAM and F1 micro 0.81 — `lbfgs` (float64) needs ~4 GB for the same fit. For several 100k rows, the `fast` profile (word-only) shrinks the matrix further — see [sizing](#how-large-a-dataset-does-this-handle) for what that costs in robustness.
 
