@@ -2,6 +2,36 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — reused names (2026-09-11)
+
+A check for problems with reused model and dataset names found three, each reproduced
+through the API before it was fixed, plus one test-isolation leak. Creating under an
+existing name was already refused with 409 everywhere; what went wrong was what still
+hung on a name after its owner was gone, or before it arrived.
+
+### Fixed
+
+- **A share link outlived its model or dataset.** A link names its resource, not a
+  version of it: deleted and re-imported under the same name, the old link handed out the
+  new file to whoever held it. Deleting a model or dataset now revokes every link to it,
+  matched case-insensitively.
+- **A queued training could destroy a model imported under its name.** `/train` checks
+  the name when a run is submitted; the import route refused a name that was training,
+  not one waiting in the queue, and `registry.save` then rmtree'd the import when the
+  run's turn came. The import refuses queued names (409), the run re-checks at start and
+  fails before fitting with a message the operator sees, and `save` replaces a bundle only
+  with `overwrite=True` (the label-pruning repair script, the one deliberate overwrite).
+- **On Windows a case-variant name kept serving a deleted model.** `/predict` with
+  `model_name="M"` finds the bundle `m` and caches it under `M`; deleting `m` left that
+  entry, so after a retrain `M` still answered with the old weights. Deleting now drops
+  every cache key that names the bundle.
+
+### Tests
+
+- The suite no longer writes into the developer's real `share_links.json` (three live
+  links to the test model `odd_metrics` were found there); a test pins that every file the
+  app appends to at runtime points outside the repository during the suite.
+
 ## [3.2.0] — 2026-09-10
 
 ### Fixed — three layout faults in the admin UI
