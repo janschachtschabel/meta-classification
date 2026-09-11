@@ -142,10 +142,9 @@ def row_blocks(indptr: np.ndarray, max_rows: int) -> list[tuple[int, int]]:
     return blocks
 
 
-def _kept_counts(counted: TermCounts, first_seen: np.ndarray, dtype: type,
-                 chunk_rows: int) -> sp.csr_matrix:
-    """Pass 2: the kept terms' counts, laid out exactly like the reference's matrix —
-    each row's entries by first-seen id, columns numbered alphabetically.
+def _kept_counts(counted: TermCounts, first_seen: np.ndarray, chunk_rows: int) -> sp.csr_matrix:
+    """Pass 2: the kept terms' float32 counts, laid out exactly like the reference's
+    matrix — each row's entries by first-seen id, columns numbered alphabetically.
 
     In place: the kept entries overwrite pass 1's arrays front to back — a block never
     writes past its own start, and reads all it needs before it writes — so no second
@@ -164,9 +163,7 @@ def _kept_counts(counted: TermCounts, first_seen: np.ndarray, dtype: type,
         indptr[start + 1:stop + 1] = np.bincount(rows[kept], minlength=stop - start)
     np.cumsum(indptr, out=indptr)
     indices = counted.ids
-    # float32 data fits the int32 count buffer it replaces; any other width gets its own.
-    in_place = np.dtype(dtype).itemsize == counted.counts.itemsize
-    data = counted.counts.view(dtype) if in_place else np.empty(indptr[-1], dtype=dtype)
+    data = counted.counts.view(np.float32)  # the int32 count buffer it replaces, same width
     for start, stop in blocks:  # sweep 2: write them, front to back
         lo, hi = source[start], source[stop]
         ids = counted.ids[lo:hi]
@@ -189,9 +186,10 @@ def fit_transform_exact(
     ``vec.fit_transform(texts)`` produces, array for array, at a fraction of its peak.
 
     Configurations this codebase never builds — a preset vocabulary, ``binary``,
-    ``use_idf=False``, an inverted ``ngram_range`` — and a term counted past float32
-    precision go to the reference unchanged. Invalid input fails with the reference's
-    own errors.
+    ``use_idf=False``, an inverted ``ngram_range``, any ``dtype`` but float32 (the
+    reference ranks terms by sums in the matrix's own dtype, and how argsort orders equal
+    values depends on the dtype) — and a term counted past float32 precision go to the
+    reference unchanged. Invalid input fails with the reference's own errors.
 
     The matrix may sit in buffers sized for the UN-pruned entries (pass 2 works in
     place): a caller that keeps it for long copies it, which ``TfidfBackend`` does or
@@ -199,10 +197,11 @@ def fit_transform_exact(
     """
     low_n, high_n = vec.ngram_range
     if (vec.vocabulary is not None or vec.binary or not vec.use_idf or low_n > high_n
-            or isinstance(texts, str)):
+            or np.dtype(vec.dtype) != np.float32 or isinstance(texts, str)):
         return vec.fit_transform(texts)
     # What the reference's @_fit_context runs before it fits: its parameter constraints.
     vec._validate_params()
+    vec._validate_vocabulary()  # as the reference does before counting: fixed_vocabulary_
     counted = count_terms(vec.build_analyzer(), texts)
     if not counted.index:
         raise ValueError("empty vocabulary; perhaps the documents only contain stop words")
@@ -225,13 +224,16 @@ def fit_transform_exact(
     vocabulary = {joined[start:end]: column
                   for column, (start, end) in enumerate(zip([0, *ends[:-1]], ends, strict=True))}
     del joined
-    counts = _kept_counts(counted, first_seen, vec.dtype, chunk_rows)
+    counts = _kept_counts(counted, first_seen, chunk_rows)
     del counted
+    # Installed as it is, like the reference's fit_transform does — not through the idf_
+    # setter, which keeps a transformer an earlier fit left behind: its norm and flags,
+    # and an n_features_in_ that refuses the new vocabulary's size.
     transformer = TfidfTransformer(norm=vec.norm, use_idf=vec.use_idf,
                                    smooth_idf=vec.smooth_idf, sublinear_tf=vec.sublinear_tf)
     transformer.fit(counts)
     vec.vocabulary_ = vocabulary
-    vec.idf_ = transformer.idf_  # public setter; also records fixed_vocabulary_ = False
+    vec._tfidf = transformer
     return transformer.transform(counts, copy=False)
 
 

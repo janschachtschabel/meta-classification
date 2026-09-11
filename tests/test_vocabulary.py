@@ -160,10 +160,43 @@ def test_the_guard_only_matters_where_a_cap_ranks_by_frequency(monkeypatch):
     assert len(calls) == 1, "without a cap no frequency ranking happens, so no fallback"
 
 
+def _state(transformer) -> dict:
+    return {key: (value.tolist(), value.dtype) if isinstance(value, np.ndarray) else value
+            for key, value in vars(transformer).items()}
+
+
+def test_the_fitted_state_is_the_references_all_the_way_down():
+    """What skops persists is the whole vectorizer, its fitted TfidfTransformer included —
+    the reference installs one fitted on the count matrix (n_features_in_ and all)."""
+    reference = TfidfVectorizer(**params())
+    reference.fit_transform(TRAIN)
+    vec = TfidfVectorizer(**params())
+    fit_transform_exact(vec, TRAIN)
+    assert _state(vec._tfidf) == _state(reference._tfidf)
+
+
+def test_refitting_a_used_vectorizer_leaves_nothing_of_the_first_fit():
+    """A vectorizer fitted before — here by scikit-learn itself, with other parameters —
+    and fitted again must transform like a fresh one: not with the first fit's norm, and
+    not refusing a vocabulary of another size."""
+    vec = TfidfVectorizer(**params(max_features=300))
+    vec.fit_transform(TRAIN)
+    vec.set_params(max_features=500, norm="l1")
+    matrix = fit_transform_exact(vec, TRAIN)
+
+    reference = TfidfVectorizer(**params(norm="l1"))
+    _same_arrays(matrix, reference.fit_transform(TRAIN))
+    _same_arrays(vec.transform(UNSEEN), reference.transform(UNSEEN))
+
+
 @pytest.mark.parametrize("kwargs", [params(binary=True), params(use_idf=False),
-                                    params(vocabulary=["ba", "ke", "li"])],
-                         ids=["binary", "no-idf", "preset-vocabulary"])
+                                    params(vocabulary=["ba", "ke", "li"]),
+                                    params(dtype=np.float64)],
+                         ids=["binary", "no-idf", "preset-vocabulary", "float64"])
 def test_what_the_codebase_never_builds_is_left_to_scikit_learn(monkeypatch, kwargs):
+    """float64 among them: the reference ranks terms by column sums in the matrix's own
+    dtype, and how argsort orders equal values is a property of the dtype's sort kernel —
+    the two-pass selection ranks float32, which is what TfidfBackend builds."""
     reference = TfidfVectorizer(**kwargs)
     expected = reference.fit_transform(TRAIN)
     calls = _count_reference_fits(monkeypatch)
