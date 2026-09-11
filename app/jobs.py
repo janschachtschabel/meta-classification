@@ -28,7 +28,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from . import job_history
-from .errors import TrainingInputError
+from .errors import UserFacingError
 from .memory import MiB, rss_bytes
 
 logger = logging.getLogger("api_v3.jobs")
@@ -302,9 +302,9 @@ class JobRunner:
                 else:
                     self._finish(generation, status="completed", progress=100, phase="done",
                                  results=results, eta_seconds=0)
-            except TrainingInputError as exc:
-                # Crafted, user-facing message (wrong column, too few rows, ...):
-                # showing it is the point — hiding it would mask the user's own typo.
+            except UserFacingError as exc:
+                # Crafted, user-facing message (wrong column, too few rows, a training
+                # process the OOM killer took, ...): showing it is the point.
                 logger.warning("Training job %r rejected: %s", model_name, exc)
                 self._finish(generation, status="error", phase="error",
                              message=str(exc), error=str(exc))

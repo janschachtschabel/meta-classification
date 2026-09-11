@@ -660,6 +660,28 @@ def test_job_runner_shows_crafted_input_error_message():
     assert "Label column 'oops' not found" in snap["message"]
 
 
+def test_job_runner_shows_why_a_training_process_died():
+    """A training process the OOM killer took has no traceback to hide, only a cause the
+    operator can act on — sanitizing it to "see server logs" would hide exactly that."""
+    import time
+
+    from app.errors import TrainingProcessError
+    from app.jobs import JobRunner
+
+    job = JobRunner()
+
+    def target(*, on_progress, should_stop):
+        raise TrainingProcessError("The training process ended without a result (exit code -9).")
+
+    job.start(target, model_name="m")
+    deadline = time.time() + 3
+    while time.time() < deadline and job.snapshot()["status"] == "running":
+        time.sleep(0.01)
+    snap = job.snapshot()
+    assert snap["status"] == "error"
+    assert "exit code -9" in snap["message"]
+
+
 def test_registry_disk_lock_serializes_read_and_delete(tmp_path, monkeypatch):
     """A cold load and a concurrent delete of the same model must NOT interleave:
     the disk lock prevents a reader observing a mid-rmtree/mid-replace bundle."""
