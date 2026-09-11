@@ -27,6 +27,7 @@ from numbers import Integral
 
 import numpy as np
 import scipy.sparse as sp
+from sklearn import get_config
 from sklearn.feature_extraction.text import TfidfTransformer, TfidfVectorizer
 
 # Rows per block in pass 2 and in transform_chunked: bounds the temporaries of a block
@@ -133,9 +134,12 @@ def row_blocks(indptr: np.ndarray, max_rows: int) -> list[tuple[int, int]]:
     """Consecutive row ranges of a CSR ``indptr``: at most ``max_rows`` rows and about a
     million entries each (a single longer row still makes a block of its own), so that
     per-entry scratch arrays stay small however long the documents are."""
+    if max_rows < 1:  # a block of no rows would never advance
+        raise ValueError(f"A block needs at least one row, got max_rows={max_rows}.")
     n_rows, blocks, start = len(indptr) - 1, [], 0
     while start < n_rows:
-        fits = int(np.searchsorted(indptr, indptr[start] + _BLOCK_ENTRIES, side="right")) - 1
+        # int(): an int32 offset near 2**31 plus the block size would wrap around.
+        fits = int(np.searchsorted(indptr, int(indptr[start]) + _BLOCK_ENTRIES, side="right")) - 1
         stop = min(max(fits, start + 1), start + max_rows, n_rows)
         blocks.append((start, stop))
         start = stop
@@ -195,21 +199,28 @@ def fit_transform_exact(
     place): a caller that keeps it for long copies it, which ``TfidfBackend`` does or
     merges it into a fresh matrix anyway.
     """
+    # What the reference's @_fit_context runs before anything else: its parameter
+    # constraints — so a malformed parameter fails with scikit-learn's own error.
+    if not get_config()["skip_parameter_validation"]:
+        vec._validate_params()
     low_n, high_n = vec.ngram_range
+    # A callable analyzer may yield features that are not strings, which the rebuild of
+    # the kept terms below cannot join; a one-pass iterator cannot be walked twice.
     if (vec.vocabulary is not None or vec.binary or not vec.use_idf or low_n > high_n
-            or np.dtype(vec.dtype) != np.float32 or isinstance(texts, str)):
+            or np.dtype(vec.dtype) != np.float32 or callable(vec.analyzer)
+            or isinstance(texts, str) or iter(texts) is texts):
         return vec.fit_transform(texts)
-    # What the reference's @_fit_context runs before it fits: its parameter constraints.
-    vec._validate_params()
+    vec._warn_for_unused_params()  # the reference's warnings, in the reference's order
     vec._validate_vocabulary()  # as the reference does before counting: fixed_vocabulary_
     counted = count_terms(vec.build_analyzer(), texts)
     if not counted.index:
         raise ValueError("empty vocabulary; perhaps the documents only contain stop words")
     tfs = counted.term_frequencies()
     if vec.max_features is not None and int(tfs.max()) >= _EXACT_TF_LIMIT:
+        del counted, tfs  # pass 1 must not sit under the reference's own peak
         return vec.fit_transform(texts)
     terms, first_seen = select_terms(
-        counted.index, counted.document_frequencies(), tfs, len(texts),
+        counted.index, counted.document_frequencies(), tfs, len(counted.indptr) - 1,
         min_df=vec.min_df, max_df=vec.max_df, max_features=vec.max_features,
     )
     del tfs

@@ -7,12 +7,14 @@ reference `TfidfVectorizer.fit_transform` beside `vocabulary.fit_transform_exact
 same texts and compares everything a model is built from.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app import vocabulary
-from app.vocabulary import fit_transform_exact, transform_chunked
+from app.vocabulary import fit_transform_exact, row_blocks, transform_chunked
 
 SYLLABLES = ["ba", "ke", "li", "mo", "nu", "ra", "se", "ti", "vo", "zu", "sch", "ei", "au",
              "ö", "ü", "ß", "é"]
@@ -123,7 +125,9 @@ def _reference_error(kwargs: dict, texts: list[str]) -> Exception:
     (params(min_df=1, max_df=0.4), ["eins zwei", "drei vier"]),             # max_df < min_df
     (params(max_features=-1), TRAIN),                                       # invalid parameter
     (params(ngram_range=(2, 1)), TRAIN),                                    # invalid range
-], ids=["empty", "pruned-away", "max-below-min", "bad-max-features", "bad-ngram-range"])
+    (params(ngram_range=None), TRAIN),                                      # not a range at all
+], ids=["empty", "pruned-away", "max-below-min", "bad-max-features", "bad-ngram-range",
+        "no-ngram-range"])
 def test_a_fit_that_cannot_work_fails_the_way_scikit_learn_fails(kwargs, texts):
     expected = _reference_error(kwargs, texts)
     with pytest.raises(type(expected)) as caught:
@@ -189,10 +193,16 @@ def test_refitting_a_used_vectorizer_leaves_nothing_of_the_first_fit():
     _same_arrays(vec.transform(UNSEEN), reference.transform(UNSEEN))
 
 
+def _words_as_tuples(doc: str) -> list[tuple[str]]:
+    return [(word,) for word in doc.split()]
+
+
 @pytest.mark.parametrize("kwargs", [params(binary=True), params(use_idf=False),
                                     params(vocabulary=["ba", "ke", "li"]),
-                                    params(dtype=np.float64)],
-                         ids=["binary", "no-idf", "preset-vocabulary", "float64"])
+                                    params(dtype=np.float64),
+                                    params(analyzer=_words_as_tuples, ngram_range=(1, 1))],
+                         ids=["binary", "no-idf", "preset-vocabulary", "float64",
+                              "callable-analyzer"])
 def test_what_the_codebase_never_builds_is_left_to_scikit_learn(monkeypatch, kwargs):
     """float64 among them: the reference ranks terms by column sums in the matrix's own
     dtype, and how argsort orders equal values is a property of the dtype's sort kernel —
@@ -203,3 +213,38 @@ def test_what_the_codebase_never_builds_is_left_to_scikit_learn(monkeypatch, kwa
     vec = TfidfVectorizer(**kwargs)
     _same_arrays(fit_transform_exact(vec, TRAIN), expected)
     assert len(calls) == 1
+
+
+def test_a_one_pass_iterator_is_left_to_scikit_learn(monkeypatch):
+    """The reference takes any iterable of documents. Two passes need a collection they
+    can walk twice — the fallback for a counted-out term walks it again — so a
+    generator goes to the reference whole."""
+    expected = TfidfVectorizer(**params()).fit_transform(TRAIN)
+    calls = _count_reference_fits(monkeypatch)
+    _same_arrays(fit_transform_exact(TfidfVectorizer(**params()), iter(TRAIN)), expected)
+    assert len(calls) == 1
+
+
+def _warnings_of(fit) -> list[str]:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit()
+    return [str(warning.message) for warning in caught]
+
+
+def test_the_references_warnings_come_along():
+    """stop_words on a character analyzer does nothing, and scikit-learn says so. A fit
+    that is the reference's fit says so too."""
+    kwargs = params(analyzer="char_wb", ngram_range=(5, 5), max_features=800, stop_words=["ba"])
+    expected = _warnings_of(lambda: TfidfVectorizer(**kwargs).fit_transform(TRAIN))
+    assert expected, "premise: scikit-learn warns about this configuration"
+    assert _warnings_of(lambda: fit_transform_exact(TfidfVectorizer(**kwargs), TRAIN)) == expected
+
+
+def test_blocks_are_never_empty_and_never_overflow():
+    """A block of no rows would never advance (an endless loop behind chunk_rows=0), and
+    int32 row offsets near 2**31 must not wrap when the next block's end is computed."""
+    with pytest.raises(ValueError, match="at least one row"):
+        row_blocks(np.array([0, 2, 4]), 0)
+    top = np.array([0, 2**31 - 30, 2**31 - 20, 2**31 - 10], dtype=np.int32)
+    assert row_blocks(top, 10) == [(0, 1), (1, 3)]
