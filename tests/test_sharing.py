@@ -96,3 +96,20 @@ def test_a_share_file_that_is_not_a_mapping_resets_instead_of_crashing(tmp_path)
     assert store.list() == []
     share_id, _ = store.create("model", "m", expires_hours=1)
     assert store.resolve(share_id) is not None, "the store stays usable after the reset"
+
+
+def test_deleting_a_resource_revokes_every_link_to_it_and_only_those(tmp_path):
+    """A link names its resource. Without revocation on delete, a later model or
+    dataset under the same name was served by an old link to whoever held it --
+    reproduced through the API before this change. Matched case-insensitively:
+    on Windows "D.csv" reaches the file "d.csv", so a link made through that
+    spelling points at the same file."""
+    store = ShareStore(tmp_path / "links.json")
+    doomed = [store.create("dataset", "d.csv", 1)[0], store.create("dataset", "D.csv", 1)[0]]
+    kept = [store.create("dataset", "other.csv", 1)[0], store.create("model", "d.csv", 1)[0]]
+
+    assert store.revoke_for("dataset", "d.csv") == 2
+    assert all(store.resolve(sid) is None for sid in doomed)
+    assert all(store.resolve(sid) is not None for sid in kept)
+    # Persisted: a restart does not bring them back.
+    assert all(ShareStore(tmp_path / "links.json").resolve(sid) is None for sid in doomed)

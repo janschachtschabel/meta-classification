@@ -647,6 +647,39 @@ def test_share_link_for_deleted_dataset_returns_404():
     assert client.get(f"/share/{share_id}").status_code == 404
 
 
+def test_a_share_link_never_serves_a_later_dataset_under_the_same_name():
+    """Deleted and re-imported under its name, the old link handed out the NEW
+    file -- reproduced before this change -- to someone nobody shared it with."""
+    old = {"file": ("reused.csv", b"a;b\nold;1\n", "text/csv")}
+    assert client.post("/datasets/import", files=old, headers=ADMIN).status_code == 200
+    share = client.post("/datasets/reused.csv/export",
+                        json={"generate_share_url": True, "expires_hours": 1}, headers=ADMIN)
+    share_id = share.json()["share_id"]
+    assert client.delete("/datasets/reused.csv", headers=ADMIN).status_code == 200
+
+    new = {"file": ("reused.csv", b"a;b\nnew-and-private;2\n", "text/csv")}
+    assert client.post("/datasets/import", files=new, headers=ADMIN).status_code == 200
+    assert client.get(f"/share/{share_id}").status_code == 404
+    assert share_id not in [e["share_id"] for e in client.get("/share", headers=ADMIN).json()]
+    client.delete("/datasets/reused.csv", headers=ADMIN)
+
+
+def test_a_share_link_never_serves_a_later_model_under_the_same_name(trained_model):
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    files = {"file": ("reused.zip", bundle, "application/zip")}
+    assert client.post("/models/import", files=files, data={"new_name": "reused_model"},
+                       headers=ADMIN).status_code == 200
+    share = client.post("/models/reused_model/export",
+                        json={"generate_share_url": True, "expires_hours": 1}, headers=ADMIN)
+    share_id = share.json()["share_id"]
+    assert client.delete("/models/reused_model", headers=ADMIN).status_code == 200
+
+    assert client.post("/models/import", files=files, data={"new_name": "reused_model"},
+                       headers=ADMIN).status_code == 200
+    assert client.get(f"/share/{share_id}").status_code == 404
+    client.delete("/models/reused_model", headers=ADMIN)
+
+
 def test_model_share_link_and_delete(trained_model):
     """Model export as share link -> zip download via /share; deleting a model
     works once and 404s the second time (and kills its share link)."""

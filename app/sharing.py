@@ -124,6 +124,28 @@ class ShareStore:
             self._persist()
             return True
 
+    def revoke_for(self, kind: str, name: str) -> int:
+        """Withdraw every link to one resource; returns how many.
+
+        Called when the resource is deleted. A link names its resource rather than
+        a version of it, so without this a later model or dataset under the same
+        name was served by an old link to whoever held it. Compared case-
+        insensitively: on Windows "D.csv" reaches the file "d.csv", so a link made
+        through that spelling points at the same file (on Linux it revokes a link
+        to a different file, which fails safe).
+        """
+        key = name.casefold()
+        with self._lock:
+            doomed = [
+                share_id for share_id, info in self._links.items()
+                if info.get("kind") == kind and str(info.get("name", "")).casefold() == key
+            ]
+            for share_id in doomed:
+                del self._links[share_id]
+            if doomed:
+                self._persist()
+            return len(doomed)
+
     def resolve(self, share_id: str) -> dict | None:
         """Return link info, or None if missing/expired (expired ones are purged)."""
         with self._lock:

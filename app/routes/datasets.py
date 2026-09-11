@@ -224,4 +224,7 @@ async def delete_dataset(
     """Delete a CSV file from the data directory (irreversible).
     **Auth:** admin · rate limit active."""
     _dataset_path(dataset_name, settings).unlink()
+    # Same reason as model delete: the next import under this name must not be
+    # reachable through a link that was handed out for this file.
+    get_share_store().revoke_for("dataset", dataset_name)
     return {"status": "deleted", "dataset_name": dataset_name}

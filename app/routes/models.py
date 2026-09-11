@@ -142,6 +142,9 @@ async def delete_model(request: Request, model_name: str, _: str = Depends(requi
         await asyncio.to_thread(get_registry().delete, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+    # A link names the model, not this bundle: left alive, it would hand out
+    # whatever is trained or imported under the name next.
+    get_share_store().revoke_for("model", model_name)
     return {"status": "deleted", "model_name": model_name}
 
 
