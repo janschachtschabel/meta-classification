@@ -146,6 +146,10 @@ def test_a_run_in_a_child_process_publishes_a_model_the_api_can_load(tmp_path):
     assert result["model_name"] == "tiny_model"
     assert registry.exists("tiny_model") and not _staging(registry)
     assert any(fields.get("peak_rss_mb") for fields in progress), "progress crossed over"
+    # Reaped, its id is released before the publish waits for the disk lock: the status
+    # must not add whatever process gets that id next.
+    pids = [fields["worker_pid"] for fields in progress if "worker_pid" in fields]
+    assert isinstance(pids[0], int) and pids[-1] is None
     prediction = registry.get("tiny_model").predict(["Das Römische Reich der Antike"], top_k=1)
     assert prediction[0][0].uri == "uri:hist"
 
@@ -210,6 +214,45 @@ def test_a_failure_in_the_parent_leaves_no_staged_bundle_behind(tmp_path):
         run_in_child(_request(), settings, config, config.get("fast"), registry,
                      on_progress=on_progress, should_stop=lambda: False)
     assert not _staging(registry)
+
+
+def test_the_child_asks_to_be_the_one_the_oom_killer_takes(tmp_path):
+    """Without a hint the kernel kills the LARGEST process, and with a big model cache that
+    can be the API. The child raises its own oom_score_adj (no privilege needed to raise
+    it); where there is no such file — Windows, macOS — nothing happens."""
+    score = tmp_path / "oom_score_adj"
+    score.write_text("0")
+    train_worker._volunteer_for_the_oom_killer(score)
+    assert score.read_text() == "1000"
+    train_worker._volunteer_for_the_oom_killer(tmp_path / "no" / "such" / "file")
+
+
+@pytest.mark.parametrize(("code", "oom"), [(-9, True), (137, True), (1, False), (3, False)])
+def test_only_a_kill_by_signal_9_is_called_a_likely_oom(code, oom):
+    """Ctrl+C on a dev server ends the child with code 1: calling that an out-of-memory
+    kill would send the operator after memory that was never short."""
+    message = train_worker._no_result_message(code)
+    assert f"exit code {code}" in message
+    assert ("out-of-memory" in message) is oom
+
+
+def test_serve_shows_every_user_facing_error_as_it_is(tmp_path, monkeypatch):
+    """The job runner shows every UserFacingError verbatim; the child must not sanitize a
+    kind the thread path would have shown."""
+    from app import training
+    from app.errors import UserFacingError
+
+    class Refused(UserFacingError):
+        pass
+
+    def refuse(*args, **kwargs):
+        raise Refused("Model 'x' cannot be trained: the reason for the operator.")
+
+    monkeypatch.setattr(training, "run_training", refuse)
+    messages: list[dict] = []
+    assert serve(_spec(tmp_path), messages.append, should_stop=lambda: False) == 1
+    assert messages[-1]["failed"] == {
+        "message": "Model 'x' cannot be trained: the reason for the operator.", "user_facing": True}
 
 
 def _start_worker(tmp_path) -> subprocess.Popen:

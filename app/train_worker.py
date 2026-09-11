@@ -22,6 +22,7 @@ run dead: the child exits at once. Its log goes to the inherited stderr.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -35,7 +36,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .classifier import ClassifierModel
-from .errors import TrainingInputError, TrainingProcessError
+from .errors import TrainingInputError, TrainingProcessError, UserFacingError
 from .memory import share_budget_with
 from .profiles import Profile, TrainingConfig
 from .registry import Registry
@@ -49,6 +50,10 @@ SECRET_SETTINGS = frozenset({"api_key_admin", "api_key_readonly"})
 _SECRET_ENV = frozenset(f"APIV3_{name.upper()}" for name in SECRET_SETTINGS)
 # How long a stopped child may take to exit before it is killed outright.
 _EXIT_GRACE_SECONDS = 10
+# Linux: how willing the kernel's OOM killer is to pick this process, -1000..1000.
+_OOM_SCORE_ADJ = Path("/proc/self/oom_score_adj")
+# A child killed by SIGKILL: Popen reports -9; through a shell it would be 128 + 9.
+_KILLED_BY_SIGNAL_9 = (-9, 137)
 # Where `python -m app.train_worker` resolves the package from.
 _APP_ROOT = Path(__file__).resolve().parent.parent
 
@@ -110,7 +115,7 @@ def serve(spec: dict, emit: Callable[[dict], None], should_stop: Callable[[], bo
         result = run_training(req, settings, training_cfg, profile, registry,
                               on_progress=lambda **fields: emit({"progress": fields}),
                               should_stop=should_stop)
-    except TrainingInputError as exc:
+    except UserFacingError as exc:  # the job runner's contract: shown as it is
         emit({"failed": {"message": str(exc), "user_facing": True}})
         return 1
     except Exception:  # noqa: BLE001 - reported, logged, and never with its text
@@ -138,8 +143,9 @@ def main() -> int:
     logging.basicConfig(level=str(spec["settings"].get("log_level", "INFO")).upper(),
                         format="%(asctime)s %(levelname)s [train-worker] %(name)s: %(message)s")
     # Here, not in serve(): the tests call serve() inside the test process, which must not
-    # start counting itself twice.
+    # start counting itself twice — nor volunteer for the OOM killer.
     share_budget_with(spec["parent_pid"])
+    _volunteer_for_the_oom_killer()
     stop = threading.Event()
 
     def listen() -> None:
@@ -168,6 +174,28 @@ def main() -> int:
     code = serve(spec, emit, stop.is_set)
     protocol.flush()
     return code
+
+
+def _volunteer_for_the_oom_killer(path: Path = _OOM_SCORE_ADJ) -> None:
+    """Make this process the one the kernel's OOM killer takes first.
+
+    Without a hint it takes the LARGEST process, and with a big model cache that can be
+    the API — which would end the run anyway, and the server with it. Raising one's own
+    score needs no privilege; where the file does not exist (Windows, macOS) nothing
+    happens. No help where a whole container is killed at once: Kubernetes 1.28+ on
+    cgroup v2 sets memory.oom.group unless the kubelet's singleProcessOOMKill is on.
+    """
+    with contextlib.suppress(OSError):
+        path.write_text("1000")
+
+
+def _no_result_message(code: int) -> str:
+    """What the job says about a child that ended without a result line."""
+    message = f"The training process ended without a result (exit code {code})."
+    if code in _KILLED_BY_SIGNAL_9:
+        return (f"{message} An exit by signal 9 is almost always the out-of-memory killer: "
+                "lower APIV3_TRAIN_MEMORY_MB or give the container more memory.")
+    return f"{message} Its log is in the server log."
 
 
 def _worker_command() -> list[str]:
@@ -209,6 +237,9 @@ def run_in_child(
         # Only now: until the child is gone, it may still be writing there.
         if "done" not in outcome:
             registry.discard_staged(name)
+    # Reaped: its id may name another process by now, and the publish below can wait on
+    # the disk lock while the status still reads it.
+    on_progress(worker_pid=None)
     if "done" in outcome:
         if outcome["done"]["staged"]:
             registry.publish(name, on_step=lambda detail: on_progress(phase_detail=detail))
@@ -220,11 +251,7 @@ def run_in_child(
         raise RuntimeError("the training process failed; its traceback is in the log")
     if kill_requested():
         return {}
-    raise TrainingProcessError(
-        f"The training process ended without a result (exit code {code}). An exit by "
-        "signal 9 (-9 or 137) is almost always the out-of-memory killer: lower "
-        "APIV3_TRAIN_MEMORY_MB or give the container more memory."
-    )
+    raise TrainingProcessError(_no_result_message(code))
 
 
 def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
