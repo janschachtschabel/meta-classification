@@ -67,6 +67,22 @@ Head-fit peak as a function of the thread count (30k, the same 56 MB matrix, C=8
 Linear in the thread count; 1.8–2.5 × the matrix per concurrent fit. Retained after the
 fit: 20–50 MB — the head fit leaves almost no residue, unlike the vectorizer.
 
+### Baseline (task 0.3) — every step in a fresh process
+
+`scripts/benchmark_training_memory.py`, 2026-09-11, before any change to the pipeline
+(`vectorize` and `vectorize-before` were still the same concurrent code). This is what
+the gates compare against.
+
+| Step | data_30k_ai.csv (26,450 rows) | data_300k.csv (100k of 156,174 usable rows) |
+|---|---:|---:|
+| load (whole file) | +116 MB peak, +47 MB kept, 1.6 s | +1,476 MB peak, +422 MB kept, 21.4 s |
+| vectorize (word ∥ char) | +354 MB, 14.8 s (56 MB matrix) | +1,281 MB, 74.8 s (260 MB matrix) |
+| head fit C=8, 6 threads | +627 MB (11.2 × matrix), 19.2 s | +3,103 MB (11.9 × matrix), 120.5 s |
+| head fit, ThreadBudget of RSS + 3 × matrix | 1 thread, +143 MB, 60.4 s — within budget | 1 thread, +572 MB, 387 s — within budget |
+
+In fresh processes the vectorizer leaves little behind (+26 / +52 MB retained): the
+"residue" of the first tables was largely memory one step freed and the next reused.
+
 ### The five causes, with the code that causes them
 
 1. **The head fit copies the matrix once per concurrent thread.** scikit-learn's
@@ -316,6 +332,19 @@ set to *(current RSS + 3 × matrix)* stays under that budget; vectorizer peak �
 Phase 0 baseline; a full `auto` run on `data_30k_ai.csv` before and after yields
 byte-identical `metrics.json` apart from `created_at`, `training_time_seconds` and the
 new `resources` block (diff the two files).
+
+**Result (2026-09-11):**
+- ✅ Output identity: the branch's `auto` run on `data_30k_ai.csv` and two runs of
+  `main` give identical bundles — config, metrics minus run fields, all 9,600,000
+  coefficients and intercepts of the 48 label heads, both vocabularies (200,000 terms)
+  and idf (`compare_bundles.py`; two `main` runs are identical to each other too, so the
+  comparison can tell).
+- ✅ Head fit within budget (baseline table: 1,282 MB against a 1,492 MB budget).
+- ❌ Vectorizer peak **0.86 ×** baseline at 100k (+1,097 MB against +1,276 MB in the
+  same benchmark run), 0.90 × at 30k — not the 0.75 ×. The target came from the
+  provisional shared-process measurement (0.70 ×), which the reuse of freed memory had
+  flattered. Fitting one vocabulary after the other removes the overlap, not the peak
+  of the larger fit; cutting that is Phase 2's job.
 
 ### Phase 2 — two-pass vocabulary (≈ 1–1.5 days)
 
