@@ -12,10 +12,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
-from .memory import threads_within
+from .memory import rss_bytes, threads_within
+
+if TYPE_CHECKING:
+    from .settings import Settings
 
 # What a run costs, anchored on the ONE full-scale measurement this project has:
 # faecher_300k_auto, 156 373 rows x 60 labels, `auto`, 40.2 min wall-clock (README,
@@ -43,6 +47,11 @@ _HEAD_FIT_SERIAL = 0.175
 _TEXT_BYTES_PER_ROW = 2_800
 _MATRIX_BYTES_PER_ROW = 2_900
 _WORD_ONLY_MATRIX_BYTES_PER_ROW = 600
+# What a training in a child process (APIV3_TRAINING_ISOLATION=process) holds before it
+# has read a row: its own interpreter with numpy, scipy, scikit-learn and pandas. 166 MB
+# in the Linux container, 155 MB on Windows (scripts/benchmark_training_isolation.py:
+# a fresh process holding the worker's imports, "API process at start").
+CHILD_PROCESS_BASE_BYTES = 166 * 1024 * 1024
 
 
 def head_fit_seconds_ratio(threads: int, than: int) -> float:
@@ -95,6 +104,23 @@ class CapacityPlan:
     budget_bytes: int | None
     held_bytes: int
     use_char: dict[str, bool]  # per profile name; word-only builds a fifth of the matrix
+
+    @classmethod
+    def for_server(cls, settings: Settings, profiles: dict[str, Profile]) -> CapacityPlan:
+        """The plan for a run started now under ``settings``.
+
+        Call it before loading anything of your own: what a run starts from is what this
+        process holds now, not an analysis' transient copy of the dataset. A run in a
+        child process starts a second interpreter as well, and its budget counts this
+        process too.
+        """
+        held = rss_bytes()
+        if settings.training_isolation == "process":
+            held += CHILD_PROCESS_BASE_BYTES
+        return cls(requested_threads=settings.effective_n_jobs(),
+                   budget_bytes=settings.effective_train_memory_bytes(),
+                   held_bytes=held,
+                   use_char={name: profile.use_char for name, profile in profiles.items()})
 
     def head_fit_threads(self, profile_name: str, n_rows: int) -> int:
         per_row = (_MATRIX_BYTES_PER_ROW if self.use_char.get(profile_name, True)

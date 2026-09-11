@@ -98,3 +98,29 @@ def test_a_run_that_cannot_fit_at_all_still_gets_one_thread():
     plan = CapacityPlan(requested_threads=9, budget_bytes=100 * MiB, held_bytes=300 * MiB,
                         use_char={"auto": True})
     assert plan.head_fit_threads("auto", 300_000) == 1
+
+
+def test_a_run_in_a_child_process_plans_with_a_second_interpreter(monkeypatch):
+    """In process mode a run starts its own interpreter with numpy, scipy, scikit-learn
+    and pandas, and its budget counts this process too: it starts from the API's memory
+    PLUS a fresh interpreter's. Planned from the API's alone, a run near a boundary was
+    promised a thread its budget then withheld. 215k rows sit right at such a boundary."""
+    from app import profiles as profiles_mod
+    from app import settings as settings_mod
+    from app.profiles import CHILD_PROCESS_BASE_BYTES, Profile
+    from app.settings import Settings
+
+    monkeypatch.setattr(profiles_mod, "rss_bytes", lambda: 300 * MiB)
+    monkeypatch.setattr(settings_mod, "available_cpus", lambda: 16)
+    profiles = {"auto": Profile("auto", use_char=True), "fast": Profile("fast", use_char=False)}
+
+    def plan(isolation: str) -> CapacityPlan:
+        return CapacityPlan.for_server(Settings(n_jobs=9, cpu_max_percent=100, train_memory_mb=6000,
+                                                training_isolation=isolation), profiles)
+
+    thread, process = plan("thread"), plan("process")
+    assert thread.held_bytes == 300 * MiB
+    assert process.held_bytes == 300 * MiB + CHILD_PROCESS_BASE_BYTES
+    assert (thread.requested_threads, thread.budget_bytes) == (9, 6000 * MiB)
+    assert thread.use_char == {"auto": True, "fast": False}
+    assert (thread.head_fit_threads("auto", 215_000), process.head_fit_threads("auto", 215_000)) == (3, 2)
