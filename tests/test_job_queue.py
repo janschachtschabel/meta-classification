@@ -109,6 +109,34 @@ def test_stopping_clears_the_queue():
     assert done == [], "a stopped queue starts nothing else"
 
 
+def test_a_hard_stop_reaches_the_running_run_and_not_the_next_one():
+    """A thread can only be abandoned, but a run in a child process can end its child at
+    once — if the hard stop reaches it. The next run must start without that kill."""
+    job = JobRunner()
+    started, release = threading.Event(), threading.Event()
+    seen: list[bool] = []
+
+    def target(*, on_progress, should_stop):
+        started.set()
+        release.wait(5)
+        seen.append(job.hard_stop_requested())
+        return {}
+
+    assert not job.hard_stop_requested()
+    job.start(target, model_name="first")
+    assert started.wait(2)
+    job.stop(hard=True)
+    release.set()
+    for _ in range(500):
+        if seen and (job._thread is None or not job._thread.is_alive()):
+            break
+        threading.Event().wait(0.01)
+    assert seen == [True]
+
+    job.start(lambda *, on_progress, should_stop: {}, model_name="second")
+    assert not job.hard_stop_requested(), "a new run starts without its predecessor's kill"
+
+
 def test_a_name_that_is_already_running_or_queued_is_refused():
     """Two runs under one name is a run guaranteed to fail: /train refuses an existing
     model, so the second would be started only to die. Refuse it while it is still a

@@ -10,6 +10,7 @@ phase's matrices alive while it builds its own.
 
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -95,6 +96,30 @@ def test_status_reads_memory_live_and_carries_the_runs_peak():
         release.set()
     assert running["peak_rss_mb"] == 4321
     assert running["rss_mb"] > 0
+
+
+@needs_rss
+def test_the_status_counts_the_training_process_memory_without_showing_its_id():
+    """In a child process the training's memory is not the API's: the status adds the
+    worker's RSS, because the container's limit applies to the sum."""
+    job = JobRunner()
+    idle = job.snapshot()["rss_mb"]
+    reported, release = threading.Event(), threading.Event()
+
+    def target(*, on_progress, should_stop):
+        on_progress(worker_pid=os.getpid())  # stands in for a child: this very process
+        reported.set()
+        release.wait(5)
+        return {}
+
+    job.start(target, model_name="m")
+    try:
+        assert reported.wait(2), "target never reported"
+        running = job.snapshot()
+    finally:
+        release.set()
+    assert "worker_pid" not in running
+    assert running["rss_mb"] >= 1.5 * idle
 
 
 @needs_rss

@@ -68,6 +68,9 @@ class JobRunner:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        # Set by a HARD stop only: a run in a child process can be ended at once instead
+        # of at its next checkpoint (a thread can only be abandoned).
+        self._hard = threading.Event()
         self._thread: threading.Thread | None = None
         self._state = _idle_state()
         self._start_ts: float | None = None
@@ -106,8 +109,11 @@ class JobRunner:
                 state["seconds_since_heartbeat"] = round(time.monotonic() - self._heartbeat_ts, 1)
         # Live rather than carried by progress: inside a head fit the newest progress
         # update can be minutes old, and that is when the number matters most. Idle, it
-        # shows what the last run left resident.
-        rss = rss_bytes()
+        # shows what the last run left resident. A run in a child process reports that
+        # process' id; its memory is counted in, since the container's limit applies to
+        # the sum — and the id itself is nothing a status reader needs.
+        worker = state.pop("worker_pid", None)
+        rss = rss_bytes() + (rss_bytes(worker) if worker and state["status"] == "running" else 0)
         state["rss_mb"] = rss // MiB if rss else None
         return state
 
@@ -167,6 +173,10 @@ class JobRunner:
 
     def should_stop(self) -> bool:
         return self._stop.is_set()
+
+    def hard_stop_requested(self) -> bool:
+        """Was the running run hard-stopped? A run in a child process ends it on this."""
+        return self._hard.is_set()
 
     def submit(
         self, target: Callable, *args: object, model_name: str, request: dict | None = None,
@@ -322,6 +332,7 @@ class JobRunner:
 
         with self._lock:
             self._stop.clear()
+            self._hard.clear()
             self._state = _idle_state()
             self._state.update(
                 status="running",
@@ -363,6 +374,7 @@ class JobRunner:
         with self._lock:
             self._queue.clear()
         if hard:
+            self._hard.set()
             with self._lock:
                 # Nothing to reset when nothing runs — and resetting anyway would
                 # discard the finished run's results, which is what the operator
