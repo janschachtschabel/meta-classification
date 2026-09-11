@@ -15,8 +15,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app.vectorizers import TfidfBackend
 
-WORDS = ("Bruchrechnung Gleichung Geometrie Dreieck Fläche Römer Antike Kaiser Reich "
-         "Photosynthese Zelle Pflanze Energie Strom Spannung Gedicht Roman Grammatik").split()
+WORDS = ["Bruchrechnung", "Gleichung", "Geometrie", "Dreieck", "Fläche", "Römer", "Antike",
+         "Kaiser", "Reich", "Photosynthese", "Zelle", "Pflanze", "Energie", "Strom", "Spannung",
+         "Gedicht", "Roman", "Grammatik"]
 TEXTS = [" ".join(WORDS[(i * 7 + j * 3) % len(WORDS)] for j in range(5 + i % 6)) + f" Nr {i % 9}"
          for i in range(60)]
 
