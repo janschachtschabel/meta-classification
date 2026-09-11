@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from .classifier import ClassifierModel
 from .deploy import Fitted, fit_evaluate_deploy
 from .errors import TrainingInputError
-from .memory import MiB, PeakSampler, rss_bytes
+from .memory import MiB, PeakSampler, held_bytes
 from .prepare import Prepared, prepare_data
 from .profiles import Profile, TrainingConfig
 from .registry import Registry
@@ -37,14 +37,16 @@ def _with_memory(on_progress: Callable[..., None], sampler: PeakSampler) -> Call
     with the memory it starts from.
 
     The head fits log nothing of their own, so these lines are what tells a post-mortem
-    how far a killed run got and what it held on the way.
+    how far a killed run got and what it held on the way. Both figures are
+    ``held_bytes`` — in a child process the API process is counted in, as in
+    ``/train/status``, because the container's limit applies to the sum.
     """
 
     def report(**fields: object) -> None:
         peak_mb = sampler.peak_bytes // MiB or None
         if "phase" in fields:
             logger.info("phase=%s rss=%s MB peak=%s MB", fields["phase"],
-                        f"{rss_bytes() // MiB:,}", f"{peak_mb or 0:,}")
+                        f"{held_bytes() // MiB:,}", f"{peak_mb or 0:,}")
         on_progress(**{**fields, "peak_rss_mb": peak_mb})
 
     return report

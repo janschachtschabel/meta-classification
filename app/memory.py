@@ -174,17 +174,18 @@ def matrix_bytes(matrix: Any) -> int:
 
 
 class PeakSampler:
-    """The highest RSS seen while the context is open, sampled on a daemon thread.
+    """The most memory held while the context is open, sampled on a daemon thread.
 
     Progress callbacks fire between steps, but the largest allocations of a training run
     live and die INSIDE one step (a head fit holds its solver copies for minutes), so a
     reading taken only at the callbacks would miss exactly the number that decides
-    whether a run fits into its memory limit.
+    whether a run fits into its memory limit. "Held" is ``held_bytes``: this process plus
+    any sharing its budget — the same figure the budget and the live status count.
     """
 
     def __init__(self, interval: float = 0.5) -> None:
         self._interval = interval
-        self._peak = rss_bytes()
+        self._peak = held_bytes()
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -206,7 +207,7 @@ class PeakSampler:
     def _record(self) -> int:
         # Both the sampler thread and readers record, so a reading a reader saw can
         # never be undercut by a later answer: a reported peak only grows.
-        reading = rss_bytes()
+        reading = held_bytes()
         with self._lock:
             self._peak = max(self._peak, reading)
             return self._peak
@@ -245,7 +246,7 @@ class ThreadBudget:
             if threads < self.requested and (not self.chosen or self.chosen[-1] != threads):
                 logger.info(
                     "Memory budget: head fits use %d of %d threads (budget %d MB, "
-                    "process %d MB, matrix %d MB)", threads, self.requested,
+                    "held %d MB, matrix %d MB)", threads, self.requested,
                     self.budget_bytes // MiB, held // MiB, size // MiB,
                 )
         self.chosen.append(threads)

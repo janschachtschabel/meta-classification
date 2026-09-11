@@ -73,6 +73,18 @@ def test_peak_sampler_keeps_a_peak_that_is_already_gone():
     assert sampler.peak_bytes - start >= 40 * MiB
 
 
+def test_a_peak_counts_the_processes_that_share_the_budget(monkeypatch):
+    """In process mode the status shows the API plus the training process and the budget
+    counts both; a peak of the training process alone read LOWER than the live figure
+    beside it, and understated what the container held."""
+    monkeypatch.setattr(memory, "rss_bytes",
+                        lambda pid=None: {None: 20 * MiB, 4242: 3 * MiB}[pid])
+    monkeypatch.setattr(memory, "_budget_shared_with", [4242])
+    with PeakSampler(interval=0.01) as sampler:
+        time.sleep(0.05)
+    assert sampler.peak_bytes == 23 * MiB
+
+
 def test_cgroup_v2_memory_limit_detected(tmp_path):
     (tmp_path / "memory.max").write_text("8589934592\n")
     assert memory_limit_bytes(tmp_path) == 8 * 1024**3
