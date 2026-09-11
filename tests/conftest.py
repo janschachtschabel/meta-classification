@@ -31,6 +31,9 @@ os.environ["APIV3_JOB_HISTORY_FILE"] = str(_SCRATCH / "job_history.jsonl")
 # real collection — which, unlike the history, is training data nobody wants seeded
 # with "Der Wiener Kongress" from a test fixture.
 os.environ["APIV3_FEEDBACK_FILE"] = str(_SCRATCH / "feedback.jsonl")
+# And the share store: found three live links to the test model "odd_metrics" in
+# the developer's real share_links.json. Bearer links are the last file to leak into.
+os.environ["APIV3_SHARE_LINKS_FILE"] = str(_SCRATCH / "share_links.json")
 
 
 @pytest.fixture(autouse=True)

@@ -115,3 +115,13 @@ def test_available_cpus_falls_back_to_cpu_count(monkeypatch):
     monkeypatch.setattr(settings_mod, "_affinity_cpus", lambda: None)
     monkeypatch.setattr(settings_mod, "_cgroup_cpu_quota", lambda: None)
     assert settings_mod.available_cpus() == 8
+
+
+def test_the_suite_never_writes_the_repositorys_own_state_files():
+    """conftest redirects the job history and the feedback store to a scratch
+    dir, but not the share store: after a run, the developer's real
+    share_links.json held three live links to the test model "odd_metrics".
+    Every file the app appends to at runtime must point outside the repo."""
+    s = Settings()
+    for path in (s.share_links_file, s.job_history_file, s.feedback_file):
+        assert not path.resolve().is_relative_to(settings_mod._BASE), path
