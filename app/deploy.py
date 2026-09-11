@@ -193,7 +193,10 @@ def fit_evaluate_deploy(
     # ...and the memory budget caps them again, per fit: every concurrent fit holds
     # ~2.5x its matrix, so a thread count that suits the CPU can outgrow the RAM.
     budget_bytes = settings.effective_train_memory_bytes()
-    thread_budget = ThreadBudget(requested=n_jobs, budget_bytes=budget_bytes)
+    thread_budget = ThreadBudget(
+        requested=n_jobs, budget_bytes=budget_bytes,
+        on_choice=lambda threads: on_progress(head_fit_threads=threads, threads_requested=n_jobs),
+    )
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):
         if cv_folds >= 2:

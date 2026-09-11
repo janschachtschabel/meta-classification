@@ -83,6 +83,7 @@ function renderTrainStatus(s) {
     [t("trainStatus.row.elapsed"), s.elapsed_seconds != null ? t("common.seconds", { count: s.elapsed_seconds }) : "–"],
     [t("trainStatus.row.eta"), s.eta_seconds != null ? `~${t("common.seconds", { count: Math.round(s.eta_seconds) })}` : "–"],
     [t("trainStatus.row.memory"), memoryLine(s)],
+    [t("trainStatus.row.threads"), threadsLine(s)],
   ];
   let html = `
     <div class="progress" role="progressbar" aria-valuenow="${s.progress}" aria-valuemin="0"
@@ -125,6 +126,16 @@ function memoryLine(s) {
   return s.peak_rss_mb != null
     ? t("trainStatus.memoryWithPeak", { rss: s.rss_mb, peak: s.peak_rss_mb })
     : t("trainStatus.memory", { rss: s.rss_mb });
+}
+
+/* The threads the current head fit runs on, against what the CPU budget allows. Fewer
+   means the memory budget is holding the run back — slower, never a different model. */
+function threadsLine(s) {
+  if (s.head_fit_threads == null) return "–";
+  const params = { used: s.head_fit_threads, requested: s.threads_requested };
+  return s.head_fit_threads < s.threads_requested
+    ? t("trainStatus.threadsLimited", params)
+    : t("trainStatus.threads", params);
 }
 
 /* What is waiting behind the running run — read from the server, so it survives this

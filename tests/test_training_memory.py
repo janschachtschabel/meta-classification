@@ -197,6 +197,31 @@ def test_a_throttled_run_says_so_in_its_progress(tmp_path, monkeypatch, cv_folds
     assert any("final model" in d and "1 thread" in d for d in details), details
 
 
+@pytest.mark.parametrize("cv_folds", [0, 2], ids=["holdout", "cross-validation"])
+def test_the_status_shows_the_threads_a_fit_runs_on_before_it_runs(
+    tmp_path, monkeypatch, cv_folds
+):
+    """A head fit on 300k rows runs for minutes: the thread count has to be on screen
+    while it runs, not only in the line that reports it finished."""
+    monkeypatch.setattr(Settings, "effective_n_jobs", lambda self: 3)
+    monkeypatch.setattr(Settings, "effective_train_memory_bytes", lambda self: 1024 * 1024)
+    updates: list[dict] = []
+    _train(tmp_path, lambda **fields: updates.append(fields), cv_folds=cv_folds)
+
+    shown = [u for u in updates if "head_fit_threads" in u]
+    assert shown and all(u["head_fit_threads"] == 1 and u["threads_requested"] == 3
+                         for u in shown), shown
+    first_fit_done = next(i for i, u in enumerate(updates)
+                          if "C=" in str(u.get("phase_detail", "")))
+    assert updates.index(shown[0]) < first_fit_done, "shown only after the fit"
+
+
+def test_an_idle_status_has_no_thread_count():
+    snapshot = JobRunner().snapshot()
+    assert snapshot["head_fit_threads"] is None
+    assert snapshot["threads_requested"] is None
+
+
 class _RecordingVectorizer:
     """Row ids as the only feature (what the scripted heads read back), and a weak
     reference to everything it builds — so a test can ask what is still alive."""

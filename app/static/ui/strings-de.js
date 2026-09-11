@@ -225,6 +225,7 @@ const STRINGS_DE = {
   "trainStatus.row.model": "Modell",
   "trainStatus.row.phase": "Phase",
   "trainStatus.row.status": "Status",
+  "trainStatus.row.threads": "Threads",
   "trainStatus.seeStatus": "siehe Status",
   "trainStatus.stalled": "Seit {seconds} s kein Fortschrittssignal — der Trainings-Thread könnte hängen (große Speicherschritte können unter Speicherdruck sehr langsam werden).",
   "trainStatus.state.completed": "abgeschlossen",
@@ -234,6 +235,8 @@ const STRINGS_DE = {
   "trainStatus.state.stopped": "gestoppt",
   "trainStatus.stop": "Training stoppen",
   "trainStatus.stopRequested": "Stopp angefordert — Warteschlange geleert.",
+  "trainStatus.threads": "{used} von {requested}",
+  "trainStatus.threadsLimited": "{used} von {requested} — vom Speicherbudget gebremst",
 
   "models.action.info": "Info",
   "models.deleteConfirm": "Modell „{name}“ löschen? Das lässt sich nicht rückgängig machen.",

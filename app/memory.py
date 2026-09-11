@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -181,11 +182,14 @@ class ThreadBudget:
     matrix it is about to fit on and what the process holds at that moment — the copies
     scale with exactly that matrix — and kept in ``chosen`` for the bundle's metadata.
     ``budget_bytes=None`` grants the request unchanged (no limit known or configured).
+    ``on_choice`` hears every count as it is decided, BEFORE the fit starts — a fit can
+    run for minutes, and that is when the count has to be on screen.
     """
 
     requested: int
     budget_bytes: int | None
     chosen: list[int] = field(default_factory=list)
+    on_choice: Callable[[int], None] | None = field(default=None, repr=False, compare=False)
 
     def for_matrix(self, matrix: Any) -> int:
         threads = self.requested
@@ -202,6 +206,8 @@ class ThreadBudget:
                         self.budget_bytes // MiB, held // MiB, matrix_bytes(matrix) // MiB,
                     )
         self.chosen.append(threads)
+        if self.on_choice is not None:
+            self.on_choice(threads)
         return threads
 
     def summary(self) -> dict[str, int] | None:

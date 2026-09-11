@@ -224,6 +224,7 @@ const STRINGS_EN = {
   "trainStatus.row.model": "Model",
   "trainStatus.row.phase": "Phase",
   "trainStatus.row.status": "Status",
+  "trainStatus.row.threads": "Threads",
   "trainStatus.seeStatus": "see status",
   "trainStatus.stalled": "No progress signal for {seconds}s — the training thread may be stalled (large save steps can crawl under memory pressure).",
   "trainStatus.state.completed": "completed",
@@ -233,6 +234,8 @@ const STRINGS_EN = {
   "trainStatus.state.stopped": "stopped",
   "trainStatus.stop": "Stop training",
   "trainStatus.stopRequested": "Stop requested — queue cleared.",
+  "trainStatus.threads": "{used} of {requested}",
+  "trainStatus.threadsLimited": "{used} of {requested} — held back by the memory budget",
 
   "models.action.info": "Info",
   "models.deleteConfirm": "Delete model \"{name}\"? This cannot be undone.",

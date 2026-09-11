@@ -51,6 +51,10 @@ def _idle_state() -> dict:
         "eta_seconds": None,
         "seconds_since_heartbeat": None,
         "peak_rss_mb": None,
+        # The current head fit's threads and what the CPU budget asked for: fewer means
+        # the memory budget is holding the run back (slower, same model).
+        "head_fit_threads": None,
+        "threads_requested": None,
         "model_name": None,
         "kind": "training",
         "results": None,
