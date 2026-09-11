@@ -124,16 +124,20 @@ config:
     logLevel: "INFO"
 
   compute:
-    ## @param config.compute.nJobs CPU cores for training. -1 = all cores available to the POD:
+    ## @param config.compute.nJobs CPU cores for training. "auto" = all cores available to the POD:
     ## the app reads the cgroup CPU quota (resources.limits.cpu) and the affinity mask itself, so
-    ## -1 follows a resized limit automatically. APIV3_CPU_MAX_PERCENT (default 60) then keeps part
+    ## auto follows a resized limit automatically. APIV3_CPU_MAX_PERCENT (default 60) then keeps part
     ## of that quota free so /predict stays responsive while a training runs.
-    nJobs: -1
+    nJobs: "auto"
     ## @param config.compute.trainMemoryMb Memory budget for a training run in MiB. "auto" = 85 % of
     ## resources.limits.memory, read from the cgroup at runtime: every concurrent head fit holds
     ## ~2-2.5x the feature matrix, so a run that would outgrow the budget fits on fewer threads
     ## (slower, same model) instead of being OOM-killed. 0 = no cap.
     trainMemoryMb: "auto"
+    ## @param config.compute.trainingIsolation Where a training runs. "process" = in a child process
+    ## of the API: its memory goes back to the OS when it ends, and an OOM kill fails the job
+    ## instead of restarting the pod. "thread" = inside the API process.
+    trainingIsolation: "process"
     ## @param config.compute.solver Linear-head solver — newton-cg keeps float32 and releases the GIL (see README)
     solver: "newton-cg"
     ## @param config.compute.parallelBackend joblib backend — threading shares ONE sparse matrix across cores

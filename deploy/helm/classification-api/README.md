@@ -69,8 +69,9 @@ readonly = predict/status). Swagger UI: `https://<host>/docs`.
 | `config.auth.readonlyKey`               | Readonly API key (**REQUIRED** when auth enabled, stored in Secret)       | `""`          |
 | `config.app.corsOrigins`                | Comma-separated allowed browser origins (empty = none)                   | `""`          |
 | `config.app.logLevel`                   | Log level                                                                | `INFO`        |
-| `config.compute.nJobs`                  | CPU cores for training (`-1` all, `-2` leave one free)                   | `-1`          |
+| `config.compute.nJobs`                  | CPU cores for training (`auto` = all the pod may use, `-2` leave one free) | `auto`      |
 | `config.compute.trainMemoryMb`          | Training memory budget in MiB (`auto` = 85 % of the memory limit, `0` = none) | `auto`   |
+| `config.compute.trainingIsolation`      | Where a training runs (`process` = child process, `thread` = API process) | `process`    |
 | `config.compute.solver`                 | Linear-head solver (float32-preserving `newton-cg`)                      | `newton-cg`   |
 | `config.compute.parallelBackend`        | joblib backend (threading = one shared matrix)                           | `threading`   |
 | `config.compute.tfidfMaxWordFeatures`   | Word n-gram feature cap (RAM lever)                                      | `80000`       |

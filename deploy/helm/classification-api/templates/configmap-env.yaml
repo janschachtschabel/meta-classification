@@ -17,6 +17,7 @@ data:
   # ---- Compute (see README "Resources & tuning") ----
   APIV3_N_JOBS: {{ .Values.config.compute.nJobs | quote }}
   APIV3_TRAIN_MEMORY_MB: {{ .Values.config.compute.trainMemoryMb | quote }}
+  APIV3_TRAINING_ISOLATION: {{ .Values.config.compute.trainingIsolation | quote }}
   APIV3_SOLVER: {{ .Values.config.compute.solver | quote }}
   APIV3_PARALLEL_BACKEND: {{ .Values.config.compute.parallelBackend | quote }}
   APIV3_TFIDF_MAX_WORD_FEATURES: {{ .Values.config.compute.tfidfMaxWordFeatures | quote }}

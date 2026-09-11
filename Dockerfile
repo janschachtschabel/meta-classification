@@ -21,15 +21,16 @@ RUN mkdir -p /app/data /app/models /data/datasets /data/models \
 USER appuser
 
 # Threads/resources: 1 BLAS thread per worker (joblib parallelises across labels,
-# so nested BLAS threads would only oversubscribe the CPU). Training is further
-# bounded by the default APIV3_CPU_MAX_PERCENT=60 budget (set 100 to disable),
-# so the API stays responsive while a training job runs.
+# so nested BLAS threads would only oversubscribe the CPU). APIV3_N_JOBS=auto takes
+# every core the container grants, bounded by the default APIV3_CPU_MAX_PERCENT=60
+# budget (set 100 to disable) so the API stays responsive while a training job runs,
+# and per head fit by the memory budget (APIV3_TRAIN_MEMORY_MB, default auto).
 # All overridable at `docker run -e VAR=...`.
 ENV OMP_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     NUMEXPR_NUM_THREADS=1 \
-    APIV3_N_JOBS=-2
+    APIV3_N_JOBS=auto
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
