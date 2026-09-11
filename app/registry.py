@@ -131,6 +131,24 @@ class Registry:
         training job routes it into progress updates so even a very slow save
         keeps emitting a liveness heartbeat.
         """
+        self.stage(name, model, metadata, on_step, overwrite=overwrite)
+        self.publish(name, model=model, overwrite=overwrite, on_step=on_step)
+
+    def stage(
+        self,
+        name: str,
+        model: ClassifierModel,
+        metadata: dict,
+        on_step: Callable[[str], None] = lambda _msg: None,
+        *,
+        overwrite: bool = False,
+    ) -> Path:
+        """Write the bundle into its hidden staging dir — invisible until :meth:`publish`.
+
+        Separate from publishing so a training in a CHILD process can stage while the
+        API process publishes under its own disk lock: a second Registry in the child
+        would bring a second lock, and bypass the one this registry serialises on.
+        """
         if not overwrite and self.exists(name):
             raise FileExistsError(name)
         tmp = self._tmp_path(name)
@@ -141,6 +159,25 @@ class Registry:
         if tmp.exists():
             shutil.rmtree(tmp)  # leftover from a previous crash
         _write_bundle(tmp, model, metadata, on_step)
+        return tmp
+
+    def publish(
+        self,
+        name: str,
+        *,
+        model: ClassifierModel | None = None,
+        overwrite: bool = False,
+        on_step: Callable[[str], None] = lambda _msg: None,
+    ) -> None:
+        """Move the staged bundle into place atomically, under the disk lock.
+
+        ``model`` goes straight into the cache when this process has it; a bundle
+        staged by another process is loaded on first use instead.
+
+        :raises FileExistsError: if the name was taken meanwhile (and ``overwrite`` is
+            off); the staged bundle is removed rather than left behind.
+        """
+        tmp = self._tmp_path(name)
         with self._disk_lock:
             target = self._path(name)
             if target.exists():
@@ -152,6 +189,8 @@ class Registry:
             # stall here would be indistinguishable from one inside the last dump.
             on_step("Publishing bundle (atomic rename)")
             os.replace(tmp, target)
+            if model is None:
+                return
             # Publish to the cache while STILL holding _disk_lock: a concurrent
             # delete() takes _disk_lock for its rmtree, so it can no longer land
             # between the rename and the cache insert and leave the model cached
@@ -161,6 +200,10 @@ class Registry:
                 self._cache[name] = model
                 self._cache.move_to_end(name)
                 self._evict()
+
+    def discard_staged(self, name: str) -> None:
+        """Remove a staged bundle that will not be published (a stopped or killed run)."""
+        shutil.rmtree(self._tmp_path(name), ignore_errors=True)
 
     def load_fresh(self, name: str) -> tuple[ClassifierModel, dict]:
         with self._disk_lock:
