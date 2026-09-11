@@ -108,12 +108,13 @@ def rss_bytes(pid: int | None = None) -> int:
     """
     try:
         if sys.platform.startswith("linux"):
-            with open(f"/proc/{pid or 'self'}/statm", "rb") as handle:
+            with open(f"/proc/{'self' if pid is None else pid}/statm", "rb") as handle:
                 resident_pages = int(handle.read().split()[1])
             return resident_pages * os.sysconf("SC_PAGE_SIZE")
         if sys.platform == "win32":
             return _windows_working_set(pid)
-    except (OSError, ValueError, IndexError):
+    # ArgumentError/TypeError: a pid ctypes cannot pass — a value a child reported.
+    except (OSError, ValueError, IndexError, TypeError, ctypes.ArgumentError):
         pass
     return 0
 

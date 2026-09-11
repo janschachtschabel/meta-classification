@@ -62,6 +62,14 @@ def test_rss_of_another_process_is_readable_by_its_id():
     assert rss_bytes(pid) < MiB
 
 
+def test_an_id_that_names_no_process_reads_zero_and_never_raises():
+    """pid 0 is nobody's (``pid or 'self'`` read the CALLER's memory on Linux), and a
+    value that is not a pid at all — the status passes on what a child reported — must
+    degrade to "unknown" like every other failed reading, not fail the status."""
+    assert rss_bytes(0) == 0
+    assert rss_bytes("not a pid") == 0  # type: ignore[arg-type]
+
+
 def test_peak_sampler_keeps_a_peak_that_is_already_gone():
     """The head fit's solver copies live and die inside one call, where no progress
     callback ever looks — only a sampler running beside it sees them."""
