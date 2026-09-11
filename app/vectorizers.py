@@ -6,11 +6,14 @@ on this metadata, so the project deliberately settled on TF-IDF.
 
 Feature caps (``max_word_features`` / ``max_char_features``) are the main
 RAM/quality lever and are wired to settings.
+
+The word and character vocabularies are fitted one after the other, never at once:
+each fit's peak is several times its final matrix, so running them together adds the
+two peaks up (+59 % at 30k rows), and it bought no time — the analyzer loop holds the
+GIL (measured 16.7 s concurrent vs 17.2 s sequential).
 """
 
 from __future__ import annotations
-
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy.sparse import hstack
@@ -65,13 +68,12 @@ class TfidfBackend:
 
     def fit(self, texts: list[str]) -> TfidfBackend:
         self.word_vec = self._make("word", self.word_ngram, self.max_word_features)
+        self.word_vec.fit(texts)
         self.char_vec = (
             self._make("char_wb", self.char_ngram, self.max_char_features) if self.use_char else None
         )
-        vecs = [self.word_vec, *([self.char_vec] if self.char_vec is not None else [])]
-        with ThreadPoolExecutor(max_workers=len(vecs)) as pool:
-            for future in [pool.submit(v.fit, texts) for v in vecs]:
-                future.result()
+        if self.char_vec is not None:
+            self.char_vec.fit(texts)
         return self
 
     def transform(self, texts: list[str]):
@@ -83,15 +85,13 @@ class TfidfBackend:
         return hstack([word, self.char_vec.transform(texts)], format="csr")
 
     def fit_transform(self, texts: list[str]):
-        # Word + char vocabularies are independent: build them concurrently, and
-        # each fit_transform tokenizes the texts only once (vs fit + transform).
+        # fit_transform rather than fit + transform: each vectorizer tokenizes the
+        # texts once. One after the other — see the module docstring.
         self.word_vec = self._make("word", self.word_ngram, self.max_word_features)
+        word = self.word_vec.fit_transform(texts)
         if not self.use_char:
             self.char_vec = None
-            return self.word_vec.fit_transform(texts).tocsr()
+            return word.tocsr()
         self.char_vec = self._make("char_wb", self.char_ngram, self.max_char_features)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            word_future = pool.submit(self.word_vec.fit_transform, texts)
-            char_future = pool.submit(self.char_vec.fit_transform, texts)
-            word, char = word_future.result(), char_future.result()
+        char = self.char_vec.fit_transform(texts)
         return hstack([word, char], format="csr")
