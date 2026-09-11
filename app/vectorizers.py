@@ -7,10 +7,11 @@ on this metadata, so the project deliberately settled on TF-IDF.
 Feature caps (``max_word_features`` / ``max_char_features``) are the main
 RAM/quality lever and are wired to settings.
 
-The word and character vocabularies are fitted one after the other, never at once:
-each fit's peak is several times its final matrix, so running them together adds the
-two peaks up (+59 % at 30k rows), and it bought no time — the analyzer loop holds the
-GIL (measured 16.7 s concurrent vs 17.2 s sequential).
+Fitting goes through ``vocabulary.fit_transform_exact`` — scikit-learn's vocabulary,
+idf and matrix, array for array, without first counting every n-gram into a matrix —
+and transforming through ``vocabulary.transform_chunked``. The word and character
+vocabularies are fitted one after the other, never at once: running them together adds
+the two peaks up, and it bought no time — the analyzer loop holds the GIL.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
+
+from .vocabulary import fit_transform_exact, transform_chunked
 
 
 class TfidfBackend:
@@ -79,19 +82,18 @@ class TfidfBackend:
     def transform(self, texts: list[str]):
         if self.word_vec is None:
             raise RuntimeError("TfidfBackend.transform called before fit")
-        word = self.word_vec.transform(texts)
+        word = transform_chunked(self.word_vec, texts)
         if self.char_vec is None:
             return word.tocsr()
-        return hstack([word, self.char_vec.transform(texts)], format="csr")
+        return hstack([word, transform_chunked(self.char_vec, texts)], format="csr")
 
     def fit_transform(self, texts: list[str]):
-        # fit_transform rather than fit + transform: each vectorizer tokenizes the
-        # texts once. One after the other — see the module docstring.
+        # One after the other, each in two passes — see the module docstring.
         self.word_vec = self._make("word", self.word_ngram, self.max_word_features)
-        word = self.word_vec.fit_transform(texts)
+        word = fit_transform_exact(self.word_vec, texts)
         if not self.use_char:
             self.char_vec = None
             return word.tocsr()
         self.char_vec = self._make("char_wb", self.char_ngram, self.max_char_features)
-        char = self.char_vec.fit_transform(texts)
+        char = fit_transform_exact(self.char_vec, texts)
         return hstack([word, char], format="csr")

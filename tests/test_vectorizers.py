@@ -28,26 +28,28 @@ def _same_arrays(a, b) -> bool:
                     for name in ("data", "indices", "indptr")))
 
 
-def _max_concurrent(monkeypatch, method: str) -> list[int]:
-    """Patch ``TfidfVectorizer.<method>`` to record how many calls overlap in time."""
+def _max_concurrent(monkeypatch, owner, method: str) -> list[int]:
+    """Patch ``owner.<method>`` to record how many calls overlap in time (and how many
+    there were: ``[peak, calls]``)."""
     state = {"active": 0}
-    peak = [0]
+    record = [0, 0]
     lock = threading.Lock()
-    real = getattr(TfidfVectorizer, method)
+    real = getattr(owner, method)
 
-    def spy(self, *args, **kwargs):
+    def spy(*args, **kwargs):
         with lock:
             state["active"] += 1
-            peak[0] = max(peak[0], state["active"])
+            record[0] = max(record[0], state["active"])
+            record[1] += 1
         try:
             time.sleep(0.2)  # a sibling running concurrently gets ample time to enter
-            return real(self, *args, **kwargs)
+            return real(*args, **kwargs)
         finally:
             with lock:
                 state["active"] -= 1
 
-    monkeypatch.setattr(TfidfVectorizer, method, spy)
-    return peak
+    monkeypatch.setattr(owner, method, spy)
+    return record
 
 
 def test_fit_transform_builds_the_matrix_of_the_two_vectorizers_side_by_side():
@@ -75,13 +77,17 @@ def test_the_word_only_profile_builds_the_word_matrix_alone():
     assert _same_arrays(matrix, word.tocsr())
 
 
-def test_fit_transform_never_fits_the_two_vocabularies_at_once(monkeypatch):
-    peak = _max_concurrent(monkeypatch, "fit_transform")
+def test_fit_transform_fits_both_vocabularies_in_two_passes_one_after_the_other(monkeypatch):
+    """Both vocabularies go through the two-pass fit (vocabulary.py) — the reference
+    fit_transform is the peak this exists to avoid — and never at the same time."""
+    from app import vectorizers
+
+    record = _max_concurrent(monkeypatch, vectorizers, "fit_transform_exact")
     TfidfBackend(max_word_features=40, max_char_features=60).fit_transform(TEXTS)
-    assert peak[0] == 1
+    assert record == [1, 2]  # never two at once; one call per vocabulary
 
 
 def test_fit_never_fits_the_two_vocabularies_at_once(monkeypatch):
-    peak = _max_concurrent(monkeypatch, "fit")
+    record = _max_concurrent(monkeypatch, TfidfVectorizer, "fit")
     TfidfBackend(max_word_features=40, max_char_features=60).fit(TEXTS)
-    assert peak[0] == 1
+    assert record[0] == 1
