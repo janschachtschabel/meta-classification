@@ -109,6 +109,20 @@ def test_merging_columns_is_scipys_hstack_array_for_array(rows, left_cols, right
                         hstack([left, right], format="csr"))
 
 
+def test_merging_in_blocks_bounded_by_entries_is_hstack_too(monkeypatch):
+    """In production the entry bound, not the row count, cuts the merge into blocks; a
+    bound of three entries puts a block boundary inside every other row here."""
+    from app import vocabulary
+
+    monkeypatch.setattr(vocabulary, "_BLOCK_ENTRIES", 3)
+    rng = np.random.default_rng(11)
+    left = _scrambled(sparse_random(40, 20, density=0.3, format="csr", dtype=np.float32,
+                                    random_state=rng), rng)
+    right = _scrambled(sparse_random(40, 30, density=0.3, format="csr", dtype=np.float32,
+                                     random_state=rng), rng)
+    assert _same_arrays(merge_columns(left, right), hstack([left, right], format="csr"))
+
+
 def test_merging_promotes_dtypes_and_refuses_ragged_rows_like_hstack():
     """hstack promotes a float32 block beside a float64 one instead of truncating the
     wider values, and it refuses blocks of different heights rather than guess."""

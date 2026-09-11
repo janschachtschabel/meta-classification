@@ -76,20 +76,29 @@ def _assert_same_fit(kwargs: dict, texts=TRAIN, chunk_rows: int = vocabulary.CHU
     params(max_features=None),                                  # the uncapped branch
     params(min_df=0.02, max_df=250),                            # float min_df, int max_df
     params(ngram_range=(1, 1), max_features=40, min_df=1),      # a cut deep in the ties
-], ids=["word-capped", "char_wb-capped", "uncapped", "float-min-int-max", "deep-ties"])
+    params(norm=None),                                          # the transformer's settings
+    params(norm="l1"),
+    params(smooth_idf=False),
+    params(sublinear_tf=False),
+    params(analyzer="char", ngram_range=(2, 3), max_features=600),
+    params(stop_words=["ba", "ke", "li"]),
+], ids=["word-capped", "char_wb-capped", "uncapped", "float-min-int-max", "deep-ties",
+        "no-norm", "l1", "raw-idf", "linear-tf", "char", "stop-words"])
 def test_the_two_pass_fit_is_scikit_learns_fit(kwargs):
     _assert_same_fit(kwargs)
 
 
 def test_ties_at_the_cap_are_broken_exactly_like_scikit_learn():
     """300 terms, each in exactly two documents, and a cap of 100: which 100 survive is
-    decided by nothing but how the argsort orders equal values."""
+    decided by nothing but how the argsort orders equal values. The documents introduce
+    the terms in REVERSE alphabetical order, so a ranking over first-seen order would
+    keep other terms than the reference's ranking over the alphabetical one."""
     tied = np.full(300, -2.0, dtype=np.float32)
     assert set(tied.argsort()[:100]) != set(tied.argsort(kind="stable")[:100]), (
         "premise: here numpy's default sort keeps other terms than a stable one would — "
         "without that, this test cannot tell a different tie-breaking apart"
     )
-    docs = [f"w{i:03d} w{(i + 1) % 300:03d}" for i in range(300)]
+    docs = [f"w{299 - i:03d} w{(598 - i) % 300:03d}" for i in range(300)]
     _assert_same_fit(params(ngram_range=(1, 1), max_features=100, min_df=1, max_df=1.0), docs)
 
 
@@ -98,6 +107,15 @@ def test_the_chunk_size_changes_nothing(chunk_rows):
     _assert_same_fit(params(), chunk_rows=chunk_rows)
     _assert_same_fit(params(analyzer="char_wb", ngram_range=(5, 5), max_features=800),
                      chunk_rows=chunk_rows)
+
+
+def test_blocks_smaller_than_a_document_change_nothing(monkeypatch):
+    """In production the entry bound cuts a char fit into dozens of blocks; the fixtures
+    here are far below it. Five entries per block puts a boundary inside nearly every
+    document — through the frequency sums, pass 2 and the column merge alike."""
+    monkeypatch.setattr(vocabulary, "_BLOCK_ENTRIES", 5)
+    _assert_same_fit(params())
+    _assert_same_fit(params(analyzer="char_wb", ngram_range=(5, 5), max_features=800))
 
 
 @pytest.mark.parametrize("chunk_rows", [1, 7, 10_000])
@@ -121,7 +139,7 @@ def _reference_error(kwargs: dict, texts: list[str]) -> Exception:
 
 @pytest.mark.parametrize(("kwargs", "texts"), [
     (params(), ["", "   ", "!!"]),                                        # empty vocabulary
-    (params(min_df=5), ["eins", "zwei", "drei"]),                           # nothing survives
+    (params(min_df=2, max_df=1.0), ["eins", "zwei", "drei"]),               # nothing survives
     (params(min_df=1, max_df=0.4), ["eins zwei", "drei vier"]),             # max_df < min_df
     (params(max_features=-1), TRAIN),                                       # invalid parameter
     (params(ngram_range=(2, 1)), TRAIN),                                    # invalid range
