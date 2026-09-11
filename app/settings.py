@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -136,12 +137,12 @@ class Settings(BaseSettings):
     random_seed: int = 42
 
     # --- Compute resources ---
-    # Per-label head parallelism. -1 = all CPU cores; negative values follow
-    # joblib semantics (-2 = all but one). With the default 'threading' backend +
-    # a float32-preserving solver, the cores share ONE sparse matrix, so adding
-    # cores costs little extra RAM. The value is additionally bounded by
-    # cpu_max_percent (below) — the effective thread count is the minimum.
-    n_jobs: int = -1
+    # Per-label head parallelism. "auto" (default) = every core this process may use;
+    # an integer asks for that many, negatives following joblib (-1 = all, -2 = all
+    # but one). Bounded by cpu_max_percent (below), and per fit by the memory budget
+    # (train_memory_mb): the cores share ONE input matrix, but every concurrent fit
+    # adds its own solver buffers (~2.5x the matrix).
+    n_jobs: int | Literal["auto"] = "auto"
     # Hard CPU budget for a training run, as a percentage of the machine's cores
     # (BLAS is pinned to 1 thread, so head-fit threads ARE the CPU footprint).
     # Default 60: training never occupies more than ~60% of the CPU, keeping the
@@ -150,9 +151,9 @@ class Settings(BaseSettings):
     # Memory budget for a training run, in MiB. Every concurrent head fit holds ~2.5x
     # the feature matrix in solver buffers, so the budget bounds the head-fit threads:
     # a run that would outgrow it trains with fewer threads (slower) instead of being
-    # OOM-killed. None = 85 % of the container's cgroup memory limit when there is
-    # one, otherwise no cap; 0 = no cap. Never changes the model, only the speed.
-    train_memory_mb: int | None = Field(None, ge=0)
+    # OOM-killed. "auto" (default) = 85 % of the container's cgroup memory limit when
+    # there is one, otherwise no cap; 0 = no cap. Never changes the model, only the speed.
+    train_memory_mb: Annotated[int, Field(ge=0)] | Literal["auto"] = "auto"
     # TF-IDF vocabulary caps = the main RAM/quality lever. Lower = less RAM.
     tfidf_max_word_features: int = 80_000
     tfidf_max_char_features: int = 120_000
@@ -203,18 +204,19 @@ class Settings(BaseSettings):
         budget. Never below 1. Container-aware: cores = ``available_cpus()``
         (cgroup quota / affinity mask), not the host's count."""
         cores = available_cpus()
-        requested = self.n_jobs if self.n_jobs > 0 else max(1, cores + 1 + self.n_jobs)
+        n_jobs = self.n_jobs if isinstance(self.n_jobs, int) else -1  # "auto" = all cores
+        requested = n_jobs if n_jobs > 0 else max(1, cores + 1 + n_jobs)
         budget = max(1, (cores * self.cpu_max_percent) // 100)
         return max(1, min(requested, budget))
 
     def effective_train_memory_bytes(self) -> int | None:
         """Memory a training run may plan its head-fit threads with; None = no cap.
 
-        An explicit ``train_memory_mb`` wins (``0`` switches the cap off). Otherwise the
-        container's cgroup limit minus headroom — the limit the kernel enforces by
+        An explicit ``train_memory_mb`` wins (``0`` switches the cap off). ``"auto"`` is
+        the container's cgroup limit minus headroom — the limit the kernel enforces by
         killing the process, which is exactly the failure this budget exists to avoid.
         """
-        if self.train_memory_mb is not None:
+        if isinstance(self.train_memory_mb, int):
             return self.train_memory_mb * MiB if self.train_memory_mb > 0 else None
         limit = memory_limit_bytes()
         return int(limit * _TRAIN_MEMORY_SHARE) if limit is not None else None

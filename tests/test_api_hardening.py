@@ -332,6 +332,14 @@ def test_config_reports_the_training_memory_budget_it_resolved(monkeypatch, tmp_
     assert body["effective_train_memory_mb"] == 2048
 
 
+def test_config_says_auto_where_the_budgets_are_automatic(monkeypatch, tmp_path):
+    client = _fresh_client(monkeypatch, tmp_path)
+    body = client.get("/config", headers=RO).json()
+    assert body["n_jobs"] == "auto"
+    assert body["train_memory_mb"] == "auto"
+    assert body["effective_n_jobs"] >= 1
+
+
 def test_content_security_policy_covers_app_and_self_hosted_docs(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path)
     csp = client.get("/health").headers.get("Content-Security-Policy", "")

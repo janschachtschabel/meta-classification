@@ -150,6 +150,35 @@ def test_train_memory_budget_without_a_container_limit_changes_nothing(monkeypat
 def test_a_negative_train_memory_budget_is_refused():
     with pytest.raises(ValidationError):
         Settings(train_memory_mb=-1)
+    with pytest.raises(ValidationError):
+        Settings(train_memory_mb="lots")
+
+
+def test_both_training_budgets_default_to_auto_and_say_so():
+    """`auto` is the default and a value an operator can write down, so a .env reads as
+    what it does instead of carrying a sentinel only the code understands."""
+    settings = Settings()
+    assert settings.n_jobs == "auto"
+    assert settings.train_memory_mb == "auto"
+
+
+def test_auto_can_be_written_into_the_environment(monkeypatch):
+    monkeypatch.setattr(settings_mod, "available_cpus", lambda: 10)
+    monkeypatch.setattr(settings_mod, "memory_limit_bytes", lambda: 8 * GiB)
+    monkeypatch.setenv("APIV3_N_JOBS", "auto")
+    monkeypatch.setenv("APIV3_TRAIN_MEMORY_MB", "auto")
+    settings = Settings()
+    assert settings.effective_n_jobs() == Settings(n_jobs=-1).effective_n_jobs() == 6
+    assert settings.effective_train_memory_bytes() == int(8 * GiB * 0.85)
+
+
+def test_numbers_still_set_both_budgets(monkeypatch):
+    monkeypatch.setattr(settings_mod, "available_cpus", lambda: 10)
+    monkeypatch.setenv("APIV3_N_JOBS", "4")
+    monkeypatch.setenv("APIV3_TRAIN_MEMORY_MB", "6000")
+    settings = Settings()
+    assert settings.effective_n_jobs() == 4
+    assert settings.effective_train_memory_bytes() == 6000 * 1024**2
 
 
 def test_the_suite_never_writes_the_repositorys_own_state_files():

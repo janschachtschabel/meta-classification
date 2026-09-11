@@ -21,10 +21,11 @@ class HealthResponse(BaseModel):
 class ConfigResponse(BaseModel):
     """Non-sensitive configuration overview (never includes API keys)."""
 
-    n_jobs: int
+    # "auto" or the configured number, as set; the effective_* fields are what a run uses.
+    n_jobs: int | str
     cpu_max_percent: int
     effective_n_jobs: int
-    train_memory_mb: int | None
+    train_memory_mb: int | str
     effective_train_memory_mb: int | None
     tfidf_max_word_features: int
     tfidf_max_char_features: int
