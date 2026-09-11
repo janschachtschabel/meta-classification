@@ -44,6 +44,7 @@ from app.classifier import make_head  # noqa: E402
 from app.data import load_dataset, prepare_targets  # noqa: E402
 from app.memory import MiB, PeakSampler, ThreadBudget, matrix_bytes, rss_bytes  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
+from app.vocabulary import count_terms  # noqa: E402
 
 STEPS = ["load", "vectorize-before", "vectorize", "head-fit", "head-fit-budget", "identity"]
 TEXT_COLUMNS = ["properties.cclom:title", "properties.cclom:general_description",
@@ -156,8 +157,11 @@ def child(step: str, args) -> dict:
         cur_t = backend.transform(held_out)
         same_t = all(np.array_equal(getattr(ref_t, a), getattr(cur_t, a))
                      for a in ("data", "indices", "indptr"))
+        # How far this corpus is from the two-pass fit's exactness limit (2**24).
+        max_tf = max(int(count_terms(v.build_analyzer(), texts)[2].max()) for v in (word, char))
         return {"result": f"matrix identical={same}, vocabulary+idf identical={same_fit}, "
-                          f"held-out transform identical={same_t}",
+                          f"held-out transform identical={same_t}, "
+                          f"largest term count {max_tf:,} (limit {2**24:,})",
                 "identical": bool(same and same_fit and same_t)}
     raise SystemExit(f"unknown step {step!r}")
 
