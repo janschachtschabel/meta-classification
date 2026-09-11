@@ -147,17 +147,18 @@ def child(step: str, args) -> dict:
         (word, char), reference = vectorize_before(texts)
         backend = TfidfBackend()
         current = backend.fit_transform(texts)
-        same = (reference.shape == current.shape and reference.dtype == current.dtype
-                and all(np.array_equal(getattr(reference, a), getattr(current, a))
-                        and getattr(reference, a).dtype == getattr(current, a).dtype
-                        for a in ("data", "indices", "indptr")))
+        def identical(a, b) -> bool:
+            return (a.shape == b.shape and a.dtype == b.dtype
+                    and all(np.array_equal(getattr(a, name), getattr(b, name))
+                            and getattr(a, name).dtype == getattr(b, name).dtype
+                            for name in ("data", "indices", "indptr")))
+
+        same = identical(reference, current)
         same_fit = all(ref.vocabulary_ == cur.vocabulary_ and np.array_equal(ref.idf_, cur.idf_)
                        and ref.idf_.dtype == cur.idf_.dtype
                        for ref, cur in ((word, backend.word_vec), (char, backend.char_vec)))
         ref_t = hstack([word.transform(held_out), char.transform(held_out)], format="csr")
-        cur_t = backend.transform(held_out)
-        same_t = all(np.array_equal(getattr(ref_t, a), getattr(cur_t, a))
-                     for a in ("data", "indices", "indptr"))
+        same_t = identical(ref_t, backend.transform(held_out))
         # How far this corpus is from the two-pass fit's exactness limit (2**24).
         max_tf = max(int(count_terms(v.build_analyzer(), texts).term_frequencies().max())
                      for v in (word, char))

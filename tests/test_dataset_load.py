@@ -136,6 +136,9 @@ def test_a_cp1252_byte_deep_in_the_file_restarts_the_whole_read(tmp_path):
     assert len(load_dataset(path, ["title"], "labels", chunk_rows=1000).texts) == 40_000
 
 
+# Expected: the header read (data.read_csv) still falls back to the python engine for it;
+# only the block read, where a regex would run over the whole file, refuses.
+@pytest.mark.filterwarnings("ignore::pandas.errors.ParserWarning")
 def test_a_separator_pandas_would_read_as_a_regex_is_refused(tmp_path):
     """pandas parses a multi-character separator as a regular expression, on its python
     engine — a pattern and a file crafted together can make that parse crawl. The API
