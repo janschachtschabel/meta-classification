@@ -272,7 +272,14 @@ class Registry:
                 raise FileNotFoundError(name)
             shutil.rmtree(self._path(name))
             with self._lock:
-                self._cache.pop(name, None)
+                # Every spelling, not just this one: on a case-insensitive
+                # filesystem get("M") loads the bundle "m" and caches it under
+                # "M", and that key kept serving the deleted weights -- after a
+                # retrain of "m", the OLD model. On a case-sensitive one this may
+                # also drop a different model's entry, which only costs a reload.
+                key = name.casefold()
+                for cached in [k for k in self._cache if k.casefold() == key]:
+                    del self._cache[cached]
 
     def export_to(self, name: str, target: BinaryIO) -> None:
         """Write the bundle's archive into ``target`` (card + manifest added by ``model_archive``).

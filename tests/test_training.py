@@ -1963,3 +1963,27 @@ def test_a_training_whose_name_was_taken_while_queued_fails_before_training(tmp_
                      on_progress=lambda **kw: progress.append(kw), should_stop=lambda: False)
     assert progress == [], "refused before any work started"
     assert _bundle_bytes(registry, "tiny_model") == before
+
+
+def test_deleting_a_model_forgets_every_spelling_it_was_cached_under(tmp_path):
+    """On a case-insensitive filesystem (Windows, where this app is also run),
+    get("TINY_MODEL") finds the bundle "tiny_model" and caches it under the key
+    "TINY_MODEL". delete("tiny_model") popped only its own key, so the deleted
+    weights stayed servable -- and after a retrain, predicting as the other
+    spelling returned the OLD model (reproduced through /predict before this
+    change). The cache entry below is what that get() leaves behind; the test
+    plants it so the contract is checked on every platform."""
+    import pytest
+
+    settings = _settings(tmp_path)
+    config = _config()
+    registry = _registry(settings)
+    run_training(_request(), settings, config, config.get("fast"), registry,
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+    model = registry.get("tiny_model")  # outside the lock: get() takes it itself
+    with registry._lock:
+        registry._cache["TINY_MODEL"] = model
+
+    registry.delete("tiny_model")
+    with pytest.raises(FileNotFoundError):
+        registry.get("TINY_MODEL")
