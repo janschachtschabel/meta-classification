@@ -126,10 +126,17 @@ def main() -> int:
     stop = threading.Event()
 
     def listen() -> None:
-        for line in sys.stdin:
-            if json.loads(line).get("stop"):
-                stop.set()
-        os._exit(3)  # stdin closed: the parent is gone or wants this run dead — now
+        # Also the orphan guard, so nothing may end it early: a line that is no message
+        # of ours is skipped, and whatever ends the loop ends the process.
+        try:
+            for line in sys.stdin:
+                try:
+                    if json.loads(line).get("stop"):
+                        stop.set()
+                except (ValueError, AttributeError):
+                    continue
+        finally:
+            os._exit(3)  # stdin closed: the parent is gone or wants this run dead — now
 
     threading.Thread(target=listen, name="stop-listener", daemon=True).start()
     lock = threading.Lock()
@@ -164,8 +171,11 @@ def run_in_child(
     """``run_training`` in a child process, for the job runner: same arguments, same
     result, same exceptions — plus ``kill_requested``, which ends the child at once."""
     name = req["model_name"]
+    # errors="replace": a byte that is not UTF-8 must cost one unreadable line, not the
+    # reader thread and with it every line after.
     child = subprocess.Popen(_worker_command(), cwd=_APP_ROOT, stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE, text=True, encoding="utf-8")
+                             stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                             errors="replace")
     outcome: dict[str, Any] = {}
     try:
         # A child that died on start cannot take the job; its exit code says why below.
@@ -178,11 +188,14 @@ def run_in_child(
         except subprocess.TimeoutExpired:
             child.kill()
             code = child.wait()
+        # Nothing will publish what the child staged — also when the relay itself failed.
+        # Only now: until the child is gone, it may still be writing there.
+        if "done" not in outcome:
+            registry.discard_staged(name)
     if "done" in outcome:
         if outcome["done"]["staged"]:
             registry.publish(name, on_step=lambda detail: on_progress(phase_detail=detail))
         return outcome["done"]["result"]
-    registry.discard_staged(name)
     if "failed" in outcome:
         failed = outcome["failed"]
         if failed["user_facing"]:
@@ -203,9 +216,11 @@ def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
     lines: queue.Queue[str | None] = queue.Queue()
 
     def pump(stream: IO[str]) -> None:
-        for line in stream:
-            lines.put(line)
-        lines.put(None)
+        try:
+            for line in stream:
+                lines.put(line)
+        finally:
+            lines.put(None)  # however reading ended, the relay must hear that it did
 
     threading.Thread(target=pump, args=(child.stdout,), name="child-stdout", daemon=True).start()
     stop_sent = False
@@ -224,9 +239,11 @@ def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
         try:
             message = json.loads(line)
         except ValueError:
-            # Half a line: the child was killed mid-write (the OOM killer does not wait
-            # for a newline). What comes next is end of output and the exit code.
-            logger.warning("Training process sent an incomplete line; ignoring it.")
+            message = None
+        if not isinstance(message, dict):
+            # Half a line (the OOM killer does not wait for a newline), or output that is
+            # no message of ours. What ends the run is end of output and the exit code.
+            logger.warning("Training process sent a line that is no message; ignoring it.")
             continue
         if "progress" in message:
             on_progress(**message["progress"])

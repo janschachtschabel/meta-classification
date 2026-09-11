@@ -12,6 +12,7 @@ tests/test_training_memory.py.)
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -146,6 +147,71 @@ def test_a_child_that_dies_without_an_answer_says_so(tmp_path, monkeypatch):
     with pytest.raises(TrainingProcessError) as caught:
         _run(tmp_path, should_stop=lambda: False)
     assert "exit code 9" in str(caught.value)
+
+
+def _deadline(seconds: float):
+    """A kill_requested that fires after ``seconds``: a relay that would wait forever ends
+    as a failed assertion instead of a hung suite."""
+    end = time.monotonic() + seconds
+    return lambda: time.monotonic() > end
+
+
+# The child's bytes as the escapes of a Python bytes literal, written into its source.
+@pytest.mark.parametrize("output", ["\\xff\\xfe not utf-8\\n", "0\\n", "null\\n"],
+                         ids=["not-utf8", "a-number", "null"])
+def test_output_that_is_no_message_cannot_hide_why_the_child_ended(tmp_path, monkeypatch, output):
+    """Bytes that are not UTF-8 killed the reader thread and left the relay waiting for a
+    line that never came; JSON that is not an object crashed the relay itself. Either way
+    the run must still end with the child's exit code."""
+    code = ("import os, sys; sys.stdin.readline(); "
+            f"sys.stdout.buffer.write(b'{output}'); sys.stdout.flush(); os._exit(9)")
+    monkeypatch.setattr(train_worker, "_worker_command", lambda: [sys.executable, "-c", code])
+    with pytest.raises(TrainingProcessError, match="exit code 9"):
+        _run(tmp_path, should_stop=lambda: False, kill_requested=_deadline(20))
+
+
+def test_a_failure_in_the_parent_leaves_no_staged_bundle_behind(tmp_path):
+    """Whatever ends the relay early — here the progress callback itself, halfway through
+    the save — the child is stopped and what it staged is removed once it is gone, not
+    left for the next start's sweep."""
+    settings, config = _settings(tmp_path), _config()
+    registry = _registry(settings)
+
+    def on_progress(**fields):
+        if fields.get("phase_detail") == "Writing head.skops":
+            raise RuntimeError("the status store failed")
+
+    with pytest.raises(RuntimeError, match="status store"):
+        run_in_child(_request(), settings, config, config.get("fast"), registry,
+                     on_progress=on_progress, should_stop=lambda: False)
+    assert not _staging(registry)
+
+
+def _start_worker(tmp_path) -> subprocess.Popen:
+    """The real worker, driven by hand: the job sent, its first line (worker_pid) read."""
+    child = subprocess.Popen(train_worker._worker_command(), cwd=train_worker._APP_ROOT,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                             encoding="utf-8")
+    assert child.stdin is not None and child.stdout is not None
+    child.stdin.write(json.dumps({"job": _spec(tmp_path)}) + "\n")
+    child.stdin.flush()
+    assert "worker_pid" in json.loads(child.stdout.readline())["progress"]
+    return child
+
+
+def test_a_line_the_child_cannot_read_does_not_cost_it_its_stop_listener(tmp_path):
+    """The stop listener is also what ends a child whose parent is gone. A line it cannot
+    parse killed it, and the end of input that followed went unheard: the child trained
+    on to the end (exit 0) instead of ending at once (exit 3)."""
+    child = _start_worker(tmp_path)
+    try:
+        child.stdin.write("not a message\n")
+        child.stdin.close()
+        assert child.wait(timeout=60) == 3
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
 
 
 def test_a_child_killed_in_the_middle_of_a_line_still_says_why(tmp_path, monkeypatch):
