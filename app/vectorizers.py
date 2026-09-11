@@ -34,12 +34,15 @@ def merge_columns(left: csr_matrix, right: csr_matrix, block_rows: int = 20_000)
     row shifted by left's column count.
     """
     n_rows, n_left = left.shape[0], left.shape[1]
+    if right.shape[0] != n_rows:
+        raise ValueError(f"Cannot merge columns of {n_rows} rows with {right.shape[0]} rows.")
     n_cols, nnz = n_left + right.shape[1], left.nnz + right.nnz
     # scipy's choice for the stacked result: 32-bit unless a column or an entry needs more.
     wide = max(n_cols - 1, nnz) > np.iinfo(np.int32).max
     index_dtype = np.int64 if wide else np.int32
     indptr = left.indptr.astype(index_dtype) + right.indptr.astype(index_dtype)
-    data = np.empty(nnz, dtype=left.dtype)
+    # hstack's promotion: a wider right block is never truncated to the left's width.
+    data = np.empty(nnz, dtype=np.result_type(left.dtype, right.dtype))
     indices = np.empty(nnz, dtype=index_dtype)
     for start, stop in row_blocks(indptr, block_rows):
         lo, hi = left.indptr[start], left.indptr[stop]

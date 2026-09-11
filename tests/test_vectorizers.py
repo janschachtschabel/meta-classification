@@ -109,6 +109,17 @@ def test_merging_columns_is_scipys_hstack_array_for_array(rows, left_cols, right
                         hstack([left, right], format="csr"))
 
 
+def test_merging_promotes_dtypes_and_refuses_ragged_rows_like_hstack():
+    """hstack promotes a float32 block beside a float64 one instead of truncating the
+    wider values, and it refuses blocks of different heights rather than guess."""
+    rng = np.random.default_rng(3)
+    left = sparse_random(8, 5, density=0.4, format="csr", dtype=np.float32, random_state=rng)
+    right = sparse_random(8, 4, density=0.4, format="csr", dtype=np.float64, random_state=rng)
+    assert _same_arrays(merge_columns(left, right), hstack([left, right], format="csr"))
+    with pytest.raises(ValueError, match="rows"):
+        merge_columns(left, right[:5])
+
+
 def test_fit_transform_fits_both_vocabularies_in_two_passes_one_after_the_other(monkeypatch):
     """Both vocabularies go through the two-pass fit (vocabulary.py) — the reference
     fit_transform is the peak this exists to avoid — and never at the same time."""
