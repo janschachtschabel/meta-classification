@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from .classifier import ClassifierModel
 from .deploy import Fitted, fit_evaluate_deploy
 from .errors import TrainingInputError
+from .memory import MiB, PeakSampler, rss_bytes
 from .prepare import Prepared, prepare_data
 from .profiles import Profile, TrainingConfig
 from .registry import Registry
@@ -31,9 +32,27 @@ from .settings import Settings
 logger = logging.getLogger("api_v3.training")
 
 
+def _with_memory(on_progress: Callable[..., None], sampler: PeakSampler) -> Callable[..., None]:
+    """``on_progress`` that also carries the run's peak RSS, and logs every phase entry
+    with the memory it starts from.
+
+    The head fits log nothing of their own, so these lines are what tells a post-mortem
+    how far a killed run got and what it held on the way.
+    """
+
+    def report(**fields: object) -> None:
+        peak_mb = sampler.peak_bytes // MiB or None
+        if "phase" in fields:
+            logger.info("phase=%s rss=%s MB peak=%s MB", fields["phase"],
+                        f"{rss_bytes() // MiB:,}", f"{peak_mb or 0:,}")
+        on_progress(**{**fields, "peak_rss_mb": peak_mb})
+
+    return report
+
+
 def _build_metadata(
     req: dict, settings: Settings, profile: Profile, prep: Prepared, fitted: Fitted, elapsed: float,
-    *, cv_folds: int = 0,
+    *, cv_folds: int = 0, resources: dict | None = None,
 ) -> dict:
     """Assemble the persisted metadata/metrics document for a trained model."""
     n = int(len(prep.texts))
@@ -94,6 +113,9 @@ def _build_metadata(
         },
         "metrics": fitted.metrics,
         "training_time_seconds": round(elapsed, 1),
+        # What the run needed, so the next run of this size can be sized before it
+        # starts rather than after it is killed. Describes the run, like the time above.
+        **({"resources": resources} if resources else {}),
         # Author-supplied documentation, kept in its own block so a reader can tell a
         # human assertion from a measured fact. Omitted entirely when nothing was given.
         **({"info": req["info"]} if req.get("info") else {}),
@@ -135,42 +157,47 @@ def run_training(
     cv_folds = next(
         value for value in (req_cv, profile.cv_folds, training_cfg.cv_folds) if value is not None
     )
-    prep = prepare_data(
-        req, settings, training_cfg, cv_folds=cv_folds,
-        stratified=profile.stratified_splits,
-        on_progress=on_progress, should_stop=should_stop,
-    )
-    if prep is None:
-        return {}
-    fitted = fit_evaluate_deploy(
-        prep, settings, profile, cv_folds=cv_folds,
-        max_word_features=req.get("max_word_features"),
-        max_char_features=req.get("max_char_features"),
-        on_progress=on_progress, should_stop=should_stop,
-    )
-    if fitted is None:
-        return {}
+    with PeakSampler() as sampler:
+        report = _with_memory(on_progress, sampler)
+        prep = prepare_data(
+            req, settings, training_cfg, cv_folds=cv_folds,
+            stratified=profile.stratified_splits,
+            on_progress=report, should_stop=should_stop,
+        )
+        if prep is None:
+            return {}
+        fitted = fit_evaluate_deploy(
+            prep, settings, profile, cv_folds=cv_folds,
+            max_word_features=req.get("max_word_features"),
+            max_char_features=req.get("max_char_features"),
+            on_progress=report, should_stop=should_stop,
+        )
+        if fitted is None:
+            return {}
 
-    model = ClassifierModel(
-        vectorizer=fitted.vectorizer,
-        head=fitted.head,
-        classes=prep.classes,
-        task_type=prep.task_type,
-        avg_labels=prep.avg_labels,
-        uri_to_label=prep.uri_to_label,
-        global_threshold=fitted.global_threshold,
-        per_label_thresholds=fitted.per_label_thresholds,
-        # Set here too, not only when reading the bundle back: registry.save()
-        # publishes THIS object straight into the LRU cache, so a freshly trained
-        # model would otherwise serve without label_f1 until it is evicted.
-        per_label_f1=dict(fitted.metrics.get("per_label_f1", {})),
-    )
-    elapsed = time.time() - start
-    metadata = _build_metadata(req, settings, profile, prep, fitted, elapsed, cv_folds=cv_folds)
-    # Bundle sub-steps feed the job heartbeat: a big skops dump can crawl for
-    # many minutes under memory pressure, and phase/progress stay frozen then.
-    registry.save(req["model_name"], model, metadata,
-                  on_step=lambda detail: on_progress(phase_detail=detail))
+        model = ClassifierModel(
+            vectorizer=fitted.vectorizer,
+            head=fitted.head,
+            classes=prep.classes,
+            task_type=prep.task_type,
+            avg_labels=prep.avg_labels,
+            uri_to_label=prep.uri_to_label,
+            global_threshold=fitted.global_threshold,
+            per_label_thresholds=fitted.per_label_thresholds,
+            # Set here too, not only when reading the bundle back: registry.save()
+            # publishes THIS object straight into the LRU cache, so a freshly trained
+            # model would otherwise serve without label_f1 until it is evicted.
+            per_label_f1=dict(fitted.metrics.get("per_label_f1", {})),
+        )
+        elapsed = time.time() - start
+        metadata = _build_metadata(
+            req, settings, profile, prep, fitted, elapsed, cv_folds=cv_folds,
+            resources={"peak_rss_mb": sampler.peak_bytes // MiB or None},
+        )
+        # Bundle sub-steps feed the job heartbeat: a big skops dump can crawl for
+        # many minutes under memory pressure, and phase/progress stay frozen then.
+        registry.save(req["model_name"], model, metadata,
+                      on_step=lambda detail: report(phase_detail=detail))
     logger.info("Training done: %s f1_macro=%.4f in %.1fs",
                 req["model_name"], fitted.metrics["f1_macro"], elapsed)
 

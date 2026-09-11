@@ -94,6 +94,9 @@ def record_for(state: dict, request: dict | None, duration_seconds: float | None
         "f1_macro": metrics.get("f1_macro"),
         "f1_micro": metrics.get("f1_micro"),
         "decision_rule": metrics.get("decision_rule"),
+        # What the run needed at most — how "will this fit into N GB?" gets answered for
+        # the next run of the same size, and why a run that died of memory died.
+        "peak_rss_mb": state.get("peak_rss_mb"),
         "error": state.get("error"),
     }
 

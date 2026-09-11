@@ -168,8 +168,9 @@ async def status(_: str = Depends(require_role("readonly"))) -> dict:
     `message`, `elapsed_seconds`, `eta_seconds` (estimated time remaining),
     `seconds_since_heartbeat` (age of the newest progress signal while running; it keeps
     growing when the training thread stalls silently — long values mean "possibly hung",
-    while `elapsed_seconds` grows either way), `model_name`,
-    `results` (metrics on completion), `error`. **Auth:** readonly.
+    while `elapsed_seconds` grows either way), `rss_mb` (the process' resident memory,
+    read at request time), `peak_rss_mb` (the most the current or last run needed),
+    `model_name`, `results` (metrics on completion), `error`. **Auth:** readonly.
     """
     return job_runner.snapshot()
 
@@ -191,7 +192,8 @@ async def history(limit: int = 50, _: str = Depends(require_role("readonly"))) -
     """What every finished run left behind, newest first.
 
     Per run: the model name, how it ended, when and for how long, the request it was
-    started with, and the headline scores (`f1_macro`, `f1_micro`, `n_labels`). A run
+    started with, the headline scores (`f1_macro`, `f1_micro`, `n_labels`) and the most
+    memory it needed (`peak_rss_mb`). A run
     that failed carries its `error` — and that is the case with no bundle to inspect
     afterwards, so this is the only place the reason survives.
 

@@ -140,6 +140,7 @@ class PeakSampler:
     def __init__(self, interval: float = 0.5) -> None:
         self._interval = interval
         self._peak = rss_bytes()
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -154,14 +155,21 @@ class PeakSampler:
             self._thread.join()
 
     def _run(self) -> None:
-        # The only writer of _peak, so no lock: readers may see a value one sample old.
         while not self._stop.wait(self._interval):
-            self._peak = max(self._peak, rss_bytes())
+            self._record()
+
+    def _record(self) -> int:
+        # Both the sampler thread and readers record, so a reading a reader saw can
+        # never be undercut by a later answer: a reported peak only grows.
+        reading = rss_bytes()
+        with self._lock:
+            self._peak = max(self._peak, reading)
+            return self._peak
 
     @property
     def peak_bytes(self) -> int:
         """Highest reading so far, including one taken now."""
-        return max(self._peak, rss_bytes())
+        return self._record()
 
 
 @dataclass

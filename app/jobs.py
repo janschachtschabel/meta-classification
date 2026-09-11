@@ -14,6 +14,8 @@ The status snapshot reports the current phase/progress/message plus a rough
 ``seconds_since_heartbeat`` is the age of the newest progress update: unlike
 ``elapsed_seconds`` (which grows regardless) it exposes a training thread that
 went silent — hung, or crawling through a page-file-thrashing save.
+``rss_mb`` is the process' resident memory, read when the status is asked for;
+``peak_rss_mb`` is the highest the current (or last) run reported.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from datetime import UTC, datetime
 
 from . import job_history
 from .errors import TrainingInputError
+from .memory import MiB, rss_bytes
 
 logger = logging.getLogger("api_v3.jobs")
 
@@ -47,6 +50,7 @@ def _idle_state() -> dict:
         "elapsed_seconds": None,
         "eta_seconds": None,
         "seconds_since_heartbeat": None,
+        "peak_rss_mb": None,
         "model_name": None,
         "kind": "training",
         "results": None,
@@ -96,7 +100,12 @@ class JobRunner:
                     state["eta_seconds"] = round(elapsed * (100 - progress) / progress, 1)
             if state["status"] == "running" and self._heartbeat_ts is not None:
                 state["seconds_since_heartbeat"] = round(time.monotonic() - self._heartbeat_ts, 1)
-            return state
+        # Live rather than carried by progress: inside a head fit the newest progress
+        # update can be minutes old, and that is when the number matters most. Idle, it
+        # shows what the last run left resident.
+        rss = rss_bytes()
+        state["rss_mb"] = rss // MiB if rss else None
+        return state
 
     def is_running(self) -> bool:
         with self._lock:

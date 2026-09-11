@@ -82,6 +82,7 @@ function renderTrainStatus(s) {
     [t("trainStatus.row.model"), s.model_name || "–"],
     [t("trainStatus.row.elapsed"), s.elapsed_seconds != null ? t("common.seconds", { count: s.elapsed_seconds }) : "–"],
     [t("trainStatus.row.eta"), s.eta_seconds != null ? `~${t("common.seconds", { count: Math.round(s.eta_seconds) })}` : "–"],
+    [t("trainStatus.row.memory"), memoryLine(s)],
   ];
   let html = `
     <div class="progress" role="progressbar" aria-valuenow="${s.progress}" aria-valuemin="0"
@@ -114,6 +115,16 @@ function renderTrainStatus(s) {
     try { await Api.post("/train/stop"); toast(t("trainStatus.stopRequested")); }
     catch (err) { toast(err.message); }
   });
+}
+
+/* The process' memory now, and the most the run needed — the number that says whether
+   the next run of this size fits into the machine before it is started, not after it
+   is killed. */
+function memoryLine(s) {
+  if (s.rss_mb == null) return "–";
+  return s.peak_rss_mb != null
+    ? t("trainStatus.memoryWithPeak", { rss: s.rss_mb, peak: s.peak_rss_mb })
+    : t("trainStatus.memory", { rss: s.rss_mb });
 }
 
 /* What is waiting behind the running run — read from the server, so it survives this
