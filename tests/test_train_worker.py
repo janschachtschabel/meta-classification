@@ -11,6 +11,7 @@ tests/test_training_memory.py.)
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -66,6 +67,8 @@ def test_the_job_spec_crosses_the_boundary_intact_and_without_secrets(tmp_path):
     spec = job_spec(_request(), settings, config, config.get("fast"))
     text = json.dumps(spec)
     assert "admin-secret" not in text and "readonly-secret" not in text
+    # The child counts this process' memory against the budget they share.
+    assert spec["parent_pid"] == os.getpid()
 
     req, child_settings, child_config, profile = read_job(json.loads(text))
     assert req == _request()

@@ -39,6 +39,10 @@ FIT_COPIES_PER_THREAD = 2.5
 # cgroup v1 has no "max" keyword: an unlimited cgroup reports a huge page-aligned number.
 _V1_UNLIMITED = 2**60
 
+# Other processes whose memory counts against this one's budget: a training in a child
+# process shares the container's limit with the API process that started it.
+_budget_shared_with: list[int] = []
+
 
 if sys.platform == "win32":
 
@@ -136,6 +140,21 @@ def memory_limit_bytes(cgroup_root: Path = Path("/sys/fs/cgroup")) -> int | None
     return None
 
 
+def share_budget_with(pid: int) -> None:
+    """Count process ``pid``'s memory as held whenever a budget is checked in this process.
+
+    Called once by the training worker with the API process' id: in thread mode the
+    budget saw everything the API held because it was the same process, and moving the
+    training into a child must not quietly hand it the API's share on top.
+    """
+    _budget_shared_with.append(pid)
+
+
+def held_bytes() -> int:
+    """What this process holds, plus what the processes sharing its budget hold."""
+    return rss_bytes() + sum(rss_bytes(pid) for pid in _budget_shared_with)
+
+
 def threads_within(requested: int, budget_bytes: int | None, *, held_bytes: int,
                    matrix_bytes: int) -> int:
     """How many fits on a matrix of ``matrix_bytes`` fit into the budget next to what is
@@ -204,8 +223,9 @@ class ThreadBudget:
 
     ``requested`` is the CPU's answer (``Settings.effective_n_jobs``); the memory budget
     can only lower it, never raise it. Each fit's count is decided as it starts, from the
-    matrix it is about to fit on and what the process holds at that moment — the copies
-    scale with exactly that matrix — and kept in ``chosen`` for the bundle's metadata.
+    matrix it is about to fit on and what is held at that moment (``held_bytes``: this
+    process and any sharing its budget) — the copies scale with exactly that matrix — and
+    kept in ``chosen`` for the bundle's metadata.
     ``budget_bytes=None`` grants the request unchanged (no limit known or configured).
     ``on_choice`` hears every count as it is decided, BEFORE the fit starts — a fit can
     run for minutes, and that is when the count has to be on screen.
@@ -219,7 +239,7 @@ class ThreadBudget:
     def for_matrix(self, matrix: Any) -> int:
         threads = self.requested
         if self.budget_bytes is not None:
-            held, size = rss_bytes(), matrix_bytes(matrix)
+            held, size = held_bytes(), matrix_bytes(matrix)
             threads = threads_within(self.requested, self.budget_bytes, held_bytes=held,
                                      matrix_bytes=size)
             if threads < self.requested and (not self.chosen or self.chosen[-1] != threads):

@@ -137,6 +137,21 @@ def test_thread_budget_never_exceeds_the_cpu_request(monkeypatch):
     assert budget.for_matrix(_row_matrix(1000)) == 3
 
 
+def test_a_budget_shared_with_another_process_counts_its_memory(monkeypatch):
+    """A training in a child process shares the container's limit with the API process
+    that started it: what the API holds is spent from the same budget — as it was when
+    the training ran inside the API process."""
+    monkeypatch.setattr(memory, "rss_bytes",
+                        lambda pid=None: {None: 20 * MiB, 4242: 3 * MiB}[pid])
+    monkeypatch.setattr(memory, "_budget_shared_with", [])
+    alone = ThreadBudget(requested=9, budget_bytes=31 * MiB)
+    assert alone.for_matrix(_row_matrix(MiB // 8)) == 4  # 11 MiB headroom / 2.5 MiB
+
+    memory.share_budget_with(4242)
+    shared = ThreadBudget(requested=9, budget_bytes=31 * MiB)
+    assert shared.for_matrix(_row_matrix(MiB // 8)) == 3  # 8 MiB headroom / 2.5 MiB
+
+
 def test_thread_budget_summarizes_what_the_fits_got(monkeypatch):
     readings = iter([20 * MiB, 26 * MiB])
     monkeypatch.setattr(memory, "rss_bytes", lambda: next(readings))

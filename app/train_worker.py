@@ -36,6 +36,7 @@ from typing import IO, Any
 
 from .classifier import ClassifierModel
 from .errors import TrainingInputError, TrainingProcessError
+from .memory import share_budget_with
 from .profiles import Profile, TrainingConfig
 from .registry import Registry
 from .settings import Settings
@@ -57,6 +58,8 @@ def job_spec(req: dict, settings: Settings, training_cfg: TrainingConfig, profil
         "settings": settings.model_dump(mode="json", exclude=set(SECRET_SETTINGS)),
         "training_config": dataclasses.asdict(training_cfg),
         "profile": dataclasses.asdict(profile),
+        # The child's memory budget covers this process too: the limit is the container's.
+        "parent_pid": os.getpid(),
     }
 
 
@@ -117,6 +120,9 @@ def main() -> int:
     # before its first line over a spelling the server accepts.
     logging.basicConfig(level=str(spec["settings"].get("log_level", "INFO")).upper(),
                         format="%(asctime)s %(levelname)s [train-worker] %(name)s: %(message)s")
+    # Here, not in serve(): the tests call serve() inside the test process, which must not
+    # start counting itself twice.
+    share_budget_with(spec["parent_pid"])
     stop = threading.Event()
 
     def listen() -> None:
