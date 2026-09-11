@@ -192,7 +192,11 @@ def run_training(
         elapsed = time.time() - start
         metadata = _build_metadata(
             req, settings, profile, prep, fitted, elapsed, cv_folds=cv_folds,
-            resources={"peak_rss_mb": sampler.peak_bytes // MiB or None},
+            resources={
+                "peak_rss_mb": sampler.peak_bytes // MiB or None,
+                "train_memory_budget_mb": fitted.train_memory_budget_mb,
+                "head_fit_threads": fitted.head_fit_threads,
+            },
         )
         # Bundle sub-steps feed the job heartbeat: a big skops dump can crawl for
         # many minutes under memory pressure, and phase/progress stay frozen then.

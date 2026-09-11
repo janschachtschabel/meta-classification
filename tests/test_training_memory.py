@@ -41,10 +41,11 @@ def _config() -> TrainingConfig:
     )
 
 
-def _train(tmp_path, on_progress=lambda **_: None) -> Settings:
+def _train(tmp_path, on_progress=lambda **_: None, *, cv_folds: int = 0) -> Settings:
     """One real run of the tiny fixture, under the fixture's name `tiny_model`."""
     settings = _settings(tmp_path)
     config = _config()
+    config.cv_folds = cv_folds
     request = {
         "dataset_name": "tiny.csv", "model_name": "tiny_model",
         "text_columns": ["properties.cclom:title", "properties.cclom:general_keyword"],
@@ -120,6 +121,75 @@ def test_the_job_history_keeps_the_runs_peak(tmp_path, monkeypatch):
     job.start(target, model_name="m")
     assert _wait_until_finished(job)["status"] == "error"
     assert job_history.recent()[0]["peak_rss_mb"] == 2048
+
+
+def _spy_on_head_fits(monkeypatch) -> list:
+    """Record the n_jobs every head fit is built with, on both fit sites."""
+    from app import deploy as deploy_mod
+    from app import tuning as tuning_mod
+
+    seen: list = []
+
+    def make_spy(real):
+        def spy(c, **kwargs):
+            seen.append(kwargs.get("n_jobs"))
+            return real(c, **kwargs)
+        return spy
+
+    monkeypatch.setattr(deploy_mod, "make_head", make_spy(deploy_mod.make_head))
+    monkeypatch.setattr(tuning_mod, "make_head", make_spy(tuning_mod.make_head))
+    return seen
+
+
+@pytest.mark.parametrize("cv_folds", [0, 2], ids=["holdout", "cross-validation"])
+def test_a_run_over_its_memory_budget_fits_one_head_at_a_time(tmp_path, monkeypatch, cv_folds):
+    """The OOM-killed run's situation: the CPU budget would allow several threads, the
+    memory budget does not. Every fit — C search and deploy fit, holdout and CV — must
+    then drop to one thread instead of multiplying the matrix-sized solver buffers."""
+    seen = _spy_on_head_fits(monkeypatch)
+    monkeypatch.setattr(Settings, "effective_n_jobs", lambda self: 3)
+    # 1 MiB: less than the process already holds, so no fit has any headroom.
+    monkeypatch.setattr(Settings, "effective_train_memory_bytes", lambda self: 1024 * 1024)
+
+    settings = _train(tmp_path, cv_folds=cv_folds)
+
+    assert seen and set(seen) == {1}, seen
+    metrics = json.loads((settings.models_dir / "tiny_model" / "metrics.json")
+                         .read_text(encoding="utf-8"))
+    assert metrics["resources"]["train_memory_budget_mb"] == 1
+    assert metrics["resources"]["head_fit_threads"] == {"requested": 3, "min": 1, "max": 1}
+
+
+def test_without_a_memory_budget_every_fit_keeps_the_cpu_threads(tmp_path, monkeypatch):
+    seen = _spy_on_head_fits(monkeypatch)
+    monkeypatch.setattr(Settings, "effective_n_jobs", lambda self: 3)
+    monkeypatch.setattr(Settings, "effective_train_memory_bytes", lambda self: None)
+
+    settings = _train(tmp_path)
+
+    assert seen and set(seen) == {3}, seen
+    resources = json.loads((settings.models_dir / "tiny_model" / "metrics.json")
+                           .read_text(encoding="utf-8"))["resources"]
+    assert resources["train_memory_budget_mb"] is None
+    assert resources["head_fit_threads"] == {"requested": 3, "min": 3, "max": 3}
+
+
+@pytest.mark.parametrize("cv_folds", [0, 2], ids=["holdout", "cross-validation"])
+def test_a_throttled_run_says_so_in_its_progress(tmp_path, monkeypatch, cv_folds):
+    """Fewer threads is slower: the status line has to explain a run that crawls."""
+    monkeypatch.setattr(Settings, "effective_n_jobs", lambda self: 3)
+    monkeypatch.setattr(Settings, "effective_train_memory_bytes", lambda self: 1024 * 1024)
+    details: list[str] = []
+
+    def on_progress(**fields):
+        if fields.get("phase_detail"):
+            details.append(fields["phase_detail"])
+
+    _train(tmp_path, on_progress, cv_folds=cv_folds)
+
+    search = [d for d in details if "C=" in d]
+    assert search and all(d.endswith("· 1 thread") for d in search), details
+    assert any("final model" in d and "1 thread" in d for d in details), details
 
 
 def test_every_phase_leaves_a_memory_line_in_the_log(tmp_path, caplog):

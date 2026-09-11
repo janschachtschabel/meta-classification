@@ -8,7 +8,9 @@ of the data).
 
 All label-wise fits run under the caller-configured joblib backend: 'threading'
 with a float32-preserving, GIL-releasing solver (newton-cg by default) trains all
-labels in parallel on ONE shared sparse matrix -> all cores at ~1x RAM.
+labels in parallel on ONE shared input matrix. The solver's working buffers are
+per fit, though (~2.5x the matrix each), so the thread count is also a memory
+multiplier: a ``memory.ThreadBudget`` sizes every fit to the run's memory budget.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from joblib import parallel_backend
 from sklearn.multiclass import OneVsRestClassifier
 
 from .classifier import make_head
+from .memory import MiB, ThreadBudget, matrix_bytes
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
@@ -34,7 +37,16 @@ logger = logging.getLogger("api_v3.training")
 
 def _sparse_mb(matrix) -> float:
     """Megabytes held by a scipy CSR matrix (data + index arrays)."""
-    return (matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes) / 1024**2
+    return matrix_bytes(matrix) / MiB
+
+
+def _threads_note(budget: ThreadBudget | None) -> str:
+    """' · 4 threads' for the fit that just ran: a run slowed by its memory budget
+    explains itself in the status line instead of just looking slow."""
+    if budget is None or not budget.chosen:
+        return ""
+    threads = budget.chosen[-1]
+    return f" · {threads} thread{'s' if threads != 1 else ''}"
 
 
 @dataclass
@@ -54,6 +66,10 @@ class Fitted:
     # metadata explains a feature count instead of leaving it to be guessed.
     max_word_features: int
     max_char_features: int
+    # What the memory budget allowed: the budget itself (None = no cap) and the
+    # requested/min/max thread count over all head fits (ThreadBudget.summary).
+    train_memory_budget_mb: int | None = None
+    head_fit_threads: dict[str, int] | None = None
 
 
 def select_on_split(
@@ -64,11 +80,13 @@ def select_on_split(
     *,
     should_stop: Callable[[], bool],
     on_progress: Callable[..., None],
+    thread_budget: ThreadBudget | None = None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """Classic path: fit on train, auto-select C + tune thresholds on validation,
     report honest metrics on the held-out test split. Returns
     ``(best_c, global_threshold, per_label_thresholds, metrics)`` or ``None`` if
-    cancelled. Runs under the caller's joblib backend context.
+    cancelled. Runs under the caller's joblib backend context; ``thread_budget``
+    sizes the C search's fits to the run's memory budget.
     """
     texts, classes = prep.texts, prep.classes
     y_train, y_val, y_test = (
@@ -95,11 +113,13 @@ def select_on_split(
         select_on_tuned_thresholds=profile.select_c_on_tuned_thresholds and thresholds_apply,
         threshold_per_label=profile.threshold_per_label,
         threshold_shrink_k=profile.threshold_shrinkage_k,
+        thread_budget=thread_budget,
         # Distribute the C search across 55->75% so progress (and thus the ETA
         # derived from it) keeps moving through the longest phase.
         on_step=lambda i, total, c, f: on_progress(
             progress=55 + round(20 * i / total),
-            phase_detail=f"Testing regularization: C={c} ({i}/{total}) – best F1 so far {f:.3f}",
+            phase_detail=(f"Testing regularization: C={c} ({i}/{total}) – best F1 so far "
+                          f"{f:.3f}{_threads_note(thread_budget)}"),
         ),
     )
     if should_stop():
@@ -148,8 +168,9 @@ def fit_evaluate_deploy(
     ``cv_folds >= 2`` runs k-fold cross-validation (every row trains AND validates
     via out-of-fold) and deploys on 100% of the data; otherwise the classic
     train/val/test split is used and the deploy model is refit on train+val. All
-    label-wise fits share ONE sparse matrix under the configured joblib backend
-    (threading + a float32 solver = all cores at ~1x RAM).
+    label-wise fits share ONE input matrix under the configured joblib backend
+    (threading + a float32 solver); each fit's solver buffers come on top, so every
+    fit runs on the threads the memory budget allows (``settings.train_memory_mb``).
 
     ``max_word_features`` / ``max_char_features`` override the vocabulary caps for
     this run (most specific wins: request -> profile -> settings), so the main
@@ -169,6 +190,10 @@ def fit_evaluate_deploy(
     # The CPU budget (cpu_max_percent) caps the raw n_jobs here — BLAS is pinned
     # to 1 thread, so these head-fit threads are the training's CPU footprint.
     n_jobs = settings.effective_n_jobs()
+    # ...and the memory budget caps them again, per fit: every concurrent fit holds
+    # ~2.5x its matrix, so a thread count that suits the CPU can outgrow the RAM.
+    budget_bytes = settings.effective_train_memory_bytes()
+    thread_budget = ThreadBudget(requested=n_jobs, budget_bytes=budget_bytes)
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):
         if cv_folds >= 2:
@@ -194,17 +219,19 @@ def fit_evaluate_deploy(
                 threshold_shrink_k=profile.threshold_shrinkage_k,
                 stratified=profile.stratified_splits,
                 should_stop=should_stop, task_type=prep.task_type,
+                thread_budget=thread_budget,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).
                 on_step=lambda done, total, detail: on_progress(
-                    progress=45 + round(45 * done / total), phase_detail=detail,
+                    progress=45 + round(45 * done / total),
+                    phase_detail=f"{detail}{_threads_note(thread_budget)}",
                 ),
             )
             deploy_idx = np.arange(len(texts))
         else:
             selected = select_on_split(
                 new_vectorizer, prep, settings, profile,
-                should_stop=should_stop, on_progress=on_progress,
+                should_stop=should_stop, on_progress=on_progress, thread_budget=thread_budget,
             )
             deploy_idx = np.concatenate([prep.train_idx, prep.val_idx])
         if selected is None:
@@ -219,8 +246,10 @@ def fit_evaluate_deploy(
         vectorizer = new_vectorizer()
         on_progress(phase_detail="Computing deploy TF-IDF features...")
         x_deploy = vectorizer.fit_transform(texts[deploy_idx].tolist())
-        final_head = make_head(best_c, n_jobs=n_jobs, solver=settings.solver)
-        on_progress(phase_detail="Fitting the final model on all deploy rows...")
+        final_head = make_head(best_c, n_jobs=thread_budget.for_matrix(x_deploy),
+                               solver=settings.solver)
+        on_progress(phase_detail="Fitting the final model on all deploy rows"
+                                 f"{_threads_note(thread_budget)}...")
         final_head.fit(x_deploy, y_all[deploy_idx])
 
     return Fitted(
@@ -229,4 +258,6 @@ def fit_evaluate_deploy(
         deploy_n_features=int(x_deploy.shape[1]), deploy_nnz=int(x_deploy.nnz),
         deploy_sparse_mb=round(_sparse_mb(x_deploy), 1),
         max_word_features=word_cap, max_char_features=char_cap,
+        train_memory_budget_mb=budget_bytes // MiB if budget_bytes else None,
+        head_fit_threads=thread_budget.summary(),
     )

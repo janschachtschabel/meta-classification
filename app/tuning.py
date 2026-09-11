@@ -20,6 +20,7 @@ from sklearn.model_selection import KFold
 
 from .classifier import make_head
 from .errors import TrainingInputError
+from .memory import ThreadBudget
 from .stratify import stratified_partition
 from .thresholds import (
     apply_thresholds,
@@ -61,6 +62,7 @@ def select_c(
     select_on_tuned_thresholds: bool = False,
     threshold_per_label: bool = True,
     threshold_shrink_k: float | None = None,
+    thread_budget: ThreadBudget | None = None,
 ):
     """Fit the head for each C, score macro-F1 on val; return the best.
 
@@ -83,6 +85,9 @@ def select_c(
     caller can keep it instead of scoring the validation split a second time to
     rediscover it.
 
+    ``thread_budget`` replaces ``n_jobs`` per fit with what the run's memory budget
+    allows on this matrix (see ``memory.ThreadBudget``); ``None`` keeps ``n_jobs``.
+
     :raises ValueError: if ``c_grid`` is empty (e.g. a misconfigured profile),
         instead of failing with an opaque IndexError / a ``None`` head downstream.
     """
@@ -97,7 +102,8 @@ def select_c(
     for index, c in enumerate(c_grid, start=1):
         if should_stop is not None and should_stop():
             break
-        head = make_head(c, n_jobs=n_jobs, solver=solver, tol=tol)
+        jobs = n_jobs if thread_budget is None else thread_budget.for_matrix(x_train)
+        head = make_head(c, n_jobs=jobs, solver=solver, tol=tol)
         head.fit(x_train, y_train)
         proba = head.predict_proba(x_val)
         if tune_each:
@@ -136,6 +142,7 @@ def cross_val_evaluate(
     select_on_tuned_thresholds: bool = False,
     threshold_shrink_k: float | None = None,
     stratified: bool = False,
+    thread_budget: ThreadBudget | None = None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
@@ -168,6 +175,9 @@ def cross_val_evaluate(
     ``tol`` applies to every fold's fit and to nothing else; the deploy fit the caller
     makes afterwards keeps scikit-learn's default. See ``Profile.selection_tol`` for
     what a looser one was measured to be worth.
+
+    ``thread_budget`` sizes each fold's fits to the run's memory budget, as in
+    ``select_c``.
 
     Fairness note: ``C`` and the thresholds are selected on the same OOF predictions
     the metrics report, so those two choices carry a mild in-sample optimism; the
@@ -215,7 +225,8 @@ def cross_val_evaluate(
             # "between the C fits" promise in CV mode as well.
             if should_stop is not None and should_stop():
                 return None
-            head = make_head(c, n_jobs=n_jobs, solver=solver, tol=tol)
+            jobs = n_jobs if thread_budget is None else thread_budget.for_matrix(x_tr)
+            head = make_head(c, n_jobs=jobs, solver=solver, tol=tol)
             head.fit(x_tr, y[tr])
             oof[c][te] = head.predict_proba(x_te).astype(np.float32)
             done += 1
