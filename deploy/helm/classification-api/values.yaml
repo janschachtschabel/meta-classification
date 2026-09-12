@@ -174,7 +174,7 @@ debug: false
 ########################################################################################################################
 
 persistence:
-  ## @param persistence.enabled Enable persistent storage for /data (datasets + trained model bundles + share links)
+  ## @param persistence.enabled Enable persistent storage for /data (datasets, trained model bundles, share links, corrections, run history)
   enabled: true
   ## @param persistence.mountPath Mount path for the data volume
   mountPath: /data
@@ -209,7 +209,8 @@ securityContext:
   ## @param securityContext.allowPrivilegeEscalation Allow privilege escalation
   allowPrivilegeEscalation: false
   ## @param securityContext.readOnlyRootFilesystem Mount the root filesystem read-only
-  ## (safe: all writable paths — datasets, models, share_links.json — point into the PVC mount)
+  ## (safe: all writable paths — datasets, models, share_links.json, feedback.jsonl,
+  ## job_history.jsonl — point into the PVC mount, see configmap-env.yaml)
   readOnlyRootFilesystem: true
   capabilities:
     ## @param securityContext.capabilities.drop Set drop capabilities

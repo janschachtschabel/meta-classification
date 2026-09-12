@@ -9,10 +9,15 @@ data:
   APIV3_CORS_ALLOW_ORIGINS: {{ .Values.config.app.corsOrigins | quote }}
   APIV3_LOG_LEVEL: {{ .Values.config.app.logLevel | quote }}
 
-  # ---- Persistent state (datasets + trained model bundles + share links) ----
+  # ---- Persistent state (datasets, model bundles, share links, corrections, history) ----
+  # Every path the app writes to points into the PVC — which is what makes
+  # securityContext.readOnlyRootFilesystem safe. Leaving one of them at its default
+  # would put it on the read-only root: a correction could not be written at all.
   APIV3_DATA_DIR: {{ printf "%s/datasets" .Values.persistence.mountPath | quote }}
   APIV3_MODELS_DIR: {{ printf "%s/models" .Values.persistence.mountPath | quote }}
   APIV3_SHARE_LINKS_FILE: {{ printf "%s/share_links.json" .Values.persistence.mountPath | quote }}
+  APIV3_FEEDBACK_FILE: {{ printf "%s/feedback.jsonl" .Values.persistence.mountPath | quote }}
+  APIV3_JOB_HISTORY_FILE: {{ printf "%s/job_history.jsonl" .Values.persistence.mountPath | quote }}
 
   # ---- Compute (see README "Resources & tuning") ----
   APIV3_N_JOBS: {{ .Values.config.compute.nJobs | quote }}

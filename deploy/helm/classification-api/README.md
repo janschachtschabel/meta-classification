@@ -3,7 +3,8 @@
 Helm chart for **MetaClassify** — a single-container FastAPI service
 (TF-IDF + LogisticRegression metadata text classification, CPU-only, torch-free,
 served on port `8000`). State lives on one persistent `/data` volume: uploaded CSV
-datasets, trained model bundles and share links.
+datasets, trained model bundles, share links, the corrections editors contribute
+(`POST /feedback`) and the history of finished training runs.
 
 > **Single replica only.** The training job, model LRU cache and rate limiter are
 > process-local, and the model store lives on one PVC — the chart deploys a
@@ -85,7 +86,7 @@ readonly = predict/status). Swagger UI: `https://<host>/docs`.
 
 | Name                                        | Description                                                       | Value                |
 | ------------------------------------------- | ------------------------------------------------------------------ | -------------------- |
-| `persistence.enabled`                       | Enable persistent storage for `/data`                              | `true`               |
+| `persistence.enabled`                       | Enable persistent storage for `/data` (all writable paths)         | `true`               |
 | `persistence.mountPath`                     | Mount path for the data volume                                     | `/data`              |
 | `persistence.storageClassName`              | StorageClass for the data PVC (empty → cluster default)            | `""`                 |
 | `persistence.accessModes`                   | Access modes for the data PVC                                      | `["ReadWriteOnce"]`  |

@@ -9,7 +9,8 @@
 #
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
-# Reset:   docker compose down -v   # WARNING: deletes datasets + trained models
+# Reset:   docker compose down -v   # WARNING: deletes datasets, models and every
+#                                   # correction editors have contributed
 
 services:
   classification-api:
@@ -54,8 +55,15 @@ services:
       APIV3_DATA_DIR: /data/datasets
       APIV3_MODELS_DIR: /data/models
       APIV3_SHARE_LINKS_FILE: /data/share_links.json
+      # Corrections (POST /feedback) and the outcomes of finished runs. On the volume
+      # like the rest: their defaults sit next to the code, which in a container means
+      # inside the image — a re-created container would start with neither, and the
+      # corrections are editorial work nothing regenerates.
+      APIV3_FEEDBACK_FILE: /data/feedback.jsonl
+      APIV3_JOB_HISTORY_FILE: /data/job_history.jsonl
     volumes:
-      # Persistent state: uploaded CSV datasets + trained model bundles.
+      # Persistent state: uploaded CSV datasets, trained model bundles, share links,
+      # collected corrections and the run history.
       - classification-data:/data
     # No healthcheck block: the image already defines one (GET /health).
 
