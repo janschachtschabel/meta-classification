@@ -126,9 +126,11 @@ class PreprocessedBackend(TfidfBackend):
             # Through the ACTIVE preprocessor, not just normalize(): scikit-learn removes
             # stop words AFTER preprocessing, so an unstemmed list against stemmed tokens
             # only removes the forms the stemmer leaves alone. 102 of the 204 entries stem
-            # to a different token, and 32 stemmed function-word forms ("und" -> "and",
-            # "hatte" -> "hatt") then survived — sklearn warns "stop_words may be
-            # inconsistent with preprocessing", and it was right.
+            # to a different token, and 32 stemmed function-word forms ("andere" ->
+            # "and", "hatte" -> "hatt") then survived — sklearn warns "stop_words may
+            # be inconsistent with preprocessing", and it was right. Not "und": the
+            # stemmer leaves it alone, so the connector this investigation started from
+            # was removed correctly even by the broken list.
             prep = self._preprocessor or normalize
             vec.set_params(stop_words=sorted({prep(w) for w in self._stop_words}))
         return vec
