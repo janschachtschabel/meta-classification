@@ -245,6 +245,21 @@ class _ProseScanner(HTMLParser):
         self.loose_text.append(" ".join(data.split()))
 
 
+def test_a_sentence_ending_in_an_abbreviation_gets_no_second_period():
+    """German writes no second period after an abbreviation that ends a sentence, and the
+    duration labels ARE abbreviations: "12 Min.", "1,5 Std.". The pre-flight appended its
+    own period after the cost fragment and printed "12 Min..". The labels keep their
+    period — the cost table shows them on their own — so the sentence has to ask whether
+    one is already there instead of adding a second."""
+    german = load_map("de")
+    assert german["common.minutes"].endswith("."), "the abbreviation keeps its period"
+    assert german["common.hours"].endswith(".")
+
+    training = (UI / "training.js").read_text(encoding="utf-8")
+    assert "endSentence(" in training, "the pre-flight must not append a bare period"
+    assert "}.</p>" not in training, "the bare period this test exists for"
+
+
 def test_no_prose_is_left_hardcoded_in_the_markup():
     """The D6 gate: every word a person reads comes out of the string map.
 

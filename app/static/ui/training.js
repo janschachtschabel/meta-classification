@@ -184,6 +184,11 @@ async function runPreflight() {
   }
 }
 
+/* German writes no second period after an abbreviation that ends a sentence, and the
+   duration labels are abbreviations ("12 Min.", "1,5 Std.") — appending one printed
+   "12 Min..". The labels keep their period: the cost table shows them on their own. */
+const endSentence = (text) => (text.endsWith(".") ? text : `${text}.`);
+
 function preflightSummary(body, labelFields) {
   const profile = $("#train-profile").value;
   const minutes = (body.estimated_minutes || {})[profile];
@@ -204,10 +209,11 @@ function preflightSummary(body, labelFields) {
   const held = Number.isFinite(minutes) && planned < body.threads_requested
     ? t("train.preflight.threadsLimited", { used: planned, requested: body.threads_requested })
     : "";
+  const perModel = labelFields.length > 1
+    ? t("train.preflight.perModel", { count: labelFields.length }) : "";
   return `<p><strong>${t("train.preflight.size", {
       rows: body.total_samples, labels: body.unique_labels })}</strong>
-      ${cost}${held}${labelFields.length > 1
-        ? t("train.preflight.perModel", { count: labelFields.length }) : ""}.</p>
+      ${endSentence(`${cost}${held}${perModel}`)}</p>
     <p>${kept === undefined
       ? t("train.preflight.keepsUnknown", { threshold: current })
       : t("train.preflight.keeps", { threshold: current, kept, total: body.unique_labels })}${
@@ -215,6 +221,7 @@ function preflightSummary(body, labelFields) {
       : ` ${t("train.preflight.heuristicPicks", { recommended })}
           <button type="button" class="small" data-use-threshold="${recommended}">${
             t("train.preflight.useValue", { value: recommended })}</button>`}</p>
-    <p class="muted">${t("train.preflight.checkedAgainst", { field: esc(labelFields[0]) })}${
-      labelFields.length > 1 ? t("train.preflight.firstFieldOnly") : ""}.</p>`;
+    <p class="muted">${endSentence(
+      t("train.preflight.checkedAgainst", { field: esc(labelFields[0]) })
+      + (labelFields.length > 1 ? t("train.preflight.firstFieldOnly") : ""))}</p>`;
 }
