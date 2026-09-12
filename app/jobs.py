@@ -408,8 +408,13 @@ class JobRunner:
                 # Invalidate the running thread's generation so its eventual
                 # completion cannot overwrite this reset.
                 self._generation += 1
+                # The run's own measurements go with its results: a peak and a thread
+                # count belong to a run, and reported beside "idle" they describe one
+                # the status no longer admits to. rss_mb is not here — it is read live,
+                # and the abandoned thread's memory really is still held.
                 self._apply(dict(status="idle", phase="", message="Hard stopped.",
-                                 progress=0, results=None))
+                                 progress=0, results=None, peak_rss_mb=None,
+                                 head_fit_threads=None, threads_requested=None))
 
 
 # Module-level singleton used by the API routes.

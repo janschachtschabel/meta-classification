@@ -399,3 +399,37 @@ def test_a_progress_update_during_a_status_read_keeps_its_peak(monkeypatch):
         assert job.snapshot()["peak_rss_mb"] == 9000
     finally:
         release.set()
+
+
+@needs_rss
+def test_a_hard_stop_leaves_no_measurements_of_the_run_it_disowned():
+    """`hard=true` resets the status to idle and drops the run's results — the operator
+    asked for the run to be gone. Its measurements are part of that outcome: a peak and
+    a thread count belong to a run, and reported next to `idle` they describe one the
+    status no longer admits to. `rss_mb` stays, because it is read live and the
+    abandoned thread's memory is really still held."""
+    job = JobRunner()
+    reported, release = threading.Event(), threading.Event()
+
+    def target(*, on_progress, should_stop):
+        on_progress(phase="selecting", peak_rss_mb=4096,
+                    head_fit_threads=2, threads_requested=8)
+        reported.set()
+        release.wait(5)
+        return {}
+
+    job.start(target, model_name="m")
+    try:
+        assert reported.wait(2), "target never reported"
+        running = job.snapshot()
+        assert running["peak_rss_mb"] >= 4096 and running["head_fit_threads"] == 2
+        job.stop(hard=True)
+        idle = job.snapshot()
+    finally:
+        release.set()
+
+    assert idle["status"] == "idle"
+    assert idle["peak_rss_mb"] is None, "a peak without a run"
+    assert idle["head_fit_threads"] is None, "threads without a run"
+    assert idle["threads_requested"] is None
+    assert idle["rss_mb"] > 0, "the live reading still describes this process"

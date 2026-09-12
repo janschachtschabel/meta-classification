@@ -209,7 +209,10 @@ async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> d
     or during the save cannot prevent the model: the run then finishes and reports
     `completed` with its metrics, because the bundle exists. Check `/train/status`
     after stopping rather than assuming nothing was written. `hard=true`: reset the
-    status to `idle` immediately. **Auth:** admin.
+    status to `idle` immediately, dropping the run's results and its measurements
+    (`peak_rss_mb`, the thread counts) — the run is disowned, not finished. Its thread
+    may still be completing a deploy fit or a save in the background, which is why
+    `rss_mb` can stay high and why a new run is refused until it is done. **Auth:** admin.
     """
     job_runner.stop(hard=hard)
     return {"status": "idle" if hard else "stopping"}
