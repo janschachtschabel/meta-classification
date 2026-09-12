@@ -203,7 +203,12 @@ async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> d
     `hard=false` (default): cooperative cancellation at the next checkpoint (between
     the C fits, or before the final training). A run in a CHILD process that has not
     reached one within 30 seconds is ended outright — one head fit of a large run is
-    minutes, and a stopped run publishes nothing either way. `hard=true`: reset the
+    minutes, and a run stopped at a checkpoint publishes nothing.
+
+    The last checkpoint sits before the deploy fit, so a stop pressed during that fit
+    or during the save cannot prevent the model: the run then finishes and reports
+    `completed` with its metrics, because the bundle exists. Check `/train/status`
+    after stopping rather than assuming nothing was written. `hard=true`: reset the
     status to `idle` immediately. **Auth:** admin.
     """
     job_runner.stop(hard=hard)

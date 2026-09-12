@@ -544,9 +544,24 @@ def test_active_model_name_survives_hard_stop_while_thread_lives():
     assert job.active_model_name() is None
 
 
+def _wait_for_terminal_status(job, timeout: float = 3.0) -> dict:
+    """The snapshot once the run is no longer running."""
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline and job.snapshot()["status"] == "running":
+        time.sleep(0.01)
+    return job.snapshot()
+
+
 def test_job_runner_cooperative_stop_sets_stopped_status():
     """JobRunner.stop() makes a cooperative target finish and the job report
-    status 'stopped' (not 'completed')."""
+    status 'stopped' (not 'completed').
+
+    The target returns an EMPTY result, which is what a cooperative stop means
+    throughout the pipeline: `run_training` returns `{}` when a stop check cut it
+    short, and so does `run_in_child`. A populated result exists only once the bundle
+    has been published."""
     import threading
     import time
 
@@ -559,15 +574,43 @@ def test_job_runner_cooperative_stop_sets_stopped_status():
         running.set()
         while not should_stop():
             time.sleep(0.005)
-        return {"ok": True}
+        return {}
 
     job.start(target, model_name="m")
     assert running.wait(2.0), "training target did not start"
     job.stop()  # cooperative stop
-    deadline = time.time() + 2.0
-    while time.time() < deadline and job.snapshot()["status"] == "running":
-        time.sleep(0.01)
-    assert job.snapshot()["status"] == "stopped"
+    assert _wait_for_terminal_status(job)["status"] == "stopped"
+
+
+def test_a_stop_arriving_after_the_model_was_published_reports_completed():
+    """The last stop checkpoint sits before the deploy fit, so a stop pressed during
+    that fit or during the skops save cannot prevent the bundle: `registry.save()` has
+    already published it by the time the target returns.
+
+    Reporting "stopped" there loses the metrics of a model that EXISTS — and the next
+    attempt under the same name is then refused with 409 "already exists", right after
+    the operator was told the run had stopped. What is true is that the run completed.
+    """
+    import threading
+
+    from app.jobs import JobRunner
+
+    job = JobRunner()
+    published, release = threading.Event(), threading.Event()
+
+    def target(*, on_progress, should_stop):
+        published.set()  # stands for registry.save() having published the bundle
+        release.wait(3)
+        return {"model_name": "m", "metrics": {"f1_macro": 0.5}}
+
+    job.start(target, model_name="m")
+    assert published.wait(2.0), "training target did not start"
+    job.stop()  # too late — the bundle is on disk
+    release.set()
+
+    state = _wait_for_terminal_status(job)
+    assert state["status"] == "completed", "a published run did not stop"
+    assert state["results"]["metrics"]["f1_macro"] == 0.5, "the metrics were discarded"
 
 
 def test_run_training_cross_validation_mode(tmp_path):

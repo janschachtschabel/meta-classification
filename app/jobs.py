@@ -322,7 +322,14 @@ class JobRunner:
         def runner() -> None:
             try:
                 results = target(*args, on_progress=on_progress, should_stop=self.should_stop)
-                if self.should_stop():
+                # A result means the work finished and the bundle was PUBLISHED: the
+                # last stop checkpoint sits before the deploy fit, so a stop pressed
+                # during that fit or during the save arrives too late to prevent it.
+                # Reporting that as stopped discarded the metrics of a model that
+                # exists — and the next attempt under the same name was then refused
+                # as "already exists", right after the operator was told it stopped.
+                # A cooperative stop is the other case: every stop check returns {}.
+                if not results and self.should_stop():
                     self._finish(generation, status="stopped", message="Training stopped.",
                                  eta_seconds=0)
                 else:
