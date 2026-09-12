@@ -410,34 +410,52 @@ a property of leave-one-out on character features, not of the preprocessing.
 
 **2. Whether the three classic normalisations buy anything anyway**
 (🟢 `scripts/benchmark_preprocessing.py`, identical rows, split, seed, C grid and
-threshold procedure; only the text the vectorizer sees changes):
+threshold tuner; only the text the vectorizer sees changes):
 
-| Variant | non-zeros/row | test macro F1 | vs baseline | test micro F1 | vectorize |
-|---|---:|---:|---:|---:|---:|
-| baseline | 278 | **0.7084** | — | 0.7917 | 9 s |
-| stopwords (word analyzer only) | 255 | 0.7067 | −0.0017 | 0.7907 | 8 s |
-| stemming (Snowball German) | 247 | 0.7017 | −0.0067 | 0.7882 | **116 s** |
-| stopwords + stemming | 224 | 0.7060 | −0.0024 | 0.7904 | 120 s |
-| lemmas (simplemma) | 271 | 0.7081 | −0.0003 | **0.7941** | 14 s |
+| Variant | non-zeros/row | best C | val macro F1 | test macro F1 | vs baseline | test micro F1 | vectorize |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| baseline | 278 | 16 | **0.7260** | 0.7084 | — | 0.7917 | 9 s |
+| stopwords (word analyzer only) | 255 | 32 | 0.7230 | **0.7130** | +0.0046 | 0.7933 | 9 s |
+| stemming (Snowball German) | 247 | 32 | **0.7300** | 0.7060 | −0.0024 | 0.7921 | **119 s** |
+| stopwords + stemming | 223 | 32 | 0.7209 | 0.7066 | −0.0018 | 0.7910 | 128 s |
+| lemmas (simplemma) | 271 | 16 | 0.7318 | 0.7081 | −0.0003 | **0.7941** | 15 s |
 
-**Practical reading:** none of them wins. Stopwords and lemmas land inside the noise band
-this project uses elsewhere (±0.002 macro), stemming loses beyond it. The reason is in the
-architecture: `char_wb` 5-grams already carry the morphology a stemmer would produce —
-which is exactly why the 334 in-word "und" features above have real weight — and `idf`
-plus `max_df` already handle function words. Stemming's one measurable gain is a 19 %
-smaller matrix (278 → 224 non-zeros per row), but the feature caps are the cheaper lever
-for that and are measured above.
+**Practical reading: still none of them wins — and this table shows why more clearly than
+the first run did.** The two splits disagree about the sign. Stopword removal is 0.0030
+*worse* than the baseline on the validation split and 0.0046 *better* on the test split;
+stemming has the best validation macro of all five (0.7300) and a below-baseline test
+macro. Since `C` is chosen on validation, a 0.0017 validation difference there decides
+which model is measured on test at all — differences of this size are not a property of
+the preprocessing, they are the split.
+
+The reason none of it helps is architectural: `char_wb` 5-grams already carry the
+morphology a stemmer would produce — which is exactly why the 334 in-word "und" features
+above have real weight — and `idf` plus `max_df` already handle function words. Stemming's
+one measurable gain is a 20 % smaller matrix (278 → 223 non-zeros per row), but the
+feature caps are the cheaper lever for that and are measured above.
 
 And the cost is not only training: any preprocessing change has to run on **every**
 `/predict` call as well, or model and query stop matching. Snowball costs 13× the
 vectorization time here; lemmas would add a language-data dependency to a torch-free
-image. Neither is worth −0.000 to −0.007 macro F1.
+image. Neither is worth a difference the splits cannot agree on the sign of.
 
-**Caveats:** one split, one seed — the differences below ~0.002 are not separable from
-noise. The word cap stays saturated at 80 000 in every variant, so the possible second
+**Caveats:** one split, one seed — nothing here separates a ±0.005 macro difference from
+noise, which is the table's own finding above. The C grid is `4, 16, 32`, ending at the
+top of what the production profiles search; three of the five variants pick that top
+value, so a wider grid could move them further — all three are variants that lose on test
+anyway, and the two that pick 16 (baseline, lemmas) reproduced the earlier run's scores
+exactly. The word cap stays saturated at 80 000 in every variant, so the possible second
 benefit of stemming (more room under the cap on much larger corpora) is not measured
 here; on 26 450 rows every variant hits the same cap. `snowballstemmer` and `simplemma`
 are development-only and are not in `requirements.lock` or the image.
+
+**Correction (2026-09-12):** the first version of this table was measured with a stopword
+list that had not been through the variant's own preprocessor. scikit-learn removes stop
+words *after* preprocessing, so in "stopwords + stemming" an unstemmed list met stemmed
+tokens and 32 function-word forms survived — sklearn warned about it and the warning was
+missed. That row measured stemming plus partial stopword removal. The table above is the
+re-run with the list stemmed the same way the tokens are (and with the third C value);
+the two rows that share neither problem, baseline and lemmas, came back identical.
 
 ## Sources
 

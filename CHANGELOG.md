@@ -80,8 +80,9 @@ without changing a single number the model produces.
   the API process, thread against process mode.
 - `scripts/benchmark_preprocessing.py` — what German stopwords, Snowball stemming and
   simplemma lemmas buy over the shipped preprocessing. Measured on data_30k_ai: nothing
-  (macro F1 −0.007 to −0.000, stemming at 13× the vectorization time), because `char_wb`
-  5-grams already carry the morphology and `idf`/`max_df` already handle function words.
+  (macro F1 −0.002 to +0.005, with validation and test disagreeing about the sign, and
+  stemming at 13× the vectorization time), because `char_wb` 5-grams already carry the
+  morphology and `idf`/`max_df` already handle function words.
   See `docs/model-approach-comparison.md`. In the Linux container, after two 30k
   `auto` runs with both models loaded: 1,237 MB in thread mode, 321 MB in process mode;
   during a run the API process stays at 166 MB instead of 1.7–1.9 GB.
@@ -105,8 +106,10 @@ without changing a single number the model produces.
   is now ended outright (it publishes nothing either way).
 - **The peak is never below the memory shown beside it.** `rss_mb` is read live while
   `peak_rss_mb` travels with progress updates, which inside a head fit can be minutes
-  old; the runner now keeps its own maximum of what it reads, which is also the peak
-  between two updates.
+  old; the status now reports the higher of the two, which is also the only peak anyone
+  sees for what happens between two updates. In the answer only — the bundle and the job
+  history keep the run's own sampling, so a recorded peak stays comparable between two
+  runs instead of depending on how often the status was polled.
 - Every error written for the operator is shown verbatim on `/train/status`, not only
   input errors; everything else stays sanitized.
 - The word and character vocabularies are fitted one after the other: concurrently their
