@@ -236,7 +236,7 @@ const STRINGS_DE = {
   "trainStatus.state.running": "läuft",
   "trainStatus.state.stopped": "gestoppt",
   "trainStatus.stop": "Training stoppen",
-  "trainStatus.stopRequested": "Stopp angefordert — Warteschlange geleert.",
+  "trainStatus.stopRequested": "Stopp angefordert — Warteschlange geleert. Der Lauf endet in der Regel innerhalb von ~30 s.",
   "trainStatus.threadsLimited": "{used} von {requested} — vom Speicherbudget gebremst",
 
   "models.action.info": "Info",

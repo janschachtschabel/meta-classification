@@ -191,8 +191,10 @@ async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> d
     """Cancel the running training.
 
     `hard=false` (default): cooperative cancellation at the next checkpoint (between
-    the C fits, or before the final training). `hard=true`: reset the status to `idle`
-    immediately. **Auth:** admin.
+    the C fits, or before the final training). A run in a CHILD process that has not
+    reached one within 30 seconds is ended outright — one head fit of a large run is
+    minutes, and a stopped run publishes nothing either way. `hard=true`: reset the
+    status to `idle` immediately. **Auth:** admin.
     """
     job_runner.stop(hard=hard)
     return {"status": "idle" if hard else "stopping"}

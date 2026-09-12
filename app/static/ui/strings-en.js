@@ -235,7 +235,7 @@ const STRINGS_EN = {
   "trainStatus.state.running": "running",
   "trainStatus.state.stopped": "stopped",
   "trainStatus.stop": "Stop training",
-  "trainStatus.stopRequested": "Stop requested — queue cleared.",
+  "trainStatus.stopRequested": "Stop requested — queue cleared. The run usually ends within ~30 s.",
   "trainStatus.threadsLimited": "{used} of {requested} — held back by the memory budget",
 
   "models.action.info": "Info",

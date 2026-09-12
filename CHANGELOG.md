@@ -63,6 +63,14 @@ without changing a single number the model produces.
   `app/dataset_load.py`): loading the whole `data_300k.csv` peaks at +0.46 GB instead of
   +1.48 GB, with the same result. A file that turns out not to be UTF-8 restarts the read
   as cp1252 rather than mixing encodings.
+- **A stop ends a run.** Cancellation is checked between head fits, and one fit of a
+  large run is minutes — the status kept saying "running" long after the operator
+  pressed stop. A run in a child process that has not reached a checkpoint within 30 s
+  is now ended outright (it publishes nothing either way).
+- **The peak is never below the memory shown beside it.** `rss_mb` is read live while
+  `peak_rss_mb` travels with progress updates, which inside a head fit can be minutes
+  old; the runner now keeps its own maximum of what it reads, which is also the peak
+  between two updates.
 - Every error written for the operator is shown verbatim on `/train/status`, not only
   input errors; everything else stays sanitized.
 - The word and character vocabularies are fitted one after the other: concurrently their
