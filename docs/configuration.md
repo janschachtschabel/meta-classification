@@ -41,13 +41,29 @@ limits see real client IPs · storage paths on a persistent volume.
 | `APIV3_DATA_DIR` | `./data` | CSV datasets (uploads land here). `.csv` and `.csv.gz` are both accepted — gzip is read natively and is the sane choice above ~100 MB. |
 | `APIV3_MODELS_DIR` | `./models` | Trained model bundles. |
 | `APIV3_SHARE_LINKS_FILE` | `./share_links.json` | Persisted expiring share links. |
+| `APIV3_FEEDBACK_FILE` | `./feedback.jsonl` | Corrections recorded via `POST /feedback` — not a log but the data a later run learns from, and never pruned. |
+| `APIV3_JOB_HISTORY_FILE` | `./job_history.jsonl` | How finished runs ended (`GET /train/history`), newest 200. |
 | `APIV3_CONFIG_FILE` | `./config.yaml` | Training profiles file (layer 2 above). |
 
-In containers, the provided `docker-compose.yml` and Helm chart point the three
-*state* paths (`DATA_DIR`, `MODELS_DIR`, `SHARE_LINKS_FILE`) at the mounted
-volume (`/data/*`) automatically. That volume is the only thing that cannot be
-rebuilt from the image — see [Backup & restore](../README.md#backup--restore) for
-what it costs to lose and how to copy it consistently while the service runs. `APIV3_CONFIG_FILE` deliberately stays at the
+Five of these are *state*: `DATA_DIR`, `MODELS_DIR`, `SHARE_LINKS_FILE`,
+`FEEDBACK_FILE` and `JOB_HISTORY_FILE`. The provided `docker-compose.yml` and
+Helm chart point the **first three** at the mounted volume (`/data/*`)
+automatically; the two `.jsonl` files keep their default next to the code, which
+in a container means inside the image. **Set them explicitly** if corrections and
+run history are to survive — they are the two that are easiest to lose unnoticed:
+
+```
+APIV3_FEEDBACK_FILE=/data/feedback.jsonl
+APIV3_JOB_HISTORY_FILE=/data/job_history.jsonl
+```
+
+Without that, a re-created container starts with an empty history and no
+corrections, and under the Helm chart's read-only root filesystem
+(`securityContext.readOnlyRootFilesystem: true`) the write fails outright: a
+`POST /feedback` answers 500, while the history only logs a warning and stays
+empty. The volume is the only thing that cannot be rebuilt from the image — see
+[Backup & restore](../README.md#backup--restore) for what it costs to lose and
+how to copy it consistently while the service runs. `APIV3_CONFIG_FILE` deliberately stays at the
 image-baked `/app/config.yaml`: the profiles file ships with the image, and
 under the Helm chart's read-only root filesystem it is **immutable at runtime**
 (the "reloaded on every `POST /train`" note above then only matters for local
