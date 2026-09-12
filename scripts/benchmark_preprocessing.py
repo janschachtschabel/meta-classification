@@ -159,11 +159,19 @@ def log(msg: str) -> None:
 def tune_thresholds(y_true: np.ndarray, proba: np.ndarray) -> np.ndarray:
     """Per-label cut that maximises F1 on the validation split.
 
-    The same tuner as the other benchmark scripts, so their numbers stay comparable with
-    these. NOT the one in ``app/thresholds.py``, which searches a fixed 0.05 grid from a
+    Copied, the way the other benchmark scripts copy it, so each experiment stays a
+    self-contained record of how its numbers were produced: a shared helper would let a
+    later edit silently change what an old script reproduces. Identical to the one in
+    ``benchmark_c_grid.py`` and ``benchmark_feature_caps.py``; ``benchmark_field_weights``
+    only renames the argument, while ``benchmark_label_scaling`` searches a coarser grid
+    (40 quantiles instead of 60) and its absolute numbers therefore are not comparable
+    with these.
+
+    NOT the tuner in ``app/thresholds.py``, which searches a fixed 0.05 grid from a
     global starting cut and keeps a label from predicting nothing at all; this searches
-    quantiles of each label's own score distribution. Every variant here gets it, so it
-    cannot favour one — but an absolute number is not comparable with a trained model's.
+    quantiles of each label's own score distribution. Every variant here gets the same
+    one, so it cannot favour one — but an absolute number from it is not comparable with
+    a trained model's.
     """
     cuts = np.zeros(proba.shape[1])
     qs = np.linspace(0.50, 0.9995, 60)
