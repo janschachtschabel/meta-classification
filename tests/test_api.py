@@ -129,6 +129,37 @@ def test_feedback_is_bounded_at_the_trust_boundary(trained_model):
         "text": "x", "model_name": "../escape", "corrected": ["uri:hist"]}).status_code == 400
 
 
+def test_a_correction_that_cannot_be_stored_says_so_instead_of_failing_as_a_bug(
+    monkeypatch, tmp_path
+):
+    """Verified against a non-writable path: this used to answer 500.
+
+    Under the chart's read-only root filesystem the default feedback file cannot be
+    written, and a 500 with a sanitized body tells the editor nothing and the operator
+    less. 503 with the setting named is the difference between a fix and a ticket — and
+    the UI keeps the Send button enabled on an error, so the correction can be retried
+    once the volume is writable.
+    """
+    from app import feedback as feedback_store
+
+    blocked = tmp_path / "feedback.jsonl"
+    blocked.mkdir()
+    monkeypatch.setattr(feedback_store, "_feedback_path", lambda: blocked)
+
+    answer = client.post("/feedback", headers=RO, json={
+        "text": "Der Wiener Kongress von 1815",
+        "model_name": "api_model",
+        "predicted": ["uri:math"],
+        "corrected": ["uri:hist"],
+        "source": "ui",
+    })
+
+    assert answer.status_code == 503, answer.text
+    detail = answer.json()["detail"]
+    assert "APIV3_FEEDBACK_FILE" in detail, "say what to fix"
+    assert str(blocked) not in detail, "and not where the server keeps its files"
+
+
 def test_the_feedback_export_is_admin_only(trained_model):
     """Posting one correction is part of the job; walking off with every text an
     editor ever pasted is not."""

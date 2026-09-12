@@ -5,9 +5,10 @@ Thin, like every route module: the store and the export shape live in ``app.feed
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from .. import feedback as feedback_store
+from ..errors import FeedbackWriteError
 from ..limiter import default_limit, export_limit, limiter
 from ..schemas import FeedbackRequest
 from ..security import require_role, safe_name
@@ -32,9 +33,19 @@ async def record_feedback(
 
     **Auth:** readonly — correcting an answer is part of classifying, and the editors
     who spot the mistakes are the ones without an admin key.
+
+    Answers **503** if the correction could not be written, naming the setting to fix.
+    Never a 200 it cannot back up: this is training data, and a silent loss is the one
+    failure nobody notices until the next run does not improve.
     """
     safe_name(body.model_name, "model name")
-    collected = feedback_store.append(body.model_dump())
+    try:
+        collected = feedback_store.append(body.model_dump())
+    except FeedbackWriteError as exc:
+        # 503 rather than 500: the request was valid, the storage is not ready, and
+        # retrying is the right move — which a sanitized "Internal server error" says
+        # to nobody. The message is written for whoever has to fix it.
+        raise HTTPException(503, str(exc)) from exc
     return {"status": "recorded", "collected": collected}
 
 

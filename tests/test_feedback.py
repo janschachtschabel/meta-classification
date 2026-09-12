@@ -11,6 +11,7 @@ import io
 import pytest
 
 from app import feedback
+from app.errors import FeedbackWriteError
 
 
 @pytest.fixture
@@ -92,6 +93,32 @@ def test_a_damaged_line_costs_that_line_only(store):
     assert [entry["text"] for entry in feedback.read_all()] == ["good"]
     feedback.append(_correction("after", ["uri:math"]))
     assert [entry["text"] for entry in feedback.read_all()] == ["good", "after"]
+
+
+def test_a_correction_that_cannot_be_saved_fails_instead_of_vanishing(tmp_path, monkeypatch):
+    """The one failure this module must not swallow.
+
+    The job history logs a warning and moves on, because by then the run is finished and
+    saved — the record is only a record. A correction is the opposite: it IS the work, and
+    nothing regenerates it. An editor told "recorded" closes the tab, so a silent failure
+    costs exactly the thing the feedback loop exists to collect. It fails loudly instead,
+    with a message that says what to fix and without the server's paths in it.
+    """
+    blocked = tmp_path / "feedback.jsonl"
+    blocked.mkdir()  # a directory where the file belongs: the append's own write fails
+    monkeypatch.setattr(feedback, "_feedback_path", lambda: blocked)
+    monkeypatch.setattr(feedback, "_count", None)
+
+    with pytest.raises(FeedbackWriteError) as failure:
+        feedback.append(_correction("Der Wiener Kongress", ["uri:hist"]))
+
+    assert "APIV3_FEEDBACK_FILE" in str(failure.value), "name the setting an operator fixes"
+    assert str(blocked) not in str(failure.value), "a client message carries no server paths"
+
+    # And it counted nothing: the next correction is the first one collected, not the
+    # second. A phantom count would report progress that is not on disk.
+    monkeypatch.setattr(feedback, "_feedback_path", lambda: tmp_path / "writable.jsonl")
+    assert feedback.append(_correction("Der Wiener Kongress", ["uri:hist"])) == 1
 
 
 def test_an_empty_store_exports_a_header_not_nothing(store):

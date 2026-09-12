@@ -3,7 +3,8 @@
 Arbitrary exception text can leak paths or data fragments, so the training job
 sanitizes unknown failures to a generic message. Errors of the types below are
 the deliberate exception: their messages are written for the user (wrong column
-name, too few rows, bad cv_folds, ...) and safe to surface on /train/status.
+name, too few rows, bad cv_folds, ...) and safe to surface on /train/status --
+or, for the routes that raise them directly, in their own response.
 """
 
 from __future__ import annotations
@@ -23,3 +24,12 @@ class TrainingInputError(UserFacingError, ValueError):
 class TrainingProcessError(UserFacingError, RuntimeError):
     """The training's child process ended without a result — killed (most often by the
     out-of-memory killer) or crashed. The message says so and what to do about it."""
+
+
+class FeedbackWriteError(UserFacingError, RuntimeError):
+    """A correction could not be written to disk, so it was NOT recorded.
+
+    Deliberately not an ``OSError`` any more: the storage failure has been turned into a
+    statement about the correction, and a caller that wraps its own file handling in
+    ``except OSError`` must not swallow this one by accident.
+    """
