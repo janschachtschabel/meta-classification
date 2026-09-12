@@ -98,6 +98,7 @@ class JobRunner:
         """
         with self._lock:
             state = dict(self._state)
+            generation = self._generation
             state["queued"] = [entry[2] for entry in self._queue]
             if state["status"] == "running" and self._start_ts is not None:
                 elapsed = time.monotonic() - self._start_ts
@@ -115,6 +116,17 @@ class JobRunner:
         worker = state.pop("worker_pid", None)
         rss = rss_bytes() + (rss_bytes(worker) if worker and state["status"] == "running" else 0)
         state["rss_mb"] = rss // MiB if rss else None
+        if state["status"] == "running" and state["rss_mb"]:
+            # The run reports its peak WITH its progress updates, and inside a head fit the
+            # newest one can be minutes old — this reading may long have passed it, which
+            # showed a peak below the figure beside it. Keep the higher of the two: it is
+            # also the only peak anyone sees for what happens between two updates.
+            peak = max(state["peak_rss_mb"] or 0, state["rss_mb"])
+            state["peak_rss_mb"] = peak
+            with self._lock:
+                # Not into a run that started meanwhile: that one's peak is its own.
+                if self._generation == generation:
+                    self._state["peak_rss_mb"] = peak
         return state
 
     def is_running(self) -> bool:

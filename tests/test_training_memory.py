@@ -99,6 +99,31 @@ def test_status_reads_memory_live_and_carries_the_runs_peak():
 
 
 @needs_rss
+def test_the_peak_is_never_below_the_memory_shown_beside_it():
+    """`rss_mb` is read when the status is asked for, `peak_rss_mb` travels with progress
+    updates — and inside a head fit the newest update can be minutes old. The card then
+    showed a peak BELOW the figure next to it. The runner keeps its own maximum of what
+    it reads, which is also the peak between two progress updates."""
+    job = JobRunner()
+    reported, release = threading.Event(), threading.Event()
+
+    def target(*, on_progress, should_stop):
+        on_progress(phase="features", peak_rss_mb=1)  # a peak from long ago
+        reported.set()
+        release.wait(5)
+        return {}
+
+    job.start(target, model_name="m")
+    try:
+        assert reported.wait(2), "target never reported"
+        running = job.snapshot()
+    finally:
+        release.set()
+    assert running["rss_mb"] > 1
+    assert running["peak_rss_mb"] >= running["rss_mb"]
+
+
+@needs_rss
 def test_the_status_counts_the_training_process_memory_without_showing_its_id():
     """In a child process the training's memory is not the API's: the status adds the
     worker's RSS, because the container's limit applies to the sum."""
