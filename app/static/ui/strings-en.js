@@ -205,7 +205,7 @@ const STRINGS_EN = {
   "train.weights.help": "<strong>Field weight</strong> — how often a field is repeated in the training text. A title or a keyword list carries far more signal per word than a long description, but the description supplies more words and drowns it out; repeating a field gives it that weight back. <strong>1 = unchanged</strong> (the default). Repetition is damped logarithmically, so 2 is worth about 1.7×, not 2×.<br><strong>Note:</strong> a model trained this way expects input built the same way — assemble the text you later send to <code>/predict</code> with the same repetitions, otherwise its tuned thresholds sit on a different distribution.",
 
   "trainStatus.announce.completed": "Training {name} completed.",
-  "trainStatus.announce.failed": "Training failed: {message}.",
+  "trainStatus.announce.failed": "Training failed: {message}",
   "trainStatus.announce.running": "Training {name}: {phase}.",
   "trainStatus.announce.stopped": "Training stopped.",
   "trainStatus.chip.done": "✓ {name} done",

@@ -273,6 +273,21 @@ def test_a_sentence_ending_in_an_abbreviation_gets_no_second_period():
                 assert not form.endswith("."), f"{key} ({language}) now needs endSentence"
 
 
+def test_the_failure_announcement_does_not_double_the_period_of_its_message():
+    """`trainStatus.announce.failed` embeds the run's error text, and those texts are
+    sentences: "The training process ended without a result (exit code 137). Its log is
+    in the server log." The string appended a period of its own, so the aria-live region
+    a screen reader reads out ended in "..". The message carries the period; the
+    announcement adds one only when it is missing."""
+    for language in ("de", "en"):
+        failed = load_map(language)["trainStatus.announce.failed"]
+        assert "{message}" in failed, "the announcement quotes the run's error text"
+        assert not failed.endswith("."), f"announce.failed ({language}) adds a period"
+
+    status = (UI / "train-status.js").read_text(encoding="utf-8")
+    assert "endSentence(" in status, "the announcement must close its own sentence"
+
+
 def test_no_prose_is_left_hardcoded_in_the_markup():
     """The D6 gate: every word a person reads comes out of the string map.
 

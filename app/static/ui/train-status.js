@@ -64,8 +64,12 @@ function announceTrainState(s) {
                        { name, phase: s.phase || t("trainStatus.phaseStarting") });
   } else if (s.status === "completed") el.textContent = t("trainStatus.announce.completed", { name });
   else if (s.status === "error") {
-    el.textContent = t("trainStatus.announce.failed",
-                       { message: s.message || t("trainStatus.seeStatus") });
+    // The message is the run's own error text and usually a finished sentence
+    // ("... Its log is in the server log."), so the string adds no period of its own
+    // and this closes the sentence only when the message did not — the aria-live
+    // region was being handed "..". Same helper the pre-flight sentence uses.
+    el.textContent = endSentence(t("trainStatus.announce.failed",
+                                   { message: s.message || t("trainStatus.seeStatus") }));
   } else if (s.status === "stopped") el.textContent = t("trainStatus.announce.stopped");
   else el.textContent = "";
 }
