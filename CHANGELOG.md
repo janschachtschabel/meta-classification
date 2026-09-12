@@ -2,6 +2,37 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — levers that never arrived (2026-09-12)
+
+Four findings from using the thing: three of them were fields or numbers the UI showed
+and the code then ignored.
+
+### Fixed
+
+- **`/train` dropped the text levers it accepted.** `text_column_weights`,
+  `max_word_features` and `max_char_features` were validated against their bounds and
+  then left out of the run: `_REQ_KEYS` is an allowlist and named none of them. A title
+  weighting set in the form never reached a single model, while the bundle reported the
+  config default as if it had been applied. The pipeline had been ready for all three.
+- **An explanation charged every word for the text's punctuation.** The leave-one-out
+  impacts compared the ORIGINAL text against rejoined word lists, so everything the
+  rejoining drops — punctuation, spacing, every word past the 60-word cap — sat in each
+  impact, and a word that changes nothing showed one. The full word list is now the
+  baseline. (What no leave-one-out can separate is context: removing a word also
+  destroys the character n-grams spanning it, so a connector inside a characteristic
+  phrase is charged for the phrase. The UI note says so now.)
+- **"Mit auto sind das etwa 7 Min.."** — the duration labels are abbreviations that
+  carry their own period, and the pre-flight sentence appended a second one. German
+  writes none there.
+
+### Added
+
+- **A model that declines says what it almost said.** "No label above the threshold" is
+  true but a dead end: on a 57-label subject model a short query had Chemie at 0.302
+  against a threshold of 0.60. The query card now asks once more for the three most
+  probable labels and shows them dimmed below the note, marked as below threshold. The
+  model's decision is untouched.
+
 ## [Unreleased] — training memory (2026-09-11)
 
 A training run on the full WLO export (426 724 records) was OOM-killed in an 8 GB
