@@ -15,7 +15,11 @@ The status snapshot reports the current phase/progress/message plus a rough
 ``elapsed_seconds`` (which grows regardless) it exposes a training thread that
 went silent — hung, or crawling through a page-file-thrashing save.
 ``rss_mb`` is the process' resident memory, read when the status is asked for;
-``peak_rss_mb`` is the highest the current (or last) run reported.
+``peak_rss_mb`` is the highest the current (or last) run reported. The STATUS raises
+that to the live reading when the reading is higher — otherwise a peak minutes old
+shows below the figure beside it. What the bundle and the job history record is the
+run's own sampling alone, so those numbers stay comparable between two runs instead of
+depending on how often someone opened the status page.
 """
 
 from __future__ import annotations
@@ -98,7 +102,6 @@ class JobRunner:
         """
         with self._lock:
             state = dict(self._state)
-            generation = self._generation
             state["queued"] = [entry[2] for entry in self._queue]
             if state["status"] == "running" and self._start_ts is not None:
                 elapsed = time.monotonic() - self._start_ts
@@ -119,14 +122,15 @@ class JobRunner:
         if state["status"] == "running" and state["rss_mb"]:
             # The run reports its peak WITH its progress updates, and inside a head fit the
             # newest one can be minutes old — this reading may long have passed it, which
-            # showed a peak below the figure beside it. Keep the higher of the two: it is
+            # showed a peak below the figure beside it. Report the higher of the two: it is
             # also the only peak anyone sees for what happens between two updates.
-            peak = max(state["peak_rss_mb"] or 0, state["rss_mb"])
-            state["peak_rss_mb"] = peak
-            with self._lock:
-                # Not into a run that started meanwhile: that one's peak is its own.
-                if self._generation == generation:
-                    self._state["peak_rss_mb"] = peak
+            #
+            # In the ANSWER only, never back into the state. The reading above happens
+            # outside the lock, so writing it back would overwrite a progress update that
+            # landed in that window with the older, smaller copy — and the run's own
+            # measurement is what the bundle and the history record. It would also make
+            # the recorded peak depend on how often anyone asked for the status.
+            state["peak_rss_mb"] = max(state["peak_rss_mb"] or 0, state["rss_mb"])
         return state
 
     def is_running(self) -> bool:

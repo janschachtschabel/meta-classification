@@ -186,7 +186,9 @@ async def status(_: str = Depends(require_role("readonly"))) -> dict:
     growing when the training thread stalls silently — long values mean "possibly hung",
     while `elapsed_seconds` grows either way), `rss_mb` (resident memory read at request
     time: this process, plus the training process while a run has one — the container's
-    limit applies to the sum), `peak_rss_mb` (the most the current or last run held),
+    limit applies to the sum), `peak_rss_mb` (the most the current or last run held —
+    what the run sampled, raised to `rss_mb` when the newest sample is older than this
+    reading; `GET /train/history` keeps the run's own sampling alone),
     `head_fit_threads` and `threads_requested` (what the newest head fit runs on, against
     what the CPU budget offered: fewer means the memory budget is holding the run back),
     `model_name`, `results` (metrics on completion), `error`. **Auth:** readonly.
@@ -214,7 +216,9 @@ async def history(limit: int = 50, _: str = Depends(require_role("readonly"))) -
 
     Per run: the model name, how it ended, when and for how long, the request it was
     started with, the headline scores (`f1_macro`, `f1_micro`, `n_labels`) and the most
-    memory it needed (`peak_rss_mb`). A run
+    memory it needed (`peak_rss_mb` — what the run itself sampled, which is the
+    comparable number between two runs; `GET /train/status` may show a higher one, since
+    it raises the peak to its own live reading). A run
     that failed carries its `error` — and that is the case with no bundle to inspect
     afterwards, so this is the only place the reason survives.
 

@@ -23,6 +23,7 @@ from scipy import sparse
 
 from app import job_history
 from app.jobs import JobRunner
+from app.memory import MiB
 from app.profiles import Profile, TrainingConfig
 from app.registry import Registry
 from app.settings import Settings
@@ -74,7 +75,10 @@ def _wait_until_finished(job: JobRunner) -> dict:
 @needs_rss
 def test_status_reads_memory_live_and_carries_the_runs_peak():
     """`rss_mb` is read when the status is asked for — inside a head fit the last
-    progress update can be minutes old. `peak_rss_mb` is what the run reported."""
+    progress update can be minutes old. `peak_rss_mb` is what the run reported, raised
+    to the live reading when that is higher (a peak below the figure beside it read as a
+    bug). Asserted against that reading rather than a bare number, which would only pass
+    while the test process stays smaller than the sentinel."""
     job = JobRunner()
     idle = job.snapshot()
     assert idle["rss_mb"] > 0
@@ -94,8 +98,8 @@ def test_status_reads_memory_live_and_carries_the_runs_peak():
         running = job.snapshot()
     finally:
         release.set()
-    assert running["peak_rss_mb"] == 4321
     assert running["rss_mb"] > 0
+    assert running["peak_rss_mb"] == max(4321, running["rss_mb"])
 
 
 @needs_rss
@@ -165,17 +169,21 @@ def test_training_reports_its_peak_while_running_and_in_the_bundle(tmp_path):
 
 
 def test_the_job_history_keeps_the_runs_peak(tmp_path, monkeypatch):
-    """The answer to "will 8 GB be enough next time" — also for a run that failed."""
+    """The answer to "will 8 GB be enough next time" — also for a run that failed.
+
+    The sentinel is deliberately far BELOW what this process holds: the history records
+    what the run itself sampled, so a live reading blended in by a status read (which is
+    larger by orders of magnitude) must not appear here."""
     monkeypatch.setattr(job_history, "_history_path", lambda: tmp_path / "jobs.jsonl")
 
     def target(*, on_progress, should_stop):
-        on_progress(phase="features", peak_rss_mb=2048)
+        on_progress(phase="features", peak_rss_mb=7)
         raise MemoryError
 
     job = JobRunner()
     job.start(target, model_name="m")
     assert _wait_until_finished(job)["status"] == "error"
-    assert job_history.recent()[0]["peak_rss_mb"] == 2048
+    assert job_history.recent()[0]["peak_rss_mb"] == 7
 
 
 def _spy_on_head_fits(monkeypatch) -> list:
@@ -353,3 +361,41 @@ def test_every_phase_leaves_a_memory_line_in_the_log(tmp_path, caplog):
     phases = [line.split()[0] for line in lines]
     assert {"phase=loading", "phase=features", "phase=saving"} <= set(phases), lines
     assert all(" rss=" in line and " peak=" in line for line in lines), lines
+
+
+def test_a_progress_update_during_a_status_read_keeps_its_peak(monkeypatch):
+    """The status blends the live reading into the peak it SHOWS, but must not write that
+    blend back: the reading happens outside the state lock, so a progress update landing
+    in that window would be overwritten by the older, smaller copy — losing the very
+    measurement the run exists to produce, in the status and then in the history."""
+    from app import jobs as jobs_mod
+
+    arm, sampled, updated, release = (threading.Event() for _ in range(4))
+
+    def blocking_rss(pid: int | None = None) -> int:
+        # Hold the status read inside its unlocked window, exactly once, so the run's
+        # next progress update is guaranteed to land in it.
+        if arm.is_set():
+            arm.clear()
+            sampled.set()
+            updated.wait(5)
+        return 100 * MiB
+
+    monkeypatch.setattr(jobs_mod, "rss_bytes", blocking_rss)
+
+    def target(*, on_progress, should_stop):
+        on_progress(phase="features", peak_rss_mb=5)
+        sampled.wait(5)
+        on_progress(phase="selecting", peak_rss_mb=9000)
+        updated.set()
+        release.wait(5)
+        return {}
+
+    job = JobRunner()
+    job.start(target, model_name="m")
+    try:
+        arm.set()
+        job.snapshot()  # blocks in blocking_rss until the 9000 update has landed
+        assert job.snapshot()["peak_rss_mb"] == 9000
+    finally:
+        release.set()
