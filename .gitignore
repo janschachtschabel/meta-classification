@@ -18,6 +18,7 @@ data/*.jsonl.gz
 /field_weights_results.json
 /label_scaling_results.json
 /feature_caps_results.json
+/preprocessing_results.json
 /row_scaling_results.json
 /c_grid_results.json
 /char_robustness_results.json
