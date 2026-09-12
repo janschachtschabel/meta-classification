@@ -113,7 +113,7 @@ const STRINGS_EN = {
 
   "explain.allLabels": {"one": "The only label", "other": "All {count} labels, strongest first"},
   "explain.button.busy": "Explaining …",
-  "explain.intro": "How far the confidence falls when a word is removed. On a confident answer the numbers are tiny — a model at 0.999 barely moves for any single word — so the bars are scaled per label and it is the <em>order</em> that carries the meaning. A <strong>−</strong> marks a word that argues <em>against</em> the label: removing it would raise the confidence. Each occurrence of a word is scored on its own.",
+  "explain.intro": "How far the confidence falls when a word is removed. On a confident answer the numbers are tiny — a model at 0.999 barely moves for any single word — so the bars are scaled per label and it is the <em>order</em> that carries the meaning. A <strong>−</strong> marks a word that argues <em>against</em> the label: removing it would raise the confidence. Each occurrence of a word is scored on its own. A filler word can rank high when the model recognises the phrase around it — removing it also breaks the character sequences running across it.",
   "explain.noAttribution": "No per-word attribution for this text: leaving a word out needs at least two words, or the model asserted no label to attribute.",
   "explain.ready": "Explanation for {name} ready.",
   "explain.table.confidence": "Confidence",

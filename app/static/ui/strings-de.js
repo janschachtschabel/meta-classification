@@ -114,7 +114,7 @@ const STRINGS_DE = {
 
   "explain.allLabels": {"one": "Das einzige Label", "other": "Alle {count} Labels, stärkste zuerst"},
   "explain.button.busy": "Wird erklärt …",
-  "explain.intro": "Wie weit die Konfidenz fällt, wenn ein Wort entfernt wird. Bei einer sicheren Antwort sind die Zahlen winzig — ein Modell bei 0,999 bewegt sich für kein einzelnes Wort nennenswert —, deshalb sind die Balken je Label skaliert und die <em>Reihenfolge</em> trägt die Bedeutung. Ein <strong>−</strong> markiert ein Wort, das <em>gegen</em> das Label spricht: es wegzulassen würde die Konfidenz erhöhen. Jedes Vorkommen eines Wortes wird für sich bewertet.",
+  "explain.intro": "Wie weit die Konfidenz fällt, wenn ein Wort entfernt wird. Bei einer sicheren Antwort sind die Zahlen winzig — ein Modell bei 0,999 bewegt sich für kein einzelnes Wort nennenswert —, deshalb sind die Balken je Label skaliert und die <em>Reihenfolge</em> trägt die Bedeutung. Ein <strong>−</strong> markiert ein Wort, das <em>gegen</em> das Label spricht: es wegzulassen würde die Konfidenz erhöhen. Jedes Vorkommen eines Wortes wird für sich bewertet. Ein Füllwort kann weit oben stehen, wenn das Modell die Wortfolge darum herum erkennt — es zu entfernen zerreißt auch die Zeichenketten, die über es hinweglaufen.",
   "explain.noAttribution": "Für diesen Text gibt es keine Zuordnung einzelner Wörter: ein Wort wegzulassen braucht mindestens zwei Wörter, oder das Modell hat kein Label behauptet, dem sich etwas zuordnen ließe.",
   "explain.ready": "Erklärung für {name} bereit.",
   "explain.table.confidence": "Konfidenz",

@@ -23,6 +23,14 @@ def explain_prediction(model: ClassifierModel, text: str, top_n_words: int) -> d
     Returns the predictions, per-label confidence for ALL labels (each with its
     ``baseline_diff`` and ``label_f1``), and — for the top predicted labels — the
     words whose removal drops the confidence most (leave-one-out).
+
+    The drop is measured between the word list with and without that word, not against
+    the original text: the variants carry no punctuation and at most ``_MAX_WORDS``
+    words, and comparing across that difference put it into every impact.
+
+    What it cannot separate is context. The model reads character n-grams too, so
+    removing a word also destroys the n-grams spanning it — a connector inside a
+    characteristic phrase ("Säuren und Basen") is charged for the phrase.
     """
     base = model.predict_proba([text])[0]
     baseline = model.baseline_proba()  # empty-text base rates: always shown here (diagnostic endpoint)
@@ -43,12 +51,18 @@ def explain_prediction(model: ClassifierModel, text: str, top_n_words: int) -> d
     words = _WORD_RE.findall(text)[:_MAX_WORDS]
     importance: dict[str, dict] = {}
     if len(words) > 1 and predicted:
-        variants = [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
+        # The first variant is the FULL word list, and it is what the others are measured
+        # against: an impact has to be the difference between the same text with and
+        # without one word. Against the original text instead, every impact also carried
+        # what rejoining drops — its punctuation, its spacing, and any word past the cap.
+        variants = [" ".join(words)]
+        variants += [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
         variant_proba = model.predict_proba(variants)
         for pred in predicted[:5]:
             col = model.classes.index(pred.uri)
+            whole = float(variant_proba[0, col])
             impacts = sorted(
-                ({"word": words[i], "impact": round(float(base[col] - variant_proba[i, col]), 4)}
+                ({"word": words[i], "impact": round(whole - float(variant_proba[i + 1, col]), 4)}
                  for i in range(len(words))),
                 key=lambda d: d["impact"], reverse=True,
             )
