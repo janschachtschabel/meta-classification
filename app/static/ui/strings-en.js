@@ -93,6 +93,7 @@ const STRINGS_EN = {
   "query.mode.one": "One text",
   "query.models.label": "Models (Ctrl-click for several)",
   "query.noLabelAboveThreshold": "No label above the model's threshold.",
+  "query.nearestBelow": "Closest, but below the threshold:",
   "query.noModels": "No models yet — train one on the Training tab first.",
   "query.progress": "Classifying {done} of {total} …",
   "query.progressStart": "Classifying …",

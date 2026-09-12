@@ -94,6 +94,7 @@ const STRINGS_DE = {
   "query.mode.one": "Einen Text",
   "query.models.label": "Modelle (Strg-Klick für mehrere)",
   "query.noLabelAboveThreshold": "Kein Label über dem Schwellenwert des Modells.",
+  "query.nearestBelow": "Am nächsten dran, aber unter dem Schwellenwert:",
   "query.noModels": "Noch keine Modelle — bitte zuerst im Reiter „Training“ eines trainieren.",
   "query.progress": "Klassifiziert {done} von {total} …",
   "query.progressStart": "Wird klassifiziert …",

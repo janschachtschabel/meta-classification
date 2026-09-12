@@ -75,13 +75,8 @@ function queryErrorHtml(err) {
 
 /* ---------- one text ---------- */
 
-function renderPredictions(byModel) {
-  return Object.entries(byModel).map(([name, preds]) => `
-    <div class="card">
-      <div class="detail-head"><h3>${esc(name)}</h3>
-        <button type="button" class="small ghost" data-explain="${esc(name)}">${t("query.explainButton")}</button>
-        <button type="button" class="small ghost" data-correct="${esc(name)}">${t("query.correctButton")}</button></div>
-      ${preds.length ? preds.map((p) => `
+function predictionRow(p) {
+  return `
       <div class="pred${p.above_threshold === false ? " below-t" : ""}">
         <span class="name">${esc(p.label)}</span>
         <span class="bar"><span data-width="${Math.round(p.confidence * 100)}"></span></span>
@@ -91,22 +86,50 @@ function renderPredictions(byModel) {
           // carries no score for this label (older or partially scored models).
           p.label_f1 != null ? ` <span class="muted">${t("query.f1Tag")} ${fmtFixed(p.label_f1, 3)}</span>` : ""}${
           p.above_threshold === false ? ` <span class="muted">· ${t("query.belowThreshold")}</span>` : ""}</span>
-      </div>`).join("")
-      : `<p class="muted">${t("query.noLabelAboveThreshold")}</p>`}</div>`).join("");
+      </div>`;
+}
+
+/* "Nothing above the threshold" is not "no idea": a model that declines still has a
+   ranking, and seeing it is the difference between a decision and a dead end. */
+function nearestHtml(preds) {
+  if (!preds || !preds.length) return "";
+  return `<p class="muted">${t("query.nearestBelow")}</p>${preds.map(predictionRow).join("")}`;
+}
+
+function renderPredictions(byModel, nearest = {}) {
+  return Object.entries(byModel).map(([name, preds]) => `
+    <div class="card">
+      <div class="detail-head"><h3>${esc(name)}</h3>
+        <button type="button" class="small ghost" data-explain="${esc(name)}">${t("query.explainButton")}</button>
+        <button type="button" class="small ghost" data-correct="${esc(name)}">${t("query.correctButton")}</button></div>
+      ${preds.length ? preds.map(predictionRow).join("")
+      : `<p class="muted">${t("query.noLabelAboveThreshold")}</p>${nearestHtml(nearest[name])}`}</div>`).join("");
+}
+
+async function predictOneText(models, body) {
+  if (models.length === 1) {
+    const r = await Api.post("/predict", { ...body, model_name: models[0] });
+    return { [models[0]]: r.results[0].predictions };
+  }
+  const r = await Api.post("/predict/multi", { ...body, model_names: models });
+  return r.results[0].predictions_by_model;
 }
 
 async function runSingle(models, out) {
-  const body = { ...querySettings(), texts: [$("#query-text").value] };
-  let byModel;
-  if (models.length === 1) {
-    const r = await Api.post("/predict", { ...body, model_name: models[0] });
-    byModel = { [models[0]]: r.results[0].predictions };
-  } else {
-    const r = await Api.post("/predict/multi", { ...body, model_names: models });
-    byModel = r.results[0].predictions_by_model;
+  const settings = querySettings();
+  const body = { ...settings, texts: [$("#query-text").value] };
+  const byModel = await predictOneText(models, body);
+  // Ask the models that returned nothing what they almost said. Only when the caller
+  // did not pin top_k (then every entry is already shown), and a failure here must not
+  // cost the answer that did arrive.
+  const silent = Object.entries(byModel).filter(([, preds]) => !preds.length).map(([n]) => n);
+  let nearest = {};
+  if (silent.length && settings.top_k === undefined) {
+    try { nearest = await predictOneText(silent, { ...body, top_k: 3 }); }
+    catch { nearest = {}; }
   }
   const text = $("#query-text").value;
-  out.innerHTML = renderPredictions(byModel);
+  out.innerHTML = renderPredictions(byModel, nearest);
   applyBarWidths(out);
   // Only here: both act on ONE text — the endpoint explains one, and a correction
   // records one. The bulk modes have nothing to bind.
