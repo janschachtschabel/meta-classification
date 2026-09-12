@@ -103,7 +103,12 @@ function renderPredictions(byModel, nearest = {}) {
         <button type="button" class="small ghost" data-explain="${esc(name)}">${t("query.explainButton")}</button>
         <button type="button" class="small ghost" data-correct="${esc(name)}">${t("query.correctButton")}</button></div>
       ${preds.length ? preds.map(predictionRow).join("")
-      : `<p class="muted">${t("query.noLabelAboveThreshold")}</p>${nearestHtml(nearest[name])}`}</div>`).join("");
+      : `<p class="muted">${t("query.noLabelAboveThreshold")}</p>${
+        // hasOwn, not nearest[name]: a model MAY be called "constructor" or "toString"
+        // (safe_name rejects path characters, not property names), and inherited
+        // members are not predictions — rendering one throws and the thrown card
+        // replaces the whole answer, including the models that did return.
+        nearestHtml(Object.hasOwn(nearest, name) ? nearest[name] : null)}`}</div>`).join("");
 }
 
 async function predictOneText(models, body) {
@@ -126,7 +131,10 @@ async function runSingle(models, out) {
   let nearest = {};
   if (silent.length && settings.top_k === undefined) {
     try { nearest = await predictOneText(silent, { ...body, top_k: 3 }); }
-    catch { nearest = {}; }
+    // Swallowed on purpose — the answer that DID arrive must still render — but not
+    // silently: without this line a rate limit, a server error and a bug in here all
+    // look like "the model had nothing close".
+    catch (err) { nearest = {}; console.warn("near-miss follow-up failed", err); }
   }
   const text = $("#query-text").value;
   out.innerHTML = renderPredictions(byModel, nearest);
