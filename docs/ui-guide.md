@@ -76,6 +76,21 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**.
   **Ausgegraute Einträge** („below threshold") sind Kandidaten, die das Modell
   von sich aus *nicht* behaupten würde. Nützlich, um die „zweite Meinung" des
   Modells zu sehen.
+- **„Kein Label über dem Schwellenwert des Modells."** Dann hat das Modell
+  nichts behauptet — und darunter steht jetzt **„Am nächsten dran, aber unter
+  dem Schwellenwert"** mit den drei wahrscheinlichsten Labels, ausgegraut. Das
+  ist keine Antwort des Modells, sondern die Auskunft, *wie knapp* es war.
+  Häufig bei kurzen Eingaben („Im Unterricht experimentieren wir"): wenige
+  Wörter ergeben wenig Signal. Dazu kommt, dass jeder Lauf seine Schwellen pro
+  Label so wählt, dass die **F1-Bewertung** am höchsten ist — bei einem
+  treffsicheren Modell liegt dieses Optimum *höher*. Ein auf mehr Daten
+  trainiertes Modell kann deshalb **seltener** etwas sagen und trotzdem das
+  bessere sein: in einem gemessenen Fall stand „Chemie" bei 0,302, während die
+  Schwelle dieses Labels bei 0,60 lag. Wer eine Antwort erzwingen will, setzt in der
+  Oberfläche **Top-k** — dann kommt immer eine Rangliste. Einen eigenen
+  Schwellenwert kennt die Oberfläche nicht; über die Schnittstelle geht er als
+  `threshold` in `POST /predict` mit. Am meisten hilft aber der Text selbst:
+  ein paar Fachwörter mehr.
 - **Diff (Baseline-Differenz, Häkchen „Baseline-Diff anzeigen“):** Wie viel der
   Sicherheit aus **deinem Text** kommt — und nicht daher, dass das Label einfach
   häufig ist. Ein hoher Konfidenz-Wert mit *diff nahe 0* heißt: das Modell rät
@@ -111,6 +126,17 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
   sicheren Antwort sind diese Zahlen winzig — ein Modell bei 0,999 bewegt sich für kein
   einzelnes Wort viel. Deshalb sind die Balken **pro Label** skaliert: entscheidend ist
   die Reihenfolge, nicht der Betrag.
+- Die Werte sind untereinander vergleichbar, **addieren sich aber nicht zur Konfidenz**:
+  verglichen wird die Wortliste des Textes mit und ohne ein Wort, während die Konfidenz
+  oben den Text beschreibt, wie er eingegeben wurde (mit Satzzeichen, und ab 60 Wörtern
+  gekürzt).
+- **Füllwörter wie „und" ganz oben sind kein Zeichen schlechter Datenaufbereitung.**
+  Das Modell liest auch Zeichenketten über Wortgrenzen hinweg („Säuren **und** Basen").
+  Nimmt man das Wort weg, zerreißt man die ganze Wortfolge — der Einbruch wird dem
+  Füllwort zugeschrieben, gehört aber der Phrase. Nachgemessen: „und" selbst ist im
+  Modell praktisch gewichtslos (`idf` 1,46 gegen 7,16 für ein Fachwort). Stoppwörter zu
+  entfernen, zu stemmen oder zu lemmatisieren wurde gemessen und bringt hier **nichts**
+  (`docs/model-approach-comparison.md`).
 - Ein **−** (gestrichelter Rahmen, gedämpfter Balken) markiert ein Wort, das *gegen* das
   Label spricht: ohne dieses Wort wäre die Konfidenz höher.
 - Jedes **Vorkommen** eines Wortes wird einzeln bewertet. Dasselbe Wort kann deshalb
@@ -147,7 +173,24 @@ Notebook zuklappen. Was noch wartet, steht unter dem Status („Queued on the se
 und kommt aus der Serverantwort, nicht aus dem Browser.
 
 **Stop** beendet den laufenden Lauf *und* leert die Warteschlange: „Stop" heißt „das soll
-enden", nicht „spring zum nächsten".
+enden", nicht „spring zum nächsten". Es wirkt am nächsten Prüfpunkt — zwischen zwei
+Anläufen des Modells, nicht mitten drin —, und ein Anlauf dauert bei großen Datenmengen
+Minuten. Deshalb endet ein Lauf, der nicht von selbst reagiert, nach **~30 s** ohnehin;
+die Statuszeile sagt das dann auch. Ein gestoppter Lauf hinterlässt in keinem Fall ein
+Modell.
+
+Während des Laufs zeigt die Statuskarte zwei Zeilen, die erklären, warum es manchmal
+langsamer geht als erwartet:
+
+- **Speicher: „1.842 MB · Spitzenwert 3.105 MB"** — links, was die Anwendung gerade
+  belegt (Trainingsprozess mitgezählt), rechts das Maximum dieses Laufs. Der
+  Spitzenwert ist die Zahl, mit der man die Frage „reichen 8 GB?" beim nächsten Mal
+  beantwortet; er steht später auch im Verlauf und im Modell selbst.
+- **Threads: „3 von 9 — vom Speicherbudget gebremst"** — so viele Label-Anläufe dürfen
+  gleichzeitig rechnen. Jeder braucht Arbeitsspeicher in der Größe der Textmatrix, also
+  lässt das Speicherbudget bei vielen Labels weniger davon zu, als Kerne da wären. Das
+  ist **Absicht**: der Lauf wird langsamer, statt am Speicher zu scheitern. Wer mehr
+  Tempo braucht, gibt dem Container mehr Speicher.
 
 Unter *Training* → **Verlauf** steht danach, was jeder Lauf ergeben hat — auch die
 gescheiterten, die kein Modell hinterlassen und deren Grund es sonst nirgends mehr gäbe.
