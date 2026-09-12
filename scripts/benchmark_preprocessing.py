@@ -8,8 +8,8 @@ explanation attributes context to the token, and the preprocessing is not obviou
 fault. Whether the three classic normalisations nevertheless BUY anything is a
 measurement, not an argument. This is the measurement.
 
-Identical rows, split, seed, C grid and threshold procedure across variants; only the
-text the vectorizer sees changes:
+Identical rows, split, seed, C grid and threshold tuner across variants; only the text
+the vectorizer sees changes:
 
   stopwords   on the WORD analyzer only. Removing them from the text would place words
               next to each other that never were, and that junction is exactly what the
@@ -19,8 +19,9 @@ text the vectorizer sees changes:
   lemmas      simplemma, the same way — a dictionary lemma instead of a cut suffix.
 
 A custom preprocessor REPLACES scikit-learn's own, so every variant re-applies what
-TfidfBackend relies on: lower-casing and unicode accent stripping. The stopword list is
-normalised the same way, or it would not match the tokens it is meant to remove.
+TfidfBackend relies on: lower-casing and unicode accent stripping. The stopword list runs
+through that same preprocessor, or it would not match the tokens it is meant to remove:
+removal happens AFTER preprocessing, so a stemming variant needs a stemmed list.
 
 snowballstemmer and simplemma are development-only (not in requirements.lock, not in the
 image): a variant whose package is missing is skipped and said so. Only a variant that
@@ -36,6 +37,7 @@ import json
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
@@ -87,7 +89,7 @@ def normalize(text: str) -> str:
     return strip_accents_unicode(text.lower())
 
 
-def per_word(transform) -> "callable":
+def per_word(transform: Callable[[str], str]) -> Callable[[str], str]:
     """A preprocessor that rewrites every word in place, leaving punctuation and spacing."""
     return lambda text: _WORD.sub(lambda m: transform(m.group()), normalize(text))
 
@@ -121,7 +123,14 @@ class PreprocessedBackend(TfidfBackend):
         if self._preprocessor is not None:
             vec.set_params(preprocessor=self._preprocessor)
         if self._stop_words is not None and analyzer == "word":
-            vec.set_params(stop_words=sorted({normalize(w) for w in self._stop_words}))
+            # Through the ACTIVE preprocessor, not just normalize(): scikit-learn removes
+            # stop words AFTER preprocessing, so an unstemmed list against stemmed tokens
+            # only removes the forms the stemmer leaves alone. 102 of the 204 entries stem
+            # to a different token, and 32 stemmed function-word forms ("und" -> "and",
+            # "hatte" -> "hatt") then survived — sklearn warns "stop_words may be
+            # inconsistent with preprocessing", and it was right.
+            prep = self._preprocessor or normalize
+            vec.set_params(stop_words=sorted({prep(w) for w in self._stop_words}))
         return vec
 
 
@@ -148,7 +157,14 @@ def log(msg: str) -> None:
 
 
 def tune_thresholds(y_true: np.ndarray, proba: np.ndarray) -> np.ndarray:
-    """Per-label cut that maximises F1 on the validation split (as ``thresholds.py`` does)."""
+    """Per-label cut that maximises F1 on the validation split.
+
+    The same tuner as the other benchmark scripts, so their numbers stay comparable with
+    these. NOT the one in ``app/thresholds.py``, which searches a fixed 0.05 grid from a
+    global starting cut and keeps a label from predicting nothing at all; this searches
+    quantiles of each label's own score distribution. Every variant here gets it, so it
+    cannot favour one — but an absolute number is not comparable with a trained model's.
+    """
     cuts = np.zeros(proba.shape[1])
     qs = np.linspace(0.50, 0.9995, 60)
     for col in range(proba.shape[1]):
@@ -175,7 +191,7 @@ def main() -> None:
     log(f"loading {args.dataset} ...")
     loaded = load_dataset(BASE / "data" / args.dataset, TEXT_COLUMNS, LABEL_COLUMN,
                           separator=";", label_separator=",", label_filter=DISCIPLINE)
-    y_all, classes, keep = prepare_targets(loaded.label_lists, min_samples=MIN_SAMPLES)
+    y_all, _classes, keep = prepare_targets(loaded.label_lists, min_samples=MIN_SAMPLES)
     texts = [t for t, k in zip(loaded.texts, keep, strict=False) if k]
     if args.rows:
         texts, y_all = texts[: args.rows], y_all[: args.rows]
@@ -227,11 +243,12 @@ def main() -> None:
         del backend, x_tr, x_va, x_te
 
     baseline = results[0]
-    print("\n| Variant | word vocabulary | test macro F1 | vs baseline | test micro F1 |"
-          "\n|---|---:|---:|---:|---:|")
+    print("\n| Variant | word vocabulary | non-zeros/row | vectorize | test macro F1 "
+          "| vs baseline | test micro F1 |\n|---|---:|---:|---:|---:|---:|---:|")
     for row in results:
         delta = row["f1_macro"] - baseline["f1_macro"]
-        print(f"| {row['variant']} | {row['vocabulary_word']:,} | {row['f1_macro']:.4f} "
+        print(f"| {row['variant']} | {row['vocabulary_word']:,} | {row['nnz_per_row']} "
+              f"| {row['vectorize_seconds']}s | {row['f1_macro']:.4f} "
               f"| {delta:+.4f} | {row['f1_micro']:.4f} |")
     out = BASE / "preprocessing_results.json"
     out.write_text(json.dumps({"dataset": args.dataset, "n_rows": len(texts),
