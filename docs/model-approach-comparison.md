@@ -384,6 +384,61 @@ enough detail to rebuild it should the question ever be reopened. What remains i
 
 ---
 
+## Answered: does German preprocessing help? — No (2026-09-12)
+
+The question came from an explanation, not from a metric: a leave-one-out explanation of
+a subject prediction listed the connector **"und"** among the strongest words, which
+looks like preprocessing too thin to be taken seriously. Two measurements, because the
+first one changes what the second one means.
+
+**1. What "und" actually weighs in a deployed model** (48 subjects, 26 450 rows):
+
+| | value |
+|---|---:|
+| `idf("und")` | **1.46** (a content word, "basen": 7.16) |
+| word feature "und", \|coefficient\| | 0.13 – 4.2 depending on the label |
+| character 5-gram `" und "` (the isolated connector) | 1 feature, median 0.70 |
+| 5-grams touching it (`"n und"`, `"und b"` …) | 19 features, median 2.55 |
+| 5-grams with "und" inside other words (Gr**und**lagen, K**und**e) | 334 features, median 42.8 |
+
+So the model does not lean on the connector: `idf` has already pushed it to the floor and
+`max_df=0.95` drops anything that appears in more than 95 % of documents. What the
+explanation measures is something else — it removes a word and re-predicts, and with
+character n-grams that also destroys every 5-gram spanning the phrase ("Säuren **und**
+Basen"). The drop says "the phrase is gone", and the connector is charged for it. That is
+a property of leave-one-out on character features, not of the preprocessing.
+
+**2. Whether the three classic normalisations buy anything anyway**
+(🟢 `scripts/benchmark_preprocessing.py`, identical rows, split, seed, C grid and
+threshold procedure; only the text the vectorizer sees changes):
+
+| Variant | non-zeros/row | test macro F1 | vs baseline | test micro F1 | vectorize |
+|---|---:|---:|---:|---:|---:|
+| baseline | 278 | **0.7084** | — | 0.7917 | 9 s |
+| stopwords (word analyzer only) | 255 | 0.7067 | −0.0017 | 0.7907 | 8 s |
+| stemming (Snowball German) | 247 | 0.7017 | −0.0067 | 0.7882 | **116 s** |
+| stopwords + stemming | 224 | 0.7060 | −0.0024 | 0.7904 | 120 s |
+| lemmas (simplemma) | 271 | 0.7081 | −0.0003 | **0.7941** | 14 s |
+
+**Practical reading:** none of them wins. Stopwords and lemmas land inside the noise band
+this project uses elsewhere (±0.002 macro), stemming loses beyond it. The reason is in the
+architecture: `char_wb` 5-grams already carry the morphology a stemmer would produce —
+which is exactly why the 334 in-word "und" features above have real weight — and `idf`
+plus `max_df` already handle function words. Stemming's one measurable gain is a 19 %
+smaller matrix (278 → 224 non-zeros per row), but the feature caps are the cheaper lever
+for that and are measured above.
+
+And the cost is not only training: any preprocessing change has to run on **every**
+`/predict` call as well, or model and query stop matching. Snowball costs 13× the
+vectorization time here; lemmas would add a language-data dependency to a torch-free
+image. Neither is worth −0.000 to −0.007 macro F1.
+
+**Caveats:** one split, one seed — the differences below ~0.002 are not separable from
+noise. The word cap stays saturated at 80 000 in every variant, so the possible second
+benefit of stemming (more room under the cap on much larger corpora) is not measured
+here; on 26 450 rows every variant hits the same cap. `snowballstemmer` and `simplemma`
+are development-only and are not in `requirements.lock` or the image.
+
 ## Sources
 
 - MetaClassify: this repository (`app/classifier.py`, `app/tuning.py`,

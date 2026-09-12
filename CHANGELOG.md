@@ -46,7 +46,12 @@ without changing a single number the model produces.
   (`config.compute.trainingIsolation`). The cost: an interpreter start per run, and the
   first `/predict` of a new model loads it from disk.
 - `scripts/benchmark_training_isolation.py` — what two back-to-back trainings leave in
-  the API process, thread against process mode. In the Linux container, after two 30k
+  the API process, thread against process mode.
+- `scripts/benchmark_preprocessing.py` — what German stopwords, Snowball stemming and
+  simplemma lemmas buy over the shipped preprocessing. Measured on data_30k_ai: nothing
+  (macro F1 −0.007 to −0.000, stemming at 13× the vectorization time), because `char_wb`
+  5-grams already carry the morphology and `idf`/`max_df` already handle function words.
+  See `docs/model-approach-comparison.md`. In the Linux container, after two 30k
   `auto` runs with both models loaded: 1,237 MB in thread mode, 321 MB in process mode;
   during a run the API process stays at 166 MB instead of 1.7–1.9 GB.
 
