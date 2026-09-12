@@ -56,7 +56,8 @@ _EXIT_GRACE_SECONDS = 10
 # for it turns "stop" into "stop eventually". A stopped run publishes nothing either way.
 _STOP_GRACE_SECONDS = 30
 # The relay ended the run itself (a stop it did not answer, or a kill): no result, and no
-# error either — a stopped run is what the operator asked for.
+# error either — a stopped run is what the operator asked for. Returned as a copy, so a
+# caller treating the outcome as its own cannot change what the next run reports.
 _ENDED_BY_US = {"stopped": True}
 # Linux: how willing the kernel's OOM killer is to pick this process, -1000..1000.
 _OOM_SCORE_ADJ = Path("/proc/self/oom_score_adj")
@@ -278,7 +279,7 @@ def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
     stop_sent_at: float | None = None
     while True:
         if kill_requested():
-            return _ENDED_BY_US
+            return dict(_ENDED_BY_US)
         if stop_sent_at is None:
             if should_stop():
                 _send(child.stdin, {"stop": True})
@@ -286,7 +287,7 @@ def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
         elif time.monotonic() - stop_sent_at > _STOP_GRACE_SECONDS:
             logger.info("Training process did not stop within %d s; ending it.",
                         _STOP_GRACE_SECONDS)
-            return _ENDED_BY_US
+            return dict(_ENDED_BY_US)
         try:
             line = lines.get(timeout=0.25)
         except queue.Empty:

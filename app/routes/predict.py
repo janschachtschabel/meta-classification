@@ -196,6 +196,14 @@ async def predict_explain(
     with `baseline_diff` and `label_f1`) and `word_importance` — the most influential
     words per predicted label, determined by leave-one-out (confidence drop when a word
     is removed). Both reliability signals are always included here, no flag needed.
+
+    An `impact` is a difference between two *word lists*: the text's words rejoined by
+    single spaces, with and without that one word — not against the `confidence` beside
+    it, which describes the text as sent (punctuation, spacing, and any word past the
+    60-word cap included). So the impacts are comparable with each other but do not add
+    up to the confidence. With character n-grams in the model a word also carries the
+    junction it sits in, which is why a connector can score above a content word.
+
     More expensive than `/predict`. **Auth:** readonly.
     """
     def load_and_explain() -> dict:
