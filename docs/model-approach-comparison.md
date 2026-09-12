@@ -457,6 +457,13 @@ missed. That row measured stemming plus partial stopword removal. The table abov
 re-run with the list stemmed the same way the tokens are (and with the third C value);
 the two rows that share neither problem, baseline and lemmas, came back identical.
 
+What the bug was worth was then measured on its own — same splits and seed, `C` fixed at
+32 so only the list differs: **0.7074 macro / 0.7905 micro with the broken list against
+0.7066 / 0.7910 with the fixed one**. The two metrics disagree about the sign of a
+~0.001 difference, and the control half reproduced the published row exactly. So the
+broken list never carried the conclusion — which is the reason to measure it rather than
+assert it.
+
 ## Sources
 
 - MetaClassify: this repository (`app/classifier.py`, `app/tuning.py`,
