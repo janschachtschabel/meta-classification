@@ -20,6 +20,15 @@ that to the live reading when the reading is higher — otherwise a peak minutes
 shows below the figure beside it. What the bundle and the job history record is the
 run's own sampling alone, so those numbers stay comparable between two runs instead of
 depending on how often someone opened the status page.
+
+Deliberately one file past the project's ~300-line guide: of its 420 lines, 203 are
+code and the rest is this kind of "why". The seam a split would follow — what a run
+REPORTS against how a run is EXECUTED — runs straight through ``self._lock``, the one
+invariant holding the status, the queue and the thread registration consistent:
+``_busy_locked`` reads status and thread together, and ``_dispatch_next`` retires the
+thread under the same lock ``submit`` takes, which is the only thing closing the gap
+where a submit would queue behind a dispatcher that has already left. Two locks to
+save 100 lines of prose would reopen that by construction.
 """
 
 from __future__ import annotations
