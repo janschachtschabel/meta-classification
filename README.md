@@ -48,11 +48,13 @@ docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
   -e APIV3_DATA_DIR=/data/datasets \
   -e APIV3_MODELS_DIR=/data/models \
   -e APIV3_SHARE_LINKS_FILE=/data/share_links.json \
+  -e APIV3_FEEDBACK_FILE=/data/feedback.jsonl \
+  -e APIV3_JOB_HISTORY_FILE=/data/job_history.jsonl \
   -v classification-data:/data \
   ghcr.io/<owner>/<repo>:main
 ```
 
-The three path variables are what make the volume the source of truth; without them the
+The five path variables are what make the volume the source of truth; without them the
 container would write inside its own filesystem and lose everything on the next `docker
 run`. `docker compose` sets them for you.
 
@@ -708,11 +710,12 @@ Everything that cannot be rebuilt from the image lives on one volume (`/data`):
 | `/data/job_history.jsonl` | The record of what each run produced, including the failures that left no bundle and whose reason survives nowhere else. |
 | `/data/share_links.json` | Nothing worth restoring — links expire within 7 days anyway. |
 
-The last two rows only exist if you put them there: `APIV3_FEEDBACK_FILE` and
+All five are on the volume as shipped: `APIV3_FEEDBACK_FILE` and
 `APIV3_JOB_HISTORY_FILE` default next to the code — inside the image in a
-container — and neither compose nor the Helm chart overrides them. Set both to
-`/data/...` before the first correction is recorded, or that backup covers three
-of five files ([configuration reference](docs/configuration.md#storage)).
+container — so compose and the Helm chart set them to `/data/...` like the other
+three. **A deployment of your own must do the same**, or the backup above covers
+three of five files, and under a read-only root filesystem a correction cannot be
+written at all ([configuration reference](docs/configuration.md#storage)).
 
 ```bash
 # Docker: copy the volume out (and back in) through a throwaway container

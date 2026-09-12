@@ -47,10 +47,10 @@ limits see real client IPs · storage paths on a persistent volume.
 
 Five of these are *state*: `DATA_DIR`, `MODELS_DIR`, `SHARE_LINKS_FILE`,
 `FEEDBACK_FILE` and `JOB_HISTORY_FILE`. The provided `docker-compose.yml` and
-Helm chart point the **first three** at the mounted volume (`/data/*`)
-automatically; the two `.jsonl` files keep their default next to the code, which
-in a container means inside the image. **Set them explicitly** if corrections and
-run history are to survive — they are the two that are easiest to lose unnoticed:
+Helm chart point **all five** at the mounted volume (`/data/*`) automatically —
+including the two `.jsonl` files, whose defaults sit next to the code and in a
+container therefore inside the image. **A deployment of your own has to set them
+too**; they are the two that are easiest to lose unnoticed:
 
 ```
 APIV3_FEEDBACK_FILE=/data/feedback.jsonl
@@ -58,10 +58,14 @@ APIV3_JOB_HISTORY_FILE=/data/job_history.jsonl
 ```
 
 Without that, a re-created container starts with an empty history and no
-corrections, and under the Helm chart's read-only root filesystem
-(`securityContext.readOnlyRootFilesystem: true`) the write fails outright: a
-`POST /feedback` answers 500, while the history only logs a warning and stays
-empty. The volume is the only thing that cannot be rebuilt from the image — see
+corrections, and under a read-only root filesystem
+(`securityContext.readOnlyRootFilesystem: true`, the chart's default) the write
+fails outright. The two then part ways, and deliberately: `POST /feedback`
+answers **503** naming the setting to fix, because a correction is editorial work
+nothing regenerates and a 200 that cannot be backed up would lose it silently;
+the history logs a warning and stays empty, because it is written only after a
+run is finished and saved, so failing there would turn a successful run into a
+failed one. The volume is the only thing that cannot be rebuilt from the image — see
 [Backup & restore](../README.md#backup--restore) for what it costs to lose and
 how to copy it consistently while the service runs. `APIV3_CONFIG_FILE` deliberately stays at the
 image-baked `/app/config.yaml`: the profiles file ships with the image, and

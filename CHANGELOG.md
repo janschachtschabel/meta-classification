@@ -24,6 +24,15 @@ and the code then ignored.
 - **"Mit auto sind das etwa 7 Min.."** — the duration labels are abbreviations that
   carry their own period, and the pre-flight sentence appended a second one. German
   writes none there.
+- **The corrections were the one thing no deployment kept.**
+  `APIV3_FEEDBACK_FILE` and `APIV3_JOB_HISTORY_FILE` defaulted next to the code — inside
+  the image in a container — and neither compose nor the Helm chart set them: a
+  re-created container started with no corrections and no run history, and under the
+  chart's read-only root filesystem the feedback file could not be written at all, which
+  `POST /feedback` reported as a bare 500. Both paths now point into the `/data` volume.
+  And a correction that cannot be stored answers **503** naming the setting to fix
+  instead of failing as a bug — never a "recorded" it cannot back up, because this is
+  editorial work nothing regenerates.
 
 ### Added
 
