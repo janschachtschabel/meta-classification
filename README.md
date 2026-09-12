@@ -702,9 +702,17 @@ Everything that cannot be rebuilt from the image lives on one volume (`/data`):
 
 | Path | What it costs to lose |
 |---|---|
+| `/data/feedback.jsonl` | **Editorial work that cannot be reproduced.** Every correction a person made to a prediction — the data the next run learns from. Nothing regenerates it. |
 | `/data/models` | **Hours.** A subject model on 156 k rows took 40 min; `best` on 114 k rows took 93 min. |
 | `/data/datasets` | A re-export from the source system, plus the transfer (the WLO exports are 126–195 MB gzipped). |
+| `/data/job_history.jsonl` | The record of what each run produced, including the failures that left no bundle and whose reason survives nowhere else. |
 | `/data/share_links.json` | Nothing worth restoring — links expire within 7 days anyway. |
+
+The last two rows only exist if you put them there: `APIV3_FEEDBACK_FILE` and
+`APIV3_JOB_HISTORY_FILE` default next to the code — inside the image in a
+container — and neither compose nor the Helm chart overrides them. Set both to
+`/data/...` before the first correction is recorded, or that backup covers three
+of five files ([configuration reference](docs/configuration.md#storage)).
 
 ```bash
 # Docker: copy the volume out (and back in) through a throwaway container
