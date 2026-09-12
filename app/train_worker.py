@@ -31,6 +31,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any
@@ -50,6 +51,13 @@ SECRET_SETTINGS = frozenset({"api_key_admin", "api_key_readonly"})
 _SECRET_ENV = frozenset(f"APIV3_{name.upper()}" for name in SECRET_SETTINGS)
 # How long a stopped child may take to exit before it is killed outright.
 _EXIT_GRACE_SECONDS = 10
+# How long a cooperative stop may go unanswered before the run is ended regardless. A
+# checkpoint sits between two head fits, and one fit of a large run is minutes: waiting
+# for it turns "stop" into "stop eventually". A stopped run publishes nothing either way.
+_STOP_GRACE_SECONDS = 30
+# The relay ended the run itself (a stop it did not answer, or a kill): no result, and no
+# error either — a stopped run is what the operator asked for.
+_ENDED_BY_US = {"stopped": True}
 # Linux: how willing the kernel's OOM killer is to pick this process, -1000..1000.
 _OOM_SCORE_ADJ = Path("/proc/self/oom_score_adj")
 # A child killed by SIGKILL: Popen reports -9; through a shell it would be 128 + 9.
@@ -249,7 +257,7 @@ def run_in_child(
         if failed["user_facing"]:
             raise TrainingInputError(failed["message"])
         raise RuntimeError("the training process failed; its traceback is in the log")
-    if kill_requested():
+    if outcome.get("stopped") or kill_requested():
         return {}
     raise TrainingProcessError(_no_result_message(code))
 
@@ -267,13 +275,18 @@ def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
             lines.put(None)  # however reading ended, the relay must hear that it did
 
     threading.Thread(target=pump, args=(child.stdout,), name="child-stdout", daemon=True).start()
-    stop_sent = False
+    stop_sent_at: float | None = None
     while True:
         if kill_requested():
-            return {}
-        if not stop_sent and should_stop():
-            _send(child.stdin, {"stop": True})
-            stop_sent = True
+            return _ENDED_BY_US
+        if stop_sent_at is None:
+            if should_stop():
+                _send(child.stdin, {"stop": True})
+                stop_sent_at = time.monotonic()
+        elif time.monotonic() - stop_sent_at > _STOP_GRACE_SECONDS:
+            logger.info("Training process did not stop within %d s; ending it.",
+                        _STOP_GRACE_SECONDS)
+            return _ENDED_BY_US
         try:
             line = lines.get(timeout=0.25)
         except queue.Empty:

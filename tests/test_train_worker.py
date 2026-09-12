@@ -162,6 +162,25 @@ def test_a_stop_ends_the_child_run_without_a_model(tmp_path):
     assert not registry.exists("tiny_model") and not _staging(registry)
 
 
+def test_a_stop_the_child_does_not_act_on_ends_it_anyway(tmp_path, monkeypatch):
+    """A cooperative stop takes effect at the next checkpoint — and one head fit of a big
+    run is minutes, so the operator pressed stop and nothing happened. After a grace
+    period the run ends regardless: in a child process there is something to end, and a
+    stopped run publishes nothing either way."""
+    monkeypatch.setattr(train_worker, "_STOP_GRACE_SECONDS", 1)
+    # This child answers nothing at all, not even the closed pipe a real worker exits on
+    # (that exit is pinned by the orphan tests), so the parent has to kill it.
+    monkeypatch.setattr(train_worker, "_EXIT_GRACE_SECONDS", 1)
+    monkeypatch.setattr(train_worker, "_worker_command", lambda: [
+        sys.executable, "-c", "import sys, time; sys.stdin.readline(); time.sleep(300)"])
+    started = time.monotonic()
+    result, registry, _ = _run(tmp_path, should_stop=lambda: True, kill_requested=_deadline(25))
+
+    assert result == {}
+    assert time.monotonic() - started < 10, "the stop must not wait out the deadline"
+    assert not registry.exists("tiny_model") and not _staging(registry)
+
+
 def test_a_kill_ends_the_child_at_once(tmp_path, monkeypatch):
     """At once means the child hears the closed pipe and goes — not that the parent waits
     out the grace period and kills it. With a grace of a minute, the run still ends in
