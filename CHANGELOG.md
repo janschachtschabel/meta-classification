@@ -23,7 +23,8 @@ and the code then ignored.
   phrase is charged for the phrase. The UI note says so now.)
 - **"Mit auto sind das etwa 7 Min.."** — the duration labels are abbreviations that
   carry their own period, and the pre-flight sentence appended a second one. German
-  writes none there.
+  writes none there. The same doubling reached the failure announcement, where a screen
+  reader was handed ".." because the run's error text is already a sentence.
 - **The corrections were the one thing no deployment kept.**
   `APIV3_FEEDBACK_FILE` and `APIV3_JOB_HISTORY_FILE` defaulted next to the code — inside
   the image in a container — and neither compose nor the Helm chart set them: a
@@ -33,6 +34,17 @@ and the code then ignored.
   And a correction that cannot be stored answers **503** naming the setting to fix
   instead of failing as a bug — never a "recorded" it cannot back up, because this is
   editorial work nothing regenerates.
+- **A stop that came too late threw away a finished model's metrics.** The last
+  cancellation checkpoint sits before the deploy fit, so a stop pressed during that fit
+  or during the skops save cannot prevent the bundle — it is published by the time the
+  run returns. The status still reported `stopped` and discarded the results: a model
+  appeared in the list that the operator believed was never created, its history entry
+  carried no metrics next to a bundle that has them, and the next attempt under the same
+  name was refused with 409 "already exists" — right after being told the run had
+  stopped. A run that published now reports `completed` with its metrics; a stop caught
+  at a checkpoint still reports `stopped` and publishes nothing. `hard=true`, which
+  disowns a run rather than finishing it, now drops that run's measurements too instead
+  of showing a peak and a thread count beside `idle`.
 
 ### Added
 
