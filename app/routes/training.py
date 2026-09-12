@@ -20,10 +20,14 @@ from ..training import run_training
 
 router = APIRouter(tags=["Training"])
 
+# An allowlist, so a new body field reaches the run only when it is listed here — and
+# is silently dropped until then. That is what happened to the three text levers below:
+# accepted, validated, and never applied (tests/test_api.py pins each of them).
 _REQ_KEYS = (
     "dataset_name", "model_name", "text_columns", "label_column",
     "csv_separator", "label_separator", "label_filter", "task_type",
     "min_samples_per_label", "cv_folds",
+    "text_column_weights", "max_word_features", "max_char_features",
 )
 
 
@@ -107,6 +111,10 @@ async def train(
     - `cv_folds`: evaluation mode — `0` = classic train/val/test split, `>= 2` = k-fold
       cross-validation (every row trains and validates via out-of-fold metrics; the
       deployed model is fit on 100% of the data). `null` = config default (`split.cv_folds`).
+    - `text_column_weights`: how often each text column is repeated in the training text
+      (`null` = the config default). The trained model expects input built the same way.
+    - `max_word_features` / `max_char_features`: vocabulary caps for this run, overriding
+      the profile's and the server's.
 
     **Auto-optimization:** `C`, thresholds (global + per-label) and the task type are
     determined automatically; `min_samples_per_label` is auto-scaled unless set. All of

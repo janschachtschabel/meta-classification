@@ -392,6 +392,29 @@ def test_train_stores_the_info_block_given_up_front():
     assert stored == {"author": "Redaktion", "license": "CC BY-SA 4.0"}
 
 
+def test_train_applies_the_weights_and_caps_the_request_asked_for():
+    """The two levers a caller can set over the text itself — repeating a field in the
+    training text, and the vocabulary caps — are validated by the schema and then have
+    to REACH the run. `_REQ_KEYS` did not list them, so all three were accepted and
+    dropped: a title weighting set in the form never reached a single model. The bundle
+    records what was actually applied, which is where that shows."""
+    body = {
+        **TRAIN_BODY,
+        "model_name": "weighted_model",
+        "optimize_parameters": "auto",  # word AND char, so both caps are visible
+        "text_column_weights": {"properties.cclom:title": 3},
+        "max_word_features": 1_500,
+        "max_char_features": 2_000,
+    }
+    assert client.post("/train", json=body, headers=ADMIN).status_code == 202
+    assert _wait_for_training()["status"] == "completed"
+
+    meta = client.get("/models/weighted_model", headers=RO).json()["metadata"]
+    assert meta["text_column_weights"] == {"properties.cclom:title": 3}
+    assert meta["tfidf"]["max_word_features"] == 1_500
+    assert meta["tfidf"]["max_char_features"] == 2_000
+
+
 def test_model_info_is_admin_only_and_bounded(trained_model):
     """Free text from a client that ends up rendered in the admin UI and shipped
     inside an exported bundle: bound it at the trust boundary, and keep writing it
