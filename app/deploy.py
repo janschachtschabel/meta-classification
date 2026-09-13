@@ -11,6 +11,11 @@ with a float32-preserving, GIL-releasing solver (newton-cg by default) trains al
 labels in parallel on ONE shared input matrix. The solver's working buffers are
 per fit, though (~2.5x the matrix each), so the thread count is also a memory
 multiplier: a ``memory.ThreadBudget`` sizes every fit to the run's memory budget.
+
+Past the project's ~300-line guide at 352 lines, and left whole: 217 of those are
+code, the rest the "why" the same conventions ask for. The one seam a split would
+follow — the feasibility check against the memory budget — is 35 lines that read
+the same profile and settings this module already has in hand.
 """
 
 from __future__ import annotations
@@ -169,9 +174,13 @@ def refuse_if_the_run_cannot_fit(
     Three things are held together once fitting starts, and the run needs all of them:
     the head (``labels x features`` float32 coefficients — nothing releases it, it IS
     the model), the dense targets (``rows x labels``), and the input matrix plus the
-    solver's copies of it. Judged at ONE thread, the fewest ``threads_within`` will ever
-    drop to: above that the thread budget is doing its job, and this gate would be
-    taking runs that work.
+    solver's copies of it. Judged at ONE thread and ONE head — the floor, below which
+    nothing can be traded away: above it the thread budget is doing its job, and this
+    gate would be taking runs that work. So it is deliberately optimistic in one place:
+    ``select_c`` keeps the best candidate's head while fitting the next one, so the
+    holdout path with a multi-value C grid really holds two at once. Counting that would
+    refuse runs a k-fold profile completes comfortably, since ``cross_val_evaluate``
+    releases each fold's head (``tuning.py``, ``del head``).
 
     Weighing the head alone was not enough — at 200 000 features a 6 000 MB budget is
     only exceeded past ~7 500 labels, while a run of 4 000 labels over 250 000 rows is
@@ -194,8 +203,10 @@ def refuse_if_the_run_cannot_fit(
     """
     n_features = matrix.shape[1]
     head = head_bytes(n_labels, n_features)
+    held_matrix = matrix_bytes(matrix)
+    copies = int(FIT_COPIES_PER_THREAD * held_matrix)
     # The matrix itself plus what one fit copies of it: the run holds both at once.
-    fit = int((1 + FIT_COPIES_PER_THREAD) * matrix_bytes(matrix))
+    fit = held_matrix + copies
     needed = head + targets_bytes + fit
     detail = (f"{n_labels:,} labels x {n_features:,} features need {head // MiB:,} MB of "
               f"coefficients, {targets_bytes // MiB:,} MB of targets and {fit // MiB:,} MB "
@@ -218,7 +229,7 @@ def refuse_if_the_run_cannot_fit(
     # the API process when it shares the budget. The head and the fit's copies come on
     # top of that, so the sum is what the kernel would be asked for.
     held = held_bytes()
-    if held + head + int(FIT_COPIES_PER_THREAD * matrix_bytes(matrix)) <= limit:
+    if held + head + copies <= limit:
         return
     raise TrainingInputError(
         f"This run cannot fit the container, even one label at a time: {detail}, on top "

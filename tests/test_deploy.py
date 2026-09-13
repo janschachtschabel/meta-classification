@@ -240,8 +240,8 @@ def test_a_run_is_refused_when_the_head_fits_but_the_run_does_not():
 
 
 def test_a_run_that_fits_at_one_thread_is_not_refused():
-    """The same shape one step smaller: 1 523 labels are 1 186 MB of coefficients, the
-    targets 322 MB, one fit's matrix copies 2 450 MB — 3 958 MB against 6 000. The
+    """The same shape one step smaller: 1 523 labels are 1 162 MB of coefficients, the
+    targets 322 MB, the matrix and one fit's copies 2 450 MB — 3 934 MB against 6 000. The
     thread budget may still drop this run to a single fit at a time, and that is what it
     is for; refusing here would take a run that works."""
     deploy.refuse_if_the_run_cannot_fit(
