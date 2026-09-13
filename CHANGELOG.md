@@ -34,6 +34,21 @@ and the code then ignored.
   And a correction that cannot be stored answers **503** naming the setting to fix
   instead of failing as a bug — never a "recorded" it cannot back up, because this is
   editorial work nothing regenerates.
+- **A free-text label column killed the run before it started.** Training on a keyword
+  column binarized the targets densely over EVERY distinct value before dropping the
+  rare ones: on the WLO export that asked numpy for 274 804 × 321 702 as int64 — 659 GiB
+  — to produce a 1.95 GiB result, because only 8 279 of those keywords reach 35 rows.
+  The process was killed by signal 9 inside the preparing phase, and the status could
+  only report `exit code -9` with a stale peak. Binarized sparse now, filtered there,
+  densified only once the surviving columns are known: the same call finishes in 4 s
+  with a peak the size of its own result. The output is unchanged.
+- **A model too big to exist is refused before it is fitted.** The head is one float32
+  per label and feature and nothing releases it: 8 279 labels over a 200 000-term
+  vocabulary are 6 316 MB of coefficients against a 6 000 MB budget, before the input
+  matrix and the solver buffers. Instead of vectorizing for minutes and then being
+  OOM-killed mid-fit, the run now ends with a refusal naming the numbers and the three
+  levers — `min_samples_per_label`, the feature caps, or more memory. With
+  `APIV3_TRAIN_MEMORY_MB=0` nothing is refused.
 - **A stop that came too late threw away a finished model's metrics.** The last
   cancellation checkpoint sits before the deploy fit, so a stop pressed during that fit
   or during the skops save cannot prevent the bundle — it is published by the time the
