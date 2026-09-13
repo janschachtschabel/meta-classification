@@ -168,17 +168,27 @@ def prepare_targets(
     Returns ``(Y, classes, row_keep_mask)``. Apply ``row_keep_mask`` to the
     texts to keep them aligned with ``Y``.
 
-    The matrix is int8: it is dense (rows x labels) and holds only 0/1, so sklearn's
-    default int64 would spend 8 bytes per bit — 1.34 GB at 600k rows x 300 labels
-    versus 168 MB. sklearn's metrics and the OneVsRest fit accept int8 unchanged.
+    Binarized SPARSE, filtered there, and densified only once the rare columns are
+    gone — because the cost has to follow the labels that survive, not the ones that
+    arrived. A free-text label column brings them in bulk: the WLO export has 321 702
+    distinct keywords over 274 804 rows, and asking numpy for that densely (as int64,
+    which is what the binarizer returns) is 659 GiB. It was killed by signal 9 in this
+    function, seconds before the filter below would have left 8 279 columns.
+
+    The result is dense int8: it holds only 0/1, and sklearn's default int64 would
+    spend 8 bytes per bit — 1.34 GB at 600k rows x 300 labels versus 168 MB. The
+    dtype is narrowed while still sparse, so densifying allocates the int8 size and
+    never an int64 copy of it. sklearn's metrics and the OneVsRest fit accept int8
+    unchanged, and everything downstream indexes ``Y`` as a dense array.
     """
-    mlb = MultiLabelBinarizer(sparse_output=False)
-    matrix = mlb.fit_transform(label_lists).astype(np.int8, copy=False)
-    col_keep = matrix.sum(axis=0) >= min_samples
+    mlb = MultiLabelBinarizer(sparse_output=True)
+    matrix = mlb.fit_transform(label_lists)
+    col_counts = np.asarray(matrix.sum(axis=0)).ravel()
+    col_keep = col_counts >= min_samples
     matrix = matrix[:, col_keep]
     classes = [c for c, keep in zip(mlb.classes_, col_keep, strict=False) if keep]
-    row_keep = matrix.sum(axis=1) > 0
-    return matrix[row_keep], classes, row_keep
+    row_keep = np.asarray(matrix.sum(axis=1)).ravel() > 0
+    return matrix[row_keep].astype(np.int8).toarray(), classes, row_keep
 
 
 def three_way_split(

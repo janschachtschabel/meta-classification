@@ -68,6 +68,47 @@ def test_prepare_targets_drops_rare_labels_and_empty_rows():
     assert row_keep.tolist() == [True, True, True, False]
 
 
+def test_preparing_targets_costs_what_survives_not_what_arrived():
+    """A free-text label column (keywords) brings hundreds of thousands of distinct
+    values, nearly all of them too rare to train. Binarized densely BEFORE the rare
+    ones are dropped, the matrix is rows x every-distinct-value: on the WLO export
+    that is 274 804 x 321 702, which numpy is asked for as int64 — 659 GiB, and the
+    training process was killed by signal 9 inside the preparing phase.
+
+    The rare columns are dropped seconds later, so the memory this needs must follow
+    the labels that SURVIVE `min_samples`. Measured with tracemalloc rather than RSS:
+    numpy registers its buffers there, while RSS on Windows hands a freed block back
+    before the assertion could see it.
+    """
+    import tracemalloc
+
+    import numpy as np
+
+    rows = 2_000
+    frequent = [[f"keep{i % 50}"] for i in range(rows)]
+    # One rare label per row, each seen once, so none of them can survive.
+    labels = [row + [f"rare{i}"] for i, row in enumerate(frequent)]
+    labels += [[f"rare{rows + i}"] for i in range(18_000)]  # 20k rare values in total
+
+    tracemalloc.start()
+    try:
+        matrix, classes, row_keep = data.prepare_targets(labels, min_samples=10)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert classes == sorted(f"keep{i}" for i in range(50)), "only the frequent ones"
+    assert matrix.shape == (rows, 50)
+    assert matrix.dtype == np.int8
+    assert row_keep.sum() == rows, "the rare-only rows are dropped"
+
+    kept_bytes = matrix.nbytes  # 2 000 x 50 x int8 = 100 KB
+    dense_first = rows * 20_050 * 8  # what the old path asked numpy for: 321 MB
+    assert peak < dense_first / 10, (
+        f"peak {peak / 1024**2:.0f} MiB for a {kept_bytes / 1024:.0f} KiB result — "
+        "the matrix is still built over every distinct label before filtering")
+
+
 def test_auto_min_samples_scales():
     assert data.auto_min_samples(500) == 2
     assert data.auto_min_samples(5_000) == 5
