@@ -18,13 +18,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from joblib import parallel_backend
 from sklearn.multiclass import OneVsRestClassifier
 
 from .classifier import make_head
-from .memory import MiB, ThreadBudget, matrix_bytes
+from .errors import TrainingInputError
+from .memory import MiB, ThreadBudget, head_bytes, matrix_bytes
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
@@ -151,6 +153,37 @@ def select_on_split(
     return best_c, global_t, per_label, metrics
 
 
+def refuse_if_the_head_cannot_fit(n_labels: int, matrix: Any, budget: int | None) -> None:
+    """Stop a run whose model cannot exist in the memory it was given.
+
+    The head is ``labels x features`` float32 coefficients and nothing releases it: it
+    IS the model. A label count in the thousands outgrows the budget on its own, before
+    the input matrix and before the solver buffers the thread budget bounds — and a run
+    like that vectorizes for minutes and is then killed mid-fit, which reaches the
+    operator as `exit code -9` and a peak from whenever the last progress update landed.
+
+    Wired into ``ThreadBudget.before_fit``, which every fit passes with its own matrix:
+    only the matrix knows how wide the vocabulary actually got, and estimating from the
+    caps instead refuses runs whose vocabulary never approaches them. No budget
+    configured means no refusal — ``train_memory_mb=0`` is an operator saying they know
+    what they are doing.
+    """
+    if budget is None:
+        return
+    n_features = matrix.shape[1]
+    needed = head_bytes(n_labels, n_features)
+    if needed <= budget:
+        return
+    raise TrainingInputError(
+        f"This model cannot fit the memory it has: {n_labels:,} labels x {n_features:,} "
+        f"features are {needed // MiB:,} MB of coefficients alone, against a training "
+        f"budget of {budget // MiB:,} MB — and the input matrix and the solver come on "
+        f"top. Raise min_samples_per_label to train fewer labels (the usual cause is a "
+        f"free-text label column), lower max_word_features / max_char_features, or give "
+        f"the container more memory (APIV3_TRAIN_MEMORY_MB)."
+    )
+
+
 def fit_evaluate_deploy(
     prep: Prepared,
     settings: Settings,
@@ -196,6 +229,11 @@ def fit_evaluate_deploy(
     thread_budget = ThreadBudget(
         requested=n_jobs, budget_bytes=budget_bytes,
         on_choice=lambda threads: on_progress(head_fit_threads=threads, threads_requested=n_jobs),
+        # Every fit asks the budget for its thread count first, whichever path built its
+        # matrix — so this is where a model too big to exist gets stopped, once, with the
+        # width the vocabulary actually reached.
+        before_fit=lambda matrix: refuse_if_the_head_cannot_fit(
+            y_all.shape[1], matrix, budget_bytes),
     )
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):

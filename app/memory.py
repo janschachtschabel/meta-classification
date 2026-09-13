@@ -174,6 +174,17 @@ def matrix_bytes(matrix: Any) -> int:
     return int(matrix.nbytes)
 
 
+def head_bytes(n_labels: int, n_features: int) -> int:
+    """What the FITTED head occupies: one float32 coefficient per label and feature.
+
+    Unlike the matrices this module's other numbers describe, nothing releases this
+    one — it is the model. It is also the term that grows with the label count, which
+    a free-text label column can push into the thousands, so it is the first thing to
+    check when asking whether a run can end at all.
+    """
+    return n_labels * n_features * 4
+
+
 class PeakSampler:
     """The most memory held while the context is open, sampled on a daemon thread.
 
@@ -231,14 +242,20 @@ class ThreadBudget:
     ``budget_bytes=None`` grants the request unchanged (no limit known or configured).
     ``on_choice`` hears every count as it is decided, BEFORE the fit starts — a fit can
     run for minutes, and that is when the count has to be on screen.
+    ``before_fit`` is asked first and may refuse the run outright by raising: this is the
+    one point every fit passes with its real matrix, whichever path built it, and the
+    caller keeps the policy (this module holds no opinion on what is too big to train).
     """
 
     requested: int
     budget_bytes: int | None
     chosen: list[int] = field(default_factory=list)
     on_choice: Callable[[int], None] | None = field(default=None, repr=False, compare=False)
+    before_fit: Callable[[Any], None] | None = field(default=None, repr=False, compare=False)
 
     def for_matrix(self, matrix: Any) -> int:
+        if self.before_fit is not None:
+            self.before_fit(matrix)
         threads = self.requested
         if self.budget_bytes is not None:
             held, size = held_bytes(), matrix_bytes(matrix)
