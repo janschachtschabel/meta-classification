@@ -49,9 +49,13 @@ and the code then ignored.
   250 000 rows need 11 116 MB against 6 000 — so instead of vectorizing for minutes and
   then being OOM-killed mid-fit, the run ends with a refusal naming the numbers and the
   three levers: `min_samples_per_label`, the feature caps, or more memory. At 200 000
-  features and 250 000 rows the line sits near 3 500 labels. The process' own footprint
-  is not counted, so a run just under it can still run out of memory. With
-  `APIV3_TRAIN_MEMORY_MB=0` nothing is refused.
+  features and 250 000 rows the line sits near 3 500 labels. Being over the budget is not
+  the same as being out of memory, though — the budget is usually well below the
+  container — so the same working set is weighed again against the **cgroup limit**, on
+  top of what the process already holds. That check runs even with
+  `APIV3_TRAIN_MEMORY_MB=0`: switching the throttle off says something about tuning, not
+  about what the kernel will allow. Outside a container, with neither a limit nor a
+  budget, nothing is refused.
 - **A stop that came too late threw away a finished model's metrics.** The last
   cancellation checkpoint sits before the deploy fit, so a stop pressed during that fit
   or during the skops save cannot prevent the bundle — it is published by the time the
