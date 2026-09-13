@@ -5,6 +5,7 @@ which is the likeliest way for a feature behind a flag to end up quietly inert.
 """
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ from scipy import sparse
 
 from app import deploy, tuning
 from app.errors import TrainingInputError
+from app.memory import MiB
 from app.prepare import Prepared
 from app.profiles import Profile
 from app.settings import Settings
@@ -194,6 +196,57 @@ def _wide_vectorizer(n_features: int):
             return sparse.csr_matrix((len(texts), n_features), dtype=np.float32)
 
     return lambda **kwargs: _Wide()
+
+
+class _Matrix:
+    """Reports a real run's matrix size without allocating one.
+
+    ``matrix_bytes`` reads the three CSR arrays and nothing else, so a stand-in that
+    knows its own size is enough — building 700 MB of non-zeros to assert arithmetic
+    would measure the machine, not the rule.
+    """
+
+    def __init__(self, rows: int, features: int, size_bytes: int) -> None:
+        self.shape = (rows, features)
+        third = size_bytes // 3
+        self.data = SimpleNamespace(nbytes=third)
+        self.indices = SimpleNamespace(nbytes=third)
+        self.indptr = SimpleNamespace(nbytes=size_bytes - 2 * third)
+
+
+def test_a_run_is_refused_when_the_head_fits_but_the_run_does_not():
+    """Weighing the coefficients alone only catches the extreme: at 200 000 features a
+    6 000 MB budget is not exceeded until ~7 500 labels. Below that a run can still be
+    impossible, because the targets and the matrix are held at the same time — the dense
+    y is rows x labels, and one fit needs the matrix plus the solver's copies of it.
+
+    4 000 labels over 250 000 rows: the head is 3 052 MB and fits; the head plus the
+    targets plus a single fit's matrix copies is 6 456 MB and does not. Judged at ONE
+    thread, the fewest the thread budget will ever drop to — anything above that is the
+    throttle's job, not this gate's.
+    """
+    budget = 6_000 * MiB
+    head_only = deploy.head_bytes(4_000, 200_000)
+    assert head_only < budget, "the case is only interesting while the head itself fits"
+
+    with pytest.raises(TrainingInputError) as excinfo:
+        deploy.refuse_if_the_run_cannot_fit(
+            n_labels=4_000, targets_bytes=250_000 * 4_000,
+            matrix=_Matrix(250_000, 200_000, 700 * MiB), budget_bytes=budget)
+
+    message = str(excinfo.value)
+    assert "4,000" in message, "name the labels"
+    assert "min_samples_per_label" in message
+
+
+def test_a_run_that_fits_at_one_thread_is_not_refused():
+    """The same shape one step smaller: 1 523 labels are 1 186 MB of coefficients, the
+    targets 322 MB, one fit's matrix copies 2 450 MB — 3 958 MB against 6 000. The
+    thread budget may still drop this run to a single fit at a time, and that is what it
+    is for; refusing here would take a run that works."""
+    deploy.refuse_if_the_run_cannot_fit(
+        n_labels=1_523, targets_bytes=221_915 * 1_523,
+        matrix=_Matrix(221_915, 200_000, 700 * MiB), budget_bytes=6_000 * MiB)
 
 
 def test_a_head_that_cannot_fit_the_budget_is_refused_before_any_fit(monkeypatch):

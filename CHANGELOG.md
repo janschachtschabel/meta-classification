@@ -42,12 +42,15 @@ and the code then ignored.
   only report `exit code -9` with a stale peak. Binarized sparse now, filtered there,
   densified only once the surviving columns are known: the same call finishes in 4 s
   with a peak the size of its own result. The output is unchanged.
-- **A model too big to exist is refused before it is fitted.** The head is one float32
-  per label and feature and nothing releases it: 8 279 labels over a 200 000-term
-  vocabulary are 6 316 MB of coefficients against a 6 000 MB budget, before the input
-  matrix and the solver buffers. Instead of vectorizing for minutes and then being
-  OOM-killed mid-fit, the run now ends with a refusal naming the numbers and the three
-  levers — `min_samples_per_label`, the feature caps, or more memory. With
+- **A run too big to finish is refused before it is fitted.** Three things are held
+  together once fitting starts: the head (one float32 per label and feature, and nothing
+  releases it), the dense targets (`rows × labels`) and the matrix plus one fit's copies
+  of it. Weighed against the budget at a single thread, 8 279 keyword labels over
+  250 000 rows need 11 116 MB against 6 000 — so instead of vectorizing for minutes and
+  then being OOM-killed mid-fit, the run ends with a refusal naming the numbers and the
+  three levers: `min_samples_per_label`, the feature caps, or more memory. At 200 000
+  features and 250 000 rows the line sits near 3 500 labels. The process' own footprint
+  is not counted, so a run just under it can still run out of memory. With
   `APIV3_TRAIN_MEMORY_MB=0` nothing is refused.
 - **A stop that came too late threw away a finished model's metrics.** The last
   cancellation checkpoint sits before the deploy fit, so a stop pressed during that fit

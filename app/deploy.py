@@ -26,7 +26,13 @@ from sklearn.multiclass import OneVsRestClassifier
 
 from .classifier import make_head
 from .errors import TrainingInputError
-from .memory import MiB, ThreadBudget, head_bytes, matrix_bytes
+from .memory import (
+    FIT_COPIES_PER_THREAD,
+    MiB,
+    ThreadBudget,
+    head_bytes,
+    matrix_bytes,
+)
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
@@ -153,14 +159,23 @@ def select_on_split(
     return best_c, global_t, per_label, metrics
 
 
-def refuse_if_the_head_cannot_fit(n_labels: int, matrix: Any, budget: int | None) -> None:
-    """Stop a run whose model cannot exist in the memory it was given.
+def refuse_if_the_run_cannot_fit(
+    *, n_labels: int, targets_bytes: int, matrix: Any, budget_bytes: int | None
+) -> None:
+    """Stop a run that cannot fit its budget even one fit at a time.
 
-    The head is ``labels x features`` float32 coefficients and nothing releases it: it
-    IS the model. A label count in the thousands outgrows the budget on its own, before
-    the input matrix and before the solver buffers the thread budget bounds — and a run
-    like that vectorizes for minutes and is then killed mid-fit, which reaches the
-    operator as `exit code -9` and a peak from whenever the last progress update landed.
+    Three things are held together once fitting starts, and the run needs all of them:
+    the head (``labels x features`` float32 coefficients — nothing releases it, it IS
+    the model), the dense targets (``rows x labels``), and the input matrix plus the
+    solver's copies of it. Judged at ONE thread, the fewest ``threads_within`` will ever
+    drop to: above that the thread budget is doing its job, and this gate would be
+    taking runs that work.
+
+    Weighing the head alone was not enough — at 200 000 features a 6 000 MB budget is
+    only exceeded past ~7 500 labels, while a run of 4 000 labels over 250 000 rows is
+    already impossible once its targets and matrix are counted. Left to run, such a job
+    is killed mid-fit and reaches the operator as `exit code -9` with a peak from
+    whenever the last progress update landed.
 
     Wired into ``ThreadBudget.before_fit``, which every fit passes with its own matrix:
     only the matrix knows how wide the vocabulary actually got, and estimating from the
@@ -168,19 +183,24 @@ def refuse_if_the_head_cannot_fit(n_labels: int, matrix: Any, budget: int | None
     configured means no refusal — ``train_memory_mb=0`` is an operator saying they know
     what they are doing.
     """
-    if budget is None:
+    if budget_bytes is None:
         return
     n_features = matrix.shape[1]
-    needed = head_bytes(n_labels, n_features)
-    if needed <= budget:
+    head = head_bytes(n_labels, n_features)
+    # The matrix itself plus what one fit copies of it: the run holds both at once.
+    fit = int((1 + FIT_COPIES_PER_THREAD) * matrix_bytes(matrix))
+    needed = head + targets_bytes + fit
+    if needed <= budget_bytes:
         return
     raise TrainingInputError(
-        f"This model cannot fit the memory it has: {n_labels:,} labels x {n_features:,} "
-        f"features are {needed // MiB:,} MB of coefficients alone, against a training "
-        f"budget of {budget // MiB:,} MB — and the input matrix and the solver come on "
-        f"top. Raise min_samples_per_label to train fewer labels (the usual cause is a "
-        f"free-text label column), lower max_word_features / max_char_features, or give "
-        f"the container more memory (APIV3_TRAIN_MEMORY_MB)."
+        f"This run cannot fit the memory it has, even one label at a time: "
+        f"{n_labels:,} labels x {n_features:,} features need {head // MiB:,} MB of "
+        f"coefficients, {targets_bytes // MiB:,} MB of targets and {fit // MiB:,} MB "
+        f"for the matrix and one fit's copies of it — {needed // MiB:,} MB against a "
+        f"training budget of {budget_bytes // MiB:,} MB. Raise min_samples_per_label to "
+        f"train fewer labels (the usual cause is a free-text label column), lower "
+        f"max_word_features / max_char_features, or give the container more memory "
+        f"(APIV3_TRAIN_MEMORY_MB)."
     )
 
 
@@ -230,10 +250,11 @@ def fit_evaluate_deploy(
         requested=n_jobs, budget_bytes=budget_bytes,
         on_choice=lambda threads: on_progress(head_fit_threads=threads, threads_requested=n_jobs),
         # Every fit asks the budget for its thread count first, whichever path built its
-        # matrix — so this is where a model too big to exist gets stopped, once, with the
-        # width the vocabulary actually reached.
-        before_fit=lambda matrix: refuse_if_the_head_cannot_fit(
-            y_all.shape[1], matrix, budget_bytes),
+        # matrix — so this is where a run too big to finish gets stopped, with the width
+        # the vocabulary actually reached and the targets it actually built.
+        before_fit=lambda matrix: refuse_if_the_run_cannot_fit(
+            n_labels=y_all.shape[1], targets_bytes=y_all.nbytes, matrix=matrix,
+            budget_bytes=budget_bytes),
     )
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):
