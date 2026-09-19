@@ -37,8 +37,12 @@ class LoadedData:
     # data-prep's provenance marks per kept row (a ``provenance`` bitmask); None when
     # the CSV has no mark column at all.
     marks: list[int] | None = None
-    # Generated rows left out under ``synthetic_rows="exclude"``.
+    # Generated rows left out under ``synthetic_rows="exclude"``, once per text as the
+    # dedupe would have kept them -- the count a run reports.
     excluded_generated: int = 0
+    # Every generated row "exclude" dropped, copies included: whether it dropped any,
+    # which makes the run a marked one even when all it dropped were copies.
+    excluded_rows: int = 0
 
 
 def combine_text_columns(
@@ -211,6 +215,7 @@ class _Collector:
     excluded_generated: int = 0
     # Texts "exclude" left out, under the dedupe: a second copy is not counted again.
     left_out: set[str] = field(default_factory=set)
+    excluded_rows: int = 0
 
     def add(self, frame: pd.DataFrame) -> None:
         cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
@@ -236,6 +241,7 @@ class _Collector:
             # was not left out by this -- nor, under the dedupe, a copy of a text that
             # was kept or left out already.
             if mark & GENERATED and self.mode == "exclude":
+                self.excluded_rows += 1
                 if not (self.drop_duplicates and (text in self.seen or text in self.left_out)):
                     self.excluded_generated += 1
                     if self.drop_duplicates:
@@ -267,4 +273,5 @@ class _Collector:
                      for text, mark in zip(self.texts, self.marks, strict=True)]
         return LoadedData(texts=self.texts, label_lists=self.label_lists,
                           uri_to_label=self.uri_to_label, marks=marks,
-                          excluded_generated=self.excluded_generated)
+                          excluded_generated=self.excluded_generated,
+                          excluded_rows=self.excluded_rows)

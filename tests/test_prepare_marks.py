@@ -155,6 +155,25 @@ def test_a_holdout_scores_by_one_rule_with_and_without_the_generated_rows(tmp_pa
     assert _unscored(prep) == [c for c, hit in zip(prep.classes, in_test, strict=True) if not hit]
 
 
+def test_exclude_stays_a_marked_run_when_it_dropped_only_copies_of_kept_texts(tmp_path):
+    """Copies of texts a real row already has count as nothing left out (review
+    2026-09-19 #16) -- but the dataset carried marks: the run keeps the marked rule and
+    records its mode, as the "train" run of the same file does (review of the fixes)."""
+    rows = [[f"Bruchrechnung Aufgabe {i}", f"brüche{i}", "A", "", "", ""] for i in range(12)]
+    rows += [[f"Photosynthese Versuch {i}", f"licht{i}", "B", "", "", ""] for i in range(12)]
+    rows += [["Kaiser Augustus Quelle", "rom", "C", "", "", ""]]
+    rows += [[f"Bruchrechnung Aufgabe {i}", f"brüche{i}", "A", "A", "", ""] for i in range(3)]
+
+    prep = _prepare(tmp_path, _write(tmp_path, rows), cv_folds=0, stratified=True,
+                    synthetic_rows="exclude", min_samples_per_label=1)
+
+    assert prep.provenance is not None and prep.provenance.mode == "exclude"
+    assert prep.provenance.excluded_generated == 0
+    in_test = prep.y_all[prep.test_idx].sum(axis=0) > 0
+    assert "C" in prep.classes and not in_test[prep.classes.index("C")]
+    assert _unscored(prep) == [c for c, hit in zip(prep.classes, in_test, strict=True) if not hit]
+
+
 def test_a_holdout_that_loses_its_real_rows_to_the_label_drop_falls_back(tmp_path, monkeypatch):
     """Val and test drawn from real rows whose labels have no training positive: the
     unlearnable-label drop empties them. That is the same shortage as too few real rows,

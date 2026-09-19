@@ -56,7 +56,7 @@ def split_rows(
 def row_provenance(
     marks: np.ndarray | None, y_all: np.ndarray, *, mode: str, excluded: int,
     fallback: str | None, evaluated: np.ndarray | None = None,
-    min_samples: int = 1, thin_mode: str = "own",
+    min_samples: int = 1, thin_mode: str = "own", dropped: int = 0,
 ) -> RowProvenance | None:
     """What the marks decided -- or ``None`` when the dataset has none, and the run is
     the one it was before marks existed.
@@ -68,8 +68,12 @@ def row_provenance(
 
     A label with fewer real rows than ``min_samples`` is thin: it reached the training
     minimum only through AI-marked rows, and ``thin_mode`` is the run's choice of its cut.
+
+    ``excluded`` is the count of generated rows "exclude" left out, as reported; ``dropped``
+    counts every row it dropped, copies of kept texts included -- a run that dropped only
+    copies left nothing out, but is a marked run all the same.
     """
-    if marks is None or not (marks.any() or excluded):
+    if marks is None or not (marks.any() or excluded or dropped):
         return None
     real = marks == 0
     # Counted in place: selecting the real rows would copy the label matrix, the largest
