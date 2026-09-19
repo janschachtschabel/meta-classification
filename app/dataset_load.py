@@ -196,7 +196,8 @@ class _Collector:
     rows_read: int = 0
     marks: list[int] = field(default_factory=list)
     # Texts of marked rows, the dedupe's dropped copies included: a kept row with such a
-    # text is train-only too. Few rows carry a mark, so this stays small.
+    # text is train-only too. The strings are the ones kept anyway, so this costs a set
+    # entry per marked row -- small, unless a pure Runs export marks every row.
     marked_texts: set[str] = field(default_factory=set)
     excluded_generated: int = 0
 

@@ -49,7 +49,8 @@ Blank, whitespace or a missing cell is no mark; a CSV without these columns has 
 
    "exclude" removes generated rows only. Enriched rows are real rows with AI-filled cells;
    the original cell is not recorded, so they cannot be restored — they stay, train-only.
-3. **Labels whose rows are all train-only** ("not validated"): trained as before (the
+3. **Labels no real row of the evaluated rows carries** ("not validated" — for k-fold every
+   real row, for the holdout its test split, amended after review): trained as before (the
    min-samples threshold counts every row, so balancing CAN lift a label into training —
    wanted), threshold = the global one (the existing `n_pos == 0` rule in
    `thresholds.tune_threshold_columns`), **no F1** (omitted from `per_label_f1`, UI shows
@@ -193,7 +194,9 @@ Phase D — option, metadata, evaluate, UI, docs
 - D1 `synthetic_rows` in `TrainRequest` + `_REQ_KEYS`; 422 on other values; "exclude" shrinks `n_samples`.
 - D2 `_build_metadata`: `synthetic_data` block + evaluation text; absent for unmarked data.
 - D3 evaluate skips marked rows, `ai_marked_rows_skipped` in the record.
-- D4 training form: hint when the dataset has a mark column, select when it has `generated_for`.
+- D4 training form: the select and its note whenever the dataset has a mark column — the note
+  says marked rows never validate, which holds for `enriched_fields` alone too — with
+  "leave out" disabled when there is no `generated_for` column.
 - D5 model detail: "KI-Daten" row, fallback warning, per-label note.
 - D6 docs: `docs/ui-guide.md`, `CHANGELOG.md`, this plan's status.
 

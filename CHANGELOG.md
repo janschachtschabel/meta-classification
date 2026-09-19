@@ -14,7 +14,8 @@ nobody could see afterwards. Plan: `docs/plans/2026-09-19-ai-marked-rows.md`.
 - **Marked rows train, but never validate.** The loader reads `generated_for`,
   `example_for` and `enriched_fields` when a CSV has them (`app/provenance.py`). k-fold
   folds only the real rows and adds every marked row to every training part; the holdout
-  draws validation and test from real rows. A label no real row carries is trained, keeps
+  draws validation and test from real rows. A label no real row of the evaluated rows
+  carries (k-fold: any real row; holdout: the test split) is trained, keeps
   the global threshold, has no F1 and stays out of the macro averages; micro F1 still
   counts its false alarms. A row with the text of a marked row is train-only too.
 - **`synthetic_rows`** on `/train`: `train` (default) or `exclude` — generated rows left

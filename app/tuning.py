@@ -166,10 +166,10 @@ def cross_val_evaluate(
     ``thread_budget`` sizes each fold's fits to the run's memory budget, as in
     ``select_c``.
 
-    ``validate`` (bool per row) narrows "all rows" for rows an LLM wrote or touched: the
-    held-out blocks partition only the rows it marks, every other row trains in every
-    fold and is never scored, and C, the thresholds and the metrics come from the marked
-    rows alone. ``scored`` is handed to ``compute_metrics``. ``None`` for both is the
+    ``validate`` (bool per row, True for the real rows) narrows "all rows" when an LLM
+    wrote or touched some of them: the held-out blocks partition only the real rows, every
+    other row trains in every fold and is never scored, and C, the thresholds and the
+    metrics come from the real rows alone. ``scored`` is handed to ``compute_metrics``. ``None`` for both is the
     evaluation over every row, fold for fold the one made before either existed.
 
     Fairness note: ``C`` and the thresholds are selected on the same OOF predictions
