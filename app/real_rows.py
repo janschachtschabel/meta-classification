@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .data import three_way_split
+from . import data as data_mod
 from .profiles import TrainingConfig
 from .provenance import RowProvenance
 
@@ -31,7 +31,7 @@ def split_rows(
     """
 
     def every_row() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return three_way_split(
+        return data_mod.three_way_split(
             n, val_size=training_cfg.validation_size, test_size=training_cfg.test_size,
             seed=seed, y=y)
 
@@ -42,7 +42,7 @@ def split_rows(
         reason = None if n_real >= cv_folds else f"only {n_real} real rows for {cv_folds} folds"
         return every_row(), reason
     try:
-        splits = three_way_split(
+        splits = data_mod.three_way_split(
             n, val_size=training_cfg.validation_size, test_size=training_cfg.test_size,
             seed=seed, y=y, train_only=train_only)
     except ValueError:
