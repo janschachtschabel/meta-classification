@@ -2,6 +2,43 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — AI rows train, real rows measure (2026-09-19)
+
+data-prep marks the rows an LLM wrote or touched. api_v3 read none of those marks, so a
+label balanced from 3 real rows to 100 was scored mostly on text the same LLM wrote from
+the same examples — "AI measured with AI" — and its F1 flattered itself by a margin
+nobody could see afterwards. Plan: `docs/plans/2026-09-19-ai-marked-rows.md`.
+
+### Added
+
+- **Marked rows train, but never validate.** The loader reads `generated_for`,
+  `example_for` and `enriched_fields` when a CSV has them (`app/provenance.py`). k-fold
+  folds only the real rows and adds every marked row to every training part; the holdout
+  draws validation and test from real rows. A label no real row carries is trained, keeps
+  the global threshold, has no F1 and stays out of the macro averages; micro F1 still
+  counts its false alarms. A row with the text of a marked row is train-only too.
+- **`synthetic_rows`** on `/train`: `train` (default) or `exclude` — generated rows left
+  out when the dataset is read, before the dedupe; the generator's examples then validate
+  again. The training form offers it when a dataset carries the marks.
+- **`synthetic_data`** in the bundle metadata, and the evaluation line: what was trained
+  on, what was left out, the rows the metrics came from, the labels no real row could
+  validate. The model detail shows it ("KI-Daten", "Kennzahlen aus").
+- **Fallback, said out loud:** too few real rows to validate on — a pure Runs export has
+  none — and the run trains anyway, with the metrics over every row, `validated_on:
+  "all_rows"` and a warning in the model detail.
+- **`POST /models/{name}/evaluate`** skips marked rows and records how many
+  (`ai_marked_rows_skipped`).
+
+### Changed
+
+- `compute_metrics` and its decision rule moved from `tuning.py` to `app/metrics.py`
+  (behaviour-preserving; `tuning.py` was past the size guide and the feature added to both
+  halves).
+
+Unchanged by construction: a dataset without mark columns, or with blank ones, trains the
+same model — same C, thresholds and metrics (pinned by an end-to-end test in both
+evaluation modes).
+
 ## [Unreleased] — levers that never arrived (2026-09-12)
 
 Four findings from using the thing: three of them were fields or numbers the UI showed

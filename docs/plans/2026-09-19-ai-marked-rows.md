@@ -1,6 +1,8 @@
 # Plan — train on AI-marked rows, validate only on real ones (api_v3), 2026-09-19
 
-**Status: requested 2026-09-19 ("plane die Anpassung und beginne mit der Umsetzung").**
+**Status: requested 2026-09-19 ("plane die Anpassung und beginne mit der Umsetzung");
+Phases A–D implemented the same day on branch `feat/ai-marked-rows`, each task test-first;
+the UI checked in a preview with its own data and models directories.**
 Companion to data-prep's `docs/plan-2026-09-19-ai-provenance-prompts.md`, which writes the
 marks this plan reads. Same conventions as `2026-09-11-training-memory.md`.
 

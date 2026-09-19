@@ -252,6 +252,39 @@ abgelehnt“ gehört zur Antwort dazu.
 Ab ~5000 Zeilen verweist der Textmodus auf die CSV-Variante — die streamt, statt jede
 Antwort im Browser zu sammeln.
 
+## KI-erzeugte Daten aus data-prep (Reiter „Training“ und „Modelle“)
+
+data-prep kann seltene Labels mit KI-erzeugten Zeilen auffüllen und fehlende Felder
+ergänzen. Solche Zeilen tragen eine **Markierung** (`generated_for`, `example_for`,
+`enriched_fields`). Hat ein Datensatz diese Spalten, zeigt das Trainingsformular die
+Auswahl **KI-erzeugte Zeilen**:
+
+- **Trainieren, nie validieren (empfohlen):** Das Modell lernt auch aus den KI-Zeilen,
+  gemessen wird aber nur auf echten Zeilen — bei der Kreuzvalidierung genauso wie beim
+  Test-Split. So misst niemand KI-Text mit KI. Auch Zeilen, die der KI als Beispiel
+  gezeigt oder von ihr ergänzt wurden, zählen nicht in die Kennzahlen.
+- **Weglassen:** Die erzeugten Zeilen bleiben beim Einlesen draußen. Ein Vergleich
+  „mit“ gegen „ohne“ auf demselben Datensatz zeigt, was das Auffüllen gebracht hat.
+  Weil dann auch Labels unter die Mindestzahl fallen können, kann das Modell weniger
+  Labels haben.
+
+Ein Datensatz ohne Markierungen trainiert genau wie bisher; die Auswahl erscheint dann gar
+nicht.
+
+In der **Detailansicht** eines solchen Modells steht:
+
+- **KI-Daten:** wie viele markierte Zeilen trainiert (und nie validiert) oder weggelassen
+  wurden.
+- **Kennzahlen aus:** auf wie vielen echten Zeilen die F1-Werte beruhen.
+- Labels ohne eine einzige echte Zeile werden trainiert, haben aber **keinen F1** („–“ in
+  der Tabelle) und zählen nicht ins Makro-Mittel — für sie gibt es schlicht nichts
+  Echtes zu messen.
+- Hat ein Datensatz zu wenige echte Zeilen (etwa ein reiner KI-Lauf), wird trotzdem
+  trainiert, die Kennzahlen enthalten dann aber KI-Zeilen. Das steht als **Warnung** in
+  der Detailansicht; prüfe so ein Modell mit **Bewerten gegen…** auf echten Daten.
+
+**Bewerten gegen…** überspringt markierte Zeilen immer und sagt, wie viele es waren.
+
 ## Qualität verstehen (Reiter „Modelle“)
 
 - **F1 (0–1):** Wie gut die Antworten des Modells bei einer ehrlichen Prüfung
