@@ -2,9 +2,13 @@
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
+from sklearn.model_selection import KFold
 
 from app import tuning
+from app.errors import TrainingInputError
 from app.metrics import compute_metrics
+from app.stratify import stratified_partition
 from app.vectorizers import TfidfBackend
 
 
@@ -462,3 +466,101 @@ def test_select_c_leaves_thresholds_alone_for_single_label_tasks(scripted_c_sear
         task_type="multiclass", select_on_tuned_thresholds=True,
     )
     assert thresholds is None
+
+
+class _RowRecorder:
+    """A head that remembers which rows it was fit on and which it scored.
+
+    Paired with a one-column matrix holding each row's number (+1, so row 0 is not an
+    empty row), it shows the fold loop's row routing without fitting anything.
+    """
+
+    def __init__(self, trained: list, scored: list, n_labels: int):
+        self.trained, self.scored, self.n_labels = trained, scored, n_labels
+
+    @staticmethod
+    def _rows(x) -> set[int]:
+        return set((x[:, 0].toarray().ravel().astype(int) - 1).tolist())
+
+    def fit(self, x, _y):
+        self.trained.append(self._rows(x))
+        return self
+
+    def predict_proba(self, x):
+        self.scored.append(self._rows(x))
+        return np.full((x.shape[0], self.n_labels), 0.5)
+
+
+def _recorded_cv(monkeypatch, y, **kwargs):
+    trained: list[set[int]] = []
+    scored: list[set[int]] = []
+    monkeypatch.setattr(tuning, "make_head",
+                        lambda *a, **k: _RowRecorder(trained, scored, y.shape[1]))
+    ids = sp.csr_matrix(np.arange(1, len(y) + 1, dtype=np.float64).reshape(-1, 1))
+    result = tuning.cross_val_evaluate(lambda: None, [""] * len(y), y, ["a", "b"],
+                                       c_grid=[1.0], matrix=ids, **kwargs)
+    return result, trained, scored
+
+
+def _single_label_targets(n: int) -> np.ndarray:
+    y = np.zeros((n, 2), dtype=np.int8)
+    y[::2, 0] = 1
+    y[1::2, 1] = 1
+    return y
+
+
+@pytest.mark.parametrize("stratified", [False, True])
+def test_rows_that_may_not_validate_train_in_every_fold_and_are_never_scored(
+        monkeypatch, stratified):
+    """Rows an LLM wrote or touched train, but the folds partition the real rows only:
+    a train-only row is in every training part and in no held-out block."""
+    y = _single_label_targets(30)
+    validate = np.ones(30, dtype=bool)
+    validate[::3] = False
+
+    _, trained, scored = _recorded_cv(monkeypatch, y, k=3, validate=validate,
+                                      stratified=stratified)
+
+    train_only = set(np.flatnonzero(~validate).tolist())
+    assert len(trained) == 3
+    assert all(train_only <= rows for rows in trained)
+    assert not any(train_only & rows for rows in scored)
+    assert set().union(*scored) == set(np.flatnonzero(validate).tolist())
+    assert sum(len(rows) for rows in scored) == int(validate.sum()), "each real row once"
+
+
+def test_the_reported_numbers_come_from_the_real_rows_only(monkeypatch):
+    """Train-only rows here carry two labels each, real rows one: any train-only row in
+    the evaluation would lift the true label count above 1."""
+    y = _single_label_targets(30)
+    validate = np.ones(30, dtype=bool)
+    validate[::3] = False
+    y[~validate] = 1
+
+    (_, _, _, metrics), _, _ = _recorded_cv(monkeypatch, y, k=3, validate=validate,
+                                            scored=np.array([True, False]))
+
+    assert metrics["true_labels_per_row"] == 1.0
+    assert set(metrics["per_label_f1"]) == {"a"}
+
+
+@pytest.mark.parametrize("stratified", [False, True])
+def test_without_validate_the_folds_are_the_ones_made_before(monkeypatch, stratified):
+    y = _single_label_targets(30)
+
+    _, _, scored = _recorded_cv(monkeypatch, y, k=3, stratified=stratified)
+
+    expected = ([set(block.tolist()) for block in stratified_partition(y, [1 / 3] * 3, seed=42)]
+                if stratified else
+                [set(te.tolist()) for _, te in
+                 KFold(n_splits=3, shuffle=True, random_state=42).split(np.arange(30))])
+    assert scored == expected
+
+
+def test_more_folds_than_real_rows_is_refused_with_the_real_count(monkeypatch):
+    y = _single_label_targets(10)
+    validate = np.zeros(10, dtype=bool)
+    validate[:2] = True
+
+    with pytest.raises(TrainingInputError, match="2 real rows"):
+        _recorded_cv(monkeypatch, y, k=3, validate=validate)

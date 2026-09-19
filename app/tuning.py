@@ -128,6 +128,8 @@ def cross_val_evaluate(
     threshold_shrink_k: float | None = None,
     stratified: bool = False,
     thread_budget: ThreadBudget | None = None,
+    validate: np.ndarray | None = None,
+    scored: np.ndarray | None = None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
@@ -164,6 +166,12 @@ def cross_val_evaluate(
     ``thread_budget`` sizes each fold's fits to the run's memory budget, as in
     ``select_c``.
 
+    ``validate`` (bool per row) narrows "all rows" for rows an LLM wrote or touched: the
+    held-out blocks partition only the rows it marks, every other row trains in every
+    fold and is never scored, and C, the thresholds and the metrics come from the marked
+    rows alone. ``scored`` is handed to ``compute_metrics``. ``None`` for both is the
+    evaluation over every row, fold for fold the one made before either existed.
+
     Fairness note: ``C`` and the thresholds are selected on the same OOF predictions
     the metrics report, so those two choices carry a mild in-sample optimism; the
     honest core — no row is ever scored by a model that saw it — holds. Use the
@@ -175,8 +183,10 @@ def cross_val_evaluate(
     if len(c_grid) == 0:
         raise ValueError("empty C grid: at least one C candidate is required")
     n, n_labels = y.shape
-    if k > n:
-        raise TrainingInputError(f"cv_folds={k} exceeds the {n} usable rows; reduce cv_folds.")
+    rows = np.arange(n) if validate is None else np.flatnonzero(validate)
+    if k > len(rows):
+        what = "usable rows" if validate is None else "real rows that can validate"
+        raise TrainingInputError(f"cv_folds={k} exceeds the {len(rows)} {what}; reduce cv_folds.")
     if matrix is not None and matrix.shape[0] != n:
         # Fold indices slice the matrix and `y` together, so a matrix built from a
         # different row set would line row i of one up against row j of the other and
@@ -185,18 +195,21 @@ def cross_val_evaluate(
             f"matrix has {matrix.shape[0]} rows but the labels have {n}; they must be "
             "the same rows in the same order."
         )
+    # Only the rows that may validate are indexed separately; without `validate` that is
+    # every row, and `y` itself rather than a copy of it.
+    y_rows = y if validate is None else y[rows]
+    # A held-out block per fold, as positions within `rows`; the training rows are
+    # everything else — which is KFold's own train array, so the two paths agree.
     if stratified:
-        # Held-out block per fold; the training rows are everything else, which is what
-        # KFold's second array is. Building it here keeps the loop below identical.
-        held_out = stratified_partition(y, [1.0 / k] * k, seed=seed)
-        folds = [(np.setdiff1d(np.arange(n), block), block) for block in held_out]
+        blocks = stratified_partition(y_rows, [1.0 / k] * k, seed=seed)
     else:
-        folds = list(KFold(n_splits=k, shuffle=True, random_state=seed).split(np.arange(n)))
-    # OOF probabilities per C, each row filled exactly once (float32 bounds RAM).
-    oof = {c: np.zeros((n, n_labels), dtype=np.float32) for c in c_grid}
+        blocks = [te for _, te in KFold(n_splits=k, shuffle=True, random_state=seed).split(rows)]
+    folds = [(np.setdiff1d(np.arange(n), rows[block]), rows[block], block) for block in blocks]
+    # OOF probabilities per C, each validating row filled exactly once (float32 bounds RAM).
+    oof = {c: np.zeros((len(rows), n_labels), dtype=np.float32) for c in c_grid}
     total_fits = k * len(c_grid)
     done = 0
-    for fold, (tr, te) in enumerate(folds, start=1):
+    for fold, (tr, te, te_rows) in enumerate(folds, start=1):
         if should_stop is not None and should_stop():
             return None
         if matrix is None:
@@ -216,7 +229,7 @@ def cross_val_evaluate(
             jobs = n_jobs if thread_budget is None else thread_budget.for_matrix(x_tr)
             head = make_head(c, n_jobs=jobs, solver=solver, tol=tol)
             head.fit(x_tr, y[tr])
-            oof[c][te] = head.predict_proba(x_te).astype(np.float32)
+            oof[c][te_rows] = head.predict_proba(x_te).astype(np.float32)
             # Its coefficients are in the out-of-fold buffer now; the next fit need not
             # build its own on top of them.
             del head
@@ -229,19 +242,20 @@ def cross_val_evaluate(
     thresholds_apply = tune_threshold and not is_single_label(task_type)
     if select_on_tuned_thresholds and thresholds_apply:
         best_c, global_t, columns = _best_under_own_thresholds(
-            y, oof, c_grid, per_label=per_label, shrink_k=threshold_shrink_k
+            y_rows, oof, c_grid, per_label=per_label, shrink_k=threshold_shrink_k
         )
         # The winner's thresholds ARE the ones it was selected on; re-deriving them
         # would repeat the same search for the same answer.
         per_label_t = name_threshold_columns(columns, classes) if per_label else {}
     else:
-        best_c = max(c_grid, key=lambda c: macro_f1(y, _default_decision(oof[c], task_type)))
+        best_c = max(c_grid, key=lambda c: macro_f1(y_rows, _default_decision(oof[c], task_type)))
         if thresholds_apply:
             global_t, per_label_t = tune_thresholds(
-                y, oof[best_c], classes, per_label=per_label, shrink_k=threshold_shrink_k)
+                y_rows, oof[best_c], classes, per_label=per_label, shrink_k=threshold_shrink_k)
         else:
             global_t, per_label_t = 0.5, {}
-    metrics = compute_metrics(y, oof[best_c], classes, global_t, per_label_t, task_type=task_type)
+    metrics = compute_metrics(y_rows, oof[best_c], classes, global_t, per_label_t,
+                              task_type=task_type, scored=scored)
     return best_c, global_t, per_label_t, metrics
 
 
