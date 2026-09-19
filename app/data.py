@@ -192,7 +192,8 @@ def prepare_targets(
 
 
 def three_way_split(
-    n: int, *, val_size: float, test_size: float, seed: int, y: np.ndarray | None = None
+    n: int, *, val_size: float, test_size: float, seed: int, y: np.ndarray | None = None,
+    train_only: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return (train_idx, val_idx, test_idx) index arrays.
 
@@ -200,7 +201,17 @@ def three_way_split(
     multilabel-stratified instead, so each label keeps its share in all three parts —
     it is the rare ones that a shuffle misplaces, and macro F1 weights those equally.
     See ``stratify.stratified_partition``.
+
+    ``train_only`` (bool per row) marks rows an LLM wrote or touched: the three parts are
+    drawn from the OTHER rows in the proportions above, and every train-only row joins
+    train. Without such a row the split is exactly the one made without the argument.
     """
+    if train_only is not None and train_only.any():
+        real = np.flatnonzero(~train_only)
+        train, val, test = three_way_split(
+            len(real), val_size=val_size, test_size=test_size, seed=seed,
+            y=None if y is None else y[real])
+        return np.concatenate([real[train], np.flatnonzero(train_only)]), real[val], real[test]
     if y is not None:
         train, val, test = stratify.stratified_partition(
             y, [1.0 - val_size - test_size, val_size, test_size], seed=seed)

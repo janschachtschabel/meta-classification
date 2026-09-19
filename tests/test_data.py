@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from app import data, dataset_load
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tiny.csv"
@@ -362,3 +365,39 @@ def test_three_way_split_is_disjoint_and_complete():
     assert set(train).isdisjoint(val)
     assert set(train).isdisjoint(test)
     assert set(val).isdisjoint(test)
+
+
+def _targets(n: int) -> np.ndarray:
+    y = (np.random.default_rng(0).random((n, 3)) < 0.4).astype(np.int8)
+    y[y.sum(axis=1) == 0, 0] = 1
+    return y
+
+
+@pytest.mark.parametrize("stratified", [False, True])
+def test_train_only_rows_never_reach_validation_or_test(stratified):
+    """A row an LLM wrote or touched trains, but the numbers must come from real rows:
+    val and test are drawn from the others, and every train-only row joins train."""
+    n, y = 60, _targets(60)
+    train_only = np.zeros(n, dtype=bool)
+    train_only[::4] = True
+
+    train, val, test = data.three_way_split(n, val_size=0.15, test_size=0.15, seed=42,
+                                            y=y if stratified else None, train_only=train_only)
+
+    marked = set(np.flatnonzero(train_only).tolist())
+    assert marked <= set(train.tolist())
+    assert marked.isdisjoint(val.tolist()) and marked.isdisjoint(test.tolist())
+    assert sorted([*train.tolist(), *val.tolist(), *test.tolist()]) == list(range(n))
+    assert len(val) and len(test)
+
+
+@pytest.mark.parametrize("stratified", [False, True])
+def test_without_train_only_rows_the_split_is_what_it_always_was(stratified):
+    n, y = 60, _targets(60)
+    before = data.three_way_split(n, val_size=0.15, test_size=0.15, seed=42,
+                                  y=y if stratified else None)
+
+    for train_only in (None, np.zeros(n, dtype=bool)):
+        after = data.three_way_split(n, val_size=0.15, test_size=0.15, seed=42,
+                                     y=y if stratified else None, train_only=train_only)
+        assert all(np.array_equal(a, b) for a, b in zip(before, after, strict=True))
