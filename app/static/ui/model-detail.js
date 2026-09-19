@@ -52,20 +52,28 @@ const synthOf = (meta) =>
   (meta.synthetic_data && typeof meta.synthetic_data === "object" ? meta.synthetic_data : null);
 const countOf = (value) => (Number.isFinite(value) ? value : 0);
 
+/* What was left out (exclude), then what the marked rows that stayed did: trained and
+   never validated -- or, after a fallback, validated too. Checked in that order, so the
+   line never claims "never validated" beside the warning that says otherwise. */
 function aiData(meta) {
   const s = synthOf(meta);
   if (!s) return "";
+  const trained = countOf(s.train_only_rows);
+  const parts = [];
   if (s.mode === "exclude") {
-    return t("modelDetail.aiData.exclude", {
-      count: countOf(s.excluded_generated_rows), enriched: fmtInt(countOf(s.enriched_rows)) });
+    parts.push(t("modelDetail.aiData.excluded", { count: countOf(s.excluded_generated_rows) }));
   }
   if (s.validated_on === "all_rows") {
-    return t("modelDetail.aiData.validated", { count: countOf(s.train_only_rows) });
+    parts.push(t("modelDetail.aiData.validated", { count: trained }));
+  } else if (s.mode === "exclude") {
+    if (trained) parts.push(t("modelDetail.aiData.trainOnly", { count: trained }));
+  } else {
+    parts.push(t("modelDetail.aiData.train", {
+      count: trained, generated: fmtInt(countOf(s.generated_rows)),
+      examples: fmtInt(countOf(s.example_rows)), enriched: fmtInt(countOf(s.enriched_rows)),
+    }));
   }
-  return t("modelDetail.aiData.train", {
-    count: countOf(s.train_only_rows), generated: fmtInt(countOf(s.generated_rows)),
-    examples: fmtInt(countOf(s.example_rows)), enriched: fmtInt(countOf(s.enriched_rows)),
-  });
+  return parts.join(" · ");
 }
 
 function scoredOn(meta) {

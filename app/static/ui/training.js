@@ -85,6 +85,7 @@ async function loadDatasetColumns() {
    column gets the choice — one without trains exactly as before, so the control stays
    out of the way. "Leave out" needs generated rows to leave out; without the
    generated_for column it is disabled rather than offered as a silent no-op. */
+// The same names as app/provenance.py MARK_COLUMNS -- data-prep's contract.
 const MARK_COLUMNS = ["generated_for", "example_for", "enriched_fields"];
 
 function syncSyntheticChoice(columns) {
