@@ -52,6 +52,19 @@ def _with_memory(on_progress: Callable[..., None], sampler: PeakSampler) -> Call
     return report
 
 
+def _synthetic_data(prep: Prepared, *, cv_folds: int) -> dict | None:
+    """The ``synthetic_data`` block: what an LLM wrote or touched, and what the reported
+    numbers were computed on. ``None`` for a dataset without marks."""
+    rows = prep.provenance
+    if rows is None:
+        return None
+    if cv_folds < 2:
+        scored_rows = int(len(prep.test_idx))
+    else:
+        scored_rows = int(len(prep.texts) if rows.validate is None else rows.validate.sum())
+    return rows.summary(prep.classes, scored_rows=scored_rows)
+
+
 def _build_metadata(
     req: dict, settings: Settings, profile: Profile, prep: Prepared, fitted: Fitted, elapsed: float,
     *, cv_folds: int = 0, resources: dict | None = None,
@@ -66,6 +79,13 @@ def _build_metadata(
         n_train = int(len(prep.train_idx))
         n_val = int(len(prep.val_idx))
         n_test = int(len(prep.test_idx))
+    synthetic = _synthetic_data(prep, cv_folds=cv_folds)
+    if synthetic and synthetic["train_only_rows"]:
+        evaluation += (
+            f" — too few real rows, the metrics include AI-marked rows ({synthetic['fallback']})"
+            if synthetic["fallback"] else
+            f" — {synthetic['train_only_rows']} AI-marked rows trained, never validated"
+        )
     return {
         "created_at": datetime.now(UTC).isoformat(),
         "evaluation": evaluation,
@@ -118,6 +138,8 @@ def _build_metadata(
         # What the run needed, so the next run of this size can be sized before it
         # starts rather than after it is killed. Describes the run, like the time above.
         **({"resources": resources} if resources else {}),
+        # Rows an LLM wrote or touched, and what the metrics above were computed on.
+        **({"synthetic_data": synthetic} if synthetic else {}),
         # Author-supplied documentation, kept in its own block so a reader can tell a
         # human assertion from a measured fact. Omitted entirely when nothing was given.
         **({"info": req["info"]} if req.get("info") else {}),

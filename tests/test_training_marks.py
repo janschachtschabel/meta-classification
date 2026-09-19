@@ -60,3 +60,48 @@ def test_blank_mark_columns_train_the_model_an_unmarked_dataset_trains(tmp_path,
     assert first["metrics"] == second["metrics"]
     a, b = registry.get("plain"), Registry(tmp_path / "models", 4).get("blank")
     assert (a.global_threshold, a.per_label_thresholds) == (b.global_threshold, b.per_label_thresholds)
+
+
+@pytest.mark.parametrize("cv_folds", [0, 3])
+def test_the_bundle_says_what_was_trained_on_and_what_was_scored(tmp_path, cv_folds):
+    _, registry = _train(tmp_path, [HEADER, *_rows()], name="marked", cv_folds=cv_folds)
+
+    meta = registry.info("marked")["metadata"]
+    block = meta["synthetic_data"]
+    assert block["mode"] == "train"
+    assert (block["generated_rows"], block["example_rows"], block["enriched_rows"]) == (12, 2, 3)
+    assert block["train_only_rows"] == 17
+    assert block["validated_on"] == "real_rows"
+    assert block["labels_not_validated"] == ["C"]
+    assert block["scored_rows"] == (25 if cv_folds else meta["n_test"])
+    assert "AI-marked" in meta["evaluation"]
+
+
+def test_leaving_the_generated_rows_out_is_recorded_too(tmp_path):
+    _, registry = _train(tmp_path, [HEADER, *_rows()], name="without", cv_folds=3,
+                         synthetic_rows="exclude")
+
+    block = registry.info("without")["metadata"]["synthetic_data"]
+    assert (block["mode"], block["excluded_generated_rows"], block["generated_rows"]) == ("exclude", 12, 0)
+    assert block["labels_not_validated"] == []
+
+
+def test_a_dataset_with_nothing_marked_has_no_synthetic_block(tmp_path):
+    real = ["title;keywords;subject", *[";".join(r.split(";")[:3]) for r in _rows()[:28]]]
+
+    _, registry = _train(tmp_path, real, name="plain", cv_folds=3)
+
+    meta = registry.info("plain")["metadata"]
+    assert "synthetic_data" not in meta
+    assert "AI-marked" not in meta["evaluation"]
+
+
+def test_a_pure_ai_dataset_trains_and_its_bundle_says_the_numbers_are_not_real(tmp_path):
+    generated = [f"Erzeugt {lab} Text {i};stichwort {lab} {i};{lab};{lab};;"
+                 for lab in ("A", "B") for i in range(14)]
+
+    _, registry = _train(tmp_path, [HEADER, *generated], name="pure", cv_folds=3)
+
+    block = registry.info("pure")["metadata"]["synthetic_data"]
+    assert block["validated_on"] == "all_rows"
+    assert block["fallback"]
