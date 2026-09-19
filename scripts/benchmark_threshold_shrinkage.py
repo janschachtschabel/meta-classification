@@ -45,9 +45,10 @@ from joblib import parallel_backend  # noqa: E402
 from app.classifier import make_head  # noqa: E402
 from app.data import prepare_targets, three_way_split  # noqa: E402
 from app.dataset_load import load_dataset  # noqa: E402
+from app.metrics import compute_metrics  # noqa: E402
 from app.profiles import load_training_config  # noqa: E402
 from app.settings import get_settings  # noqa: E402
-from app.tuning import compute_metrics, cross_val_evaluate  # noqa: E402
+from app.tuning import cross_val_evaluate  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 
 SEED = 42

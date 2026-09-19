@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app import thresholds
-from app.tuning import compute_metrics
+from app.metrics import compute_metrics
 
 
 def test_tune_thresholds_finds_separating_value():

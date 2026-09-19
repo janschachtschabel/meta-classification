@@ -40,11 +40,12 @@ from .memory import (
     matrix_bytes,
     memory_limit_bytes,
 )
+from .metrics import compute_metrics, is_single_label
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
 from .thresholds import name_threshold_columns, tune_thresholds
-from .tuning import compute_metrics, cross_val_evaluate, is_single_label, select_c
+from .tuning import cross_val_evaluate, select_c
 from .vectorizers import TfidfBackend
 
 logger = logging.getLogger("api_v3.training")

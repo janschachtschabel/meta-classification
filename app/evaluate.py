@@ -4,7 +4,7 @@
 Until now that meant a script driving a running server (``scripts/eval_holdout.py``),
 which nothing recorded and nobody could repeat.
 
-The arithmetic is not the hard part — ``tuning.compute_metrics`` already does it with
+The arithmetic is not the hard part — ``metrics.compute_metrics`` already does it with
 the decision rule serving applies. What makes the number honest is the label space: a
 model can only be scored over ITS OWN classes, and a dataset carrying labels the model
 never learned is a dataset it cannot fully answer. Those rows and labels are reported
@@ -22,9 +22,9 @@ import numpy as np
 
 from .dataset_load import load_dataset
 from .errors import TrainingInputError
+from .metrics import compute_metrics
 from .registry import Registry
 from .settings import Settings
-from .tuning import compute_metrics
 
 # What a row's truth is scored against. Reported in full when short, because the point
 # is to see WHICH vocabulary the dataset speaks; a long list means the wrong dataset.

@@ -1,4 +1,4 @@
-"""Choosing the regularization strength, and scoring the model that results.
+"""Choosing the regularization strength.
 
 Deliberately uses a small, exhaustive grid over ``C``, evaluated on a held-out
 validation split or out-of-fold across k folds. For this tiny, 1-D search space a
@@ -6,8 +6,8 @@ grid is simpler, deterministic and at least as good as a sampler like Optuna. Th
 held-out *test* split (never seen here) is used only for the final reported metrics,
 so numbers are not optimistically biased.
 
-Where the decision cuts sit is ``thresholds``: this module reads that one to score a
-candidate under its own cuts, and never the other way round.
+Where the decision cuts sit is ``thresholds``, what a reported number means is
+``metrics``: this module reads both to score a candidate, and neither reads it.
 """
 
 from __future__ import annotations
@@ -15,15 +15,14 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
-from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import KFold
 
 from .classifier import make_head
 from .errors import TrainingInputError
 from .memory import ThreadBudget
+from .metrics import argmax_onehot, compute_metrics, is_single_label
 from .stratify import stratified_partition
 from .thresholds import (
-    apply_thresholds,
     macro_f1,
     name_threshold_columns,
     tune_thresholds,
@@ -32,24 +31,10 @@ from .thresholds import (
 from .vectorizers import TfidfBackend
 
 
-def is_single_label(task_type: str) -> bool:
-    """binary/multiclass = exactly one label per prediction (serving uses argmax)."""
-    return task_type in ("binary", "multiclass")
-
-
-def _argmax_onehot(proba: np.ndarray) -> np.ndarray:
-    """One-hot argmax decision — the rule serving applies to binary/multiclass
-    (``ClassifierModel.predict`` returns the single best label there and
-    ignores thresholds entirely)."""
-    preds = np.zeros_like(proba, dtype=int)
-    preds[np.arange(proba.shape[0]), proba.argmax(axis=1)] = 1
-    return preds
-
-
 def _default_decision(proba: np.ndarray, task_type: str) -> np.ndarray:
     """Decision used while SELECTING (before thresholds exist): argmax for
     single-label tasks, the neutral 0.5 cut for multilabel."""
-    return _argmax_onehot(proba) if is_single_label(task_type) else (proba >= 0.5).astype(int)
+    return argmax_onehot(proba) if is_single_label(task_type) else (proba >= 0.5).astype(int)
 
 
 def select_c(
@@ -282,43 +267,3 @@ def _best_under_own_thresholds(
         if score > best_f1:
             best_f1, best_c, best_global, best_columns = score, c, global_t, columns
     return best_c, best_global, best_columns
-
-
-def compute_metrics(
-    y_true: np.ndarray,
-    proba: np.ndarray,
-    classes: list[str],
-    global_threshold: float,
-    per_label: dict[str, float],
-    task_type: str = "multilabel",
-) -> dict:
-    """Macro/micro P/R/F1 plus per-label F1, computed on the given split.
-
-    Measured with the SAME decision rule serving applies: argmax for
-    binary/multiclass (``ClassifierModel.predict`` ignores thresholds there),
-    the tuned thresholds for multilabel. ``decision_rule`` records which rule
-    produced the numbers, so bundles stay self-describing.
-
-    ``predicted_labels_per_row`` vs ``true_labels_per_row`` expose over-assertion,
-    which F1 alone hides: a wide label space pushes the F1-optimal per-label cut
-    down, and the model starts asserting far more labels than the data carries.
-    How strongly depends on the TARGET (a subject vocab behaves differently from a
-    curriculum vocab on the same rows), so every bundle carries its own pair.
-    """
-    single = is_single_label(task_type)
-    preds = (
-        _argmax_onehot(proba) if single
-        else apply_thresholds(proba, classes, global_threshold, per_label)
-    )
-    per_label_f1 = f1_score(y_true, preds, average=None, zero_division=0)
-    return {
-        "f1_macro": float(f1_score(y_true, preds, average="macro", zero_division=0)),
-        "f1_micro": float(f1_score(y_true, preds, average="micro", zero_division=0)),
-        "precision_macro": float(precision_score(y_true, preds, average="macro", zero_division=0)),
-        "recall_macro": float(recall_score(y_true, preds, average="macro", zero_division=0)),
-        "n_labels": len(classes),
-        "decision_rule": "argmax" if single else "thresholds",
-        "predicted_labels_per_row": round(float(preds.sum(axis=1).mean()), 3),
-        "true_labels_per_row": round(float(y_true.sum(axis=1).mean()), 3),
-        "per_label_f1": {uri: float(score) for uri, score in zip(classes, per_label_f1, strict=False)},
-    }

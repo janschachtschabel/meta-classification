@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from app import tuning
+from app.metrics import compute_metrics
 from app.vectorizers import TfidfBackend
 
 
@@ -17,7 +18,7 @@ def test_metrics_report_how_many_labels_the_model_actually_asserts():
     """
     y = np.array([[1, 0], [1, 0], [0, 1], [0, 1]])
     proba = np.full((4, 2), 0.9)  # everything above a 0.5 cut -> 2 labels per row
-    metrics = tuning.compute_metrics(y, proba, ["c0", "c1"], 0.5, {})
+    metrics = compute_metrics(y, proba, ["c0", "c1"], 0.5, {})
     assert metrics["predicted_labels_per_row"] == 2.0
     assert metrics["true_labels_per_row"] == 1.0
 
@@ -145,11 +146,11 @@ def test_compute_metrics_multiclass_measures_argmax_serving_rule():
     y = np.array([[1, 0], [0, 1], [1, 0]])
     proba = np.array([[0.40, 0.30], [0.20, 0.45], [0.35, 0.10]])  # argmax all correct
 
-    argmax_metrics = tuning.compute_metrics(y, proba, ["a", "b"], 0.5, {}, task_type="multiclass")
+    argmax_metrics = compute_metrics(y, proba, ["a", "b"], 0.5, {}, task_type="multiclass")
     assert argmax_metrics["f1_macro"] == pytest.approx(1.0)
     assert argmax_metrics["decision_rule"] == "argmax"
 
-    thresholded = tuning.compute_metrics(y, proba, ["a", "b"], 0.5, {})
+    thresholded = compute_metrics(y, proba, ["a", "b"], 0.5, {})
     assert thresholded["f1_macro"] == pytest.approx(0.0)  # the discrepancy B9 fixes
     assert thresholded["decision_rule"] == "thresholds"
 
