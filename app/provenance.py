@@ -9,6 +9,8 @@ on text the same LLM wrote from the same examples it was trained on.
   - ``example_for``: a REAL row shown to the generator as an example — its paraphrases
     are in the data, so the row itself would be recognised rather than classified.
   - ``enriched_fields``: a REAL row whose empty or short fields an LLM filled.
+    data-prep enriches exact twins alike, so a twin never keeps the untouched text
+    beside its enriched copy: the text rule (``SAME_TEXT``) knows rows by their text.
 
 Such rows train, but never validate. A leaf: imports nothing of ours.
 """
