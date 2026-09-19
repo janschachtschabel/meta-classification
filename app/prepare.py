@@ -22,6 +22,7 @@ from .dataset_load import load_dataset
 from .errors import TrainingInputError
 from .profiles import TrainingConfig
 from .provenance import RowProvenance
+from .real_rows import row_provenance, split_rows
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -91,61 +92,6 @@ def _drop_unlearnable(
 
     return (texts[keep], y_all[keep], classes, (remap(train_idx), remap(val_idx), remap(test_idx)),
             None if marks is None else marks[keep])
-
-
-def _split_rows(
-    n: int, *, training_cfg: TrainingConfig, seed: int, y: np.ndarray | None,
-    train_only: np.ndarray | None, cv_folds: int,
-) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], str | None]:
-    """The train/val/test split, and why AI-marked rows validate after all (``None``:
-    they do not).
-
-    k-fold folds the real rows itself (``tuning.cross_val_evaluate``) and never reads
-    this split, so there it stays the one the dataset always got. The holdout draws val
-    and test from the real rows. Too few of them to fill either -- a pure Runs export has
-    none -- and the run falls back to every row and says so, rather than refusing the
-    synthetic-only training data-prep's Runs push exists for.
-    """
-
-    def every_row() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return data_mod.three_way_split(
-            n, val_size=training_cfg.validation_size, test_size=training_cfg.test_size,
-            seed=seed, y=y)
-
-    if train_only is None:
-        return every_row(), None
-    n_real = int(np.count_nonzero(~train_only))
-    if cv_folds >= 2:
-        reason = None if n_real >= cv_folds else f"only {n_real} real rows for {cv_folds} folds"
-        return every_row(), reason
-    try:
-        splits = data_mod.three_way_split(
-            n, val_size=training_cfg.validation_size, test_size=training_cfg.test_size,
-            seed=seed, y=y, train_only=train_only)
-    except ValueError:
-        # scikit-learn refuses to split this few rows: the same shortage as below.
-        splits = None
-    if splits is None or not (len(splits[1]) and len(splits[2])):
-        return every_row(), f"only {n_real} real rows, too few for a validation and a test part"
-    return splits, None
-
-
-def _provenance(
-    marks: np.ndarray | None, y_all: np.ndarray, *, mode: str, excluded: int,
-    fallback: str | None,
-) -> RowProvenance | None:
-    """What the marks decided -- or ``None`` when the dataset has none, and the run is
-    the one it was before marks existed."""
-    if marks is None or not (marks.any() or excluded):
-        return None
-    real = marks == 0
-    validate = real if marks.any() and fallback is None else None
-    scored = None
-    if validate is not None:
-        has_real = y_all[real].sum(axis=0) > 0
-        scored = None if bool(has_real.all()) else has_real
-    return RowProvenance(marks=marks, mode=mode, excluded_generated=excluded,
-                         validate=validate, scored=scored, fallback=fallback)
 
 
 @dataclass
@@ -256,7 +202,7 @@ def prepare_data(
 
     # --- Train / val / test split ---
     train_only = marks != 0 if marks is not None and marks.any() else None
-    (train_idx, val_idx, test_idx), fallback = _split_rows(
+    (train_idx, val_idx, test_idx), fallback = split_rows(
         len(texts), training_cfg=training_cfg, seed=settings.random_seed,
         y=y_all if stratified else None, train_only=train_only, cv_folds=cv_folds,
     )
@@ -291,6 +237,6 @@ def prepare_data(
         text_column_weights=text_column_weights,
         train_idx=train_idx, val_idx=val_idx, test_idx=test_idx,
         uri_to_label={k: v for k, v in loaded.uri_to_label.items() if k in set(classes)},
-        provenance=_provenance(marks, y_all, mode=mode, excluded=loaded.excluded_generated,
-                               fallback=fallback),
+        provenance=row_provenance(marks, y_all, mode=mode, excluded=loaded.excluded_generated,
+                                  fallback=fallback),
     )
