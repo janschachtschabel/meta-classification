@@ -110,7 +110,8 @@ split:
   test_size: 0.15
   # 0 = classic train/val/test split (holds out a test set for the metrics).
   # >=2 = k-fold cross-validation: every row is used for BOTH training and
-  # validation (out-of-fold), and the deployed model is fit on 100% of the data.
+  # validation (out-of-fold) -- rows data-prep marks as AI-written or -touched
+  # train only -- and the deployed model is fit on 100% of the data.
   # This is only the LAST fallback: every shipped profile sets its own cv_folds,
   # and a /train request overrides both (request > profile > config). It applies
   # to custom profiles added above that leave cv_folds unset.

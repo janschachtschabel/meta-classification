@@ -59,17 +59,23 @@ evaluation modes).
   LLM wrote could validate. The mark columns are now read as written; text and label
   cells read as before.
 - **`excluded_generated_rows` counts a text once** under the dedupe, as the rows that
-  would have trained; copies of a generated text were counted each.
+  would have trained; copies of a generated text were counted each. A run that dropped
+  only copies of kept texts still counts as a marked run: it keeps the marked rule and
+  records its `synthetic_data`.
 - **The k-fold progress line says which rows validate** ("real rows validate" when the
-  dataset has marks), as do the descriptions of the k-fold mode.
-- **The real rows' label counts no longer copy the label matrix** (for the scored and
-  the thin labels): one pass over the matrix itself.
+  dataset has marks), as do the descriptions of the k-fold mode, the config comment and
+  the training help in the UI.
+- **The real rows' label counts no longer copy the label matrix** (k-fold's scored labels
+  and the thin labels): one pass over the matrix itself. The holdout still sums its test
+  rows, a copy of that share only.
 - The loader's block-size test also runs under the dedupe.
 
 An enriched row whose exact twin stayed untouched was the review's other finding here:
 the twin kept the text the enriched copy trains on, and the text rule no longer grouped
-the two. data-prep now enriches exact twins alike, so they stay one text and the rule
-holds; a dataset enriched before that is best enriched again.
+the two. data-prep now enriches exact twins alike -- rows equal in every field its
+enrichment reads -- so they stay one text and the rule holds, as long as those fields
+are among the text columns trained on. It takes data-prep's fix of the same review; a
+dataset enriched before it is best enriched again.
 
 ### Security
 

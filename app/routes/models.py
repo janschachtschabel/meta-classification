@@ -84,7 +84,8 @@ async def model_info(model_name: str, _: str = Depends(require_role("readonly"))
     A model trained on a dataset carrying data-prep's marks also has
     `metadata.synthetic_data`: the run's `mode` (`synthetic_rows`); how many rows an LLM
     wrote (`generated_rows`), showed as examples (`example_rows`) or completed
-    (`enriched_rows`), how many generated rows were left out (`excluded_generated_rows`)
+    (`enriched_rows`), how many generated rows were left out, once per text as the dedupe
+    would have kept them (`excluded_generated_rows`)
     and how many trained without validating (`train_only_rows`); what the metrics were
     computed on (`validated_on`: `real_rows`, or `all_rows` with the reason in
     `fallback`; `scored_rows`); the labels no real row could score (`labels_not_validated`

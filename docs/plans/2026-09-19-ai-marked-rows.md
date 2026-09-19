@@ -117,7 +117,7 @@ MARK_COLUMNS = (GENERATED_FOR, EXAMPLE_FOR, ENRICHED_FIELDS)
 GENERATED, EXAMPLE, ENRICHED, SAME_TEXT = 1, 2, 4, 8          # int8 bitmask per row
 SYNTHETIC_MODES = ("train", "exclude")
 
-def _marked(column: pd.Series) -> np.ndarray   # private, per row: blank, whitespace, NaN = no mark
+def _marked(column: pd.Series) -> np.ndarray   # private, per row: blank, whitespace or a missing cell = no mark
 def block_marks(frame: pd.DataFrame, *, mode: str) -> np.ndarray   # int8 per row; EXAMPLE only in "train"
 
 @dataclass
