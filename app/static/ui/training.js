@@ -69,12 +69,30 @@ const labelPicker = createPillPicker({
 
 async function loadDatasetColumns() {
   const name = $("#train-dataset").value;
-  if (!name) { textColPicker.setOptions([]); labelPicker.setOptions([]); return; }
+  if (!name) {
+    textColPicker.setOptions([]); labelPicker.setOptions([]); syncSyntheticChoice([]);
+    return;
+  }
   try {
     const info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
     textColPicker.setOptions(info.columns);
     labelPicker.setOptions(info.columns);
+    syncSyntheticChoice(info.columns);
   } catch (err) { showError($("#train-error"), err); }
+}
+
+/* data-prep marks the rows an LLM wrote or touched. Only a dataset carrying such a
+   column gets the choice — one without trains exactly as before, so the control stays
+   out of the way. "Leave out" needs generated rows to leave out; without the
+   generated_for column it is disabled rather than offered as a silent no-op. */
+const MARK_COLUMNS = ["generated_for", "example_for", "enriched_fields"];
+
+function syncSyntheticChoice(columns) {
+  const select = $("#train-synthetic-rows");
+  const exclude = select.querySelector('option[value="exclude"]');
+  $("#train-synthetic").hidden = !MARK_COLUMNS.some((c) => columns.includes(c));
+  exclude.disabled = !columns.includes("generated_for");
+  if (exclude.disabled) select.value = "train";
 }
 
 /* One model per selected label field. A single field keeps the typed name; for
@@ -111,6 +129,9 @@ async function onTrainStart(ev) {
     label_filter: $("#train-filter").value.trim() || null,
   };
   if ($("#train-cv").value !== "") shared.cv_folds = Number($("#train-cv").value);
+  // Hidden = the dataset carries no marks, and a choice left over from another dataset
+  // must not travel with this one.
+  if (!$("#train-synthetic").hidden) shared.synthetic_rows = $("#train-synthetic-rows").value;
   // Empty field = omit, so the request default (20) applies rather than a silent 0.
   const minSamples = $("#train-minsamples").value.trim();
   if (minSamples !== "") shared.min_samples_per_label = Number(minSamples);

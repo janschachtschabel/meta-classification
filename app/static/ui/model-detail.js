@@ -45,6 +45,52 @@ function textColumns(meta) {
   return columns.map((c) => (weights[c] > 1 ? `${c} ×${weights[c]}` : c)).join(", ");
 }
 
+/* What an LLM wrote or touched (the bundle's `synthetic_data` block, absent for a
+   dataset without data-prep's marks). A bundle can be imported, so every number is
+   checked before it is used and formatted before it is shown. */
+const synthOf = (meta) =>
+  (meta.synthetic_data && typeof meta.synthetic_data === "object" ? meta.synthetic_data : null);
+const countOf = (value) => (Number.isFinite(value) ? value : 0);
+
+function aiData(meta) {
+  const s = synthOf(meta);
+  if (!s) return "";
+  if (s.mode === "exclude") {
+    return t("modelDetail.aiData.exclude", {
+      count: countOf(s.excluded_generated_rows), enriched: fmtInt(countOf(s.enriched_rows)) });
+  }
+  if (s.validated_on === "all_rows") {
+    return t("modelDetail.aiData.validated", { count: countOf(s.train_only_rows) });
+  }
+  return t("modelDetail.aiData.train", {
+    count: countOf(s.train_only_rows), generated: fmtInt(countOf(s.generated_rows)),
+    examples: fmtInt(countOf(s.example_rows)), enriched: fmtInt(countOf(s.enriched_rows)),
+  });
+}
+
+function scoredOn(meta) {
+  const s = synthOf(meta);
+  if (!s || !Number.isFinite(s.scored_rows)) return "";
+  return s.validated_on === "all_rows"
+    ? t("modelDetail.scoredOn.all", { count: s.scored_rows })
+    : t("modelDetail.scoredOn.real", { count: s.scored_rows });
+}
+
+/* The two notices that must not hide in a table row: numbers that include AI-marked
+   rows, and labels no real row could score. Text with an icon, not colour alone. */
+function aiWarning(meta) {
+  const s = synthOf(meta);
+  return s && s.validated_on === "all_rows"
+    ? `<p class="error">${t("modelDetail.aiData.fallback")}</p>` : "";
+}
+
+function notValidatedNote(meta) {
+  const s = synthOf(meta);
+  const labels = s && Array.isArray(s.labels_not_validated) ? s.labels_not_validated : [];
+  return labels.length
+    ? `<p class="muted">${t("modelDetail.aiData.notValidated", { count: labels.length })}</p>` : "";
+}
+
 /* Label key + how to read one value out of the model, in the order they are shown.
    An entry returning "" is dropped, so optional fields do not leave empty rows. */
 const TRAINING_ROWS = [
@@ -53,6 +99,7 @@ const TRAINING_ROWS = [
   ["modelDetail.row.textColumns", (m) => textColumns(m.metadata)],
   ["modelDetail.row.labelFilter", (m) => m.metadata.label_filter],
   ["modelDetail.row.rowsUsed", (m) => fmtInt(m.metadata.n_samples)],
+  ["modelDetail.row.aiData", (m) => aiData(m.metadata)],
   ["modelDetail.row.minRowsPerLabel", (m) => m.metadata.min_samples_per_label],
   ["modelDetail.row.profile", (m) => m.metadata.profile],
   ["modelDetail.row.regularization", (m) => regularization(m.metadata)],
@@ -73,6 +120,7 @@ const TRAINING_ROWS = [
 const metricsOf = (m) => (m.metadata && m.metadata.metrics) || {};
 
 const QUALITY_ROWS = [
+  ["modelDetail.row.scoredOn", (m) => scoredOn(m.metadata)],
   ["modelDetail.row.f1Macro", (m) => fmtScore(metricsOf(m).f1_macro)],
   ["modelDetail.row.f1Micro", (m) => fmtScore(metricsOf(m).f1_micro)],
   ["modelDetail.row.decisionRule", (m) => metricsOf(m).decision_rule],
@@ -185,6 +233,7 @@ async function showModelDetail(name) {
     <div class="train-status">${definitionList(model, TRAINING_ROWS)}</div>
 
     <h3>${t("modelDetail.howWell")}</h3>
+    ${aiWarning(model.metadata)}
     <div class="train-status">${definitionList(model, QUALITY_ROWS)}</div>
 
     <h3>${t("modelDetail.scoredAgainst")}</h3>
@@ -192,6 +241,7 @@ async function showModelDetail(name) {
 
     <h3>${t("modelDetail.perLabel")}</h3>
     <p class="muted">${t("modelDetail.perLabelNote")}</p>
+    ${notValidatedNote(model.metadata)}
     <div id="detail-labels"></div>
 
     <div class="detail-actions">

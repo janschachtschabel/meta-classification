@@ -25,6 +25,7 @@ function evaluationsSection(model) {
   const runs = (model.metadata && model.metadata.evaluations) || [];
   if (!runs.length) return `<p class="muted">${t("evaluate.none")}</p>`;
   const uncovered = runs.filter((r) => r.rows_without_a_known_label > 0);
+  const aiSkipped = runs.filter((r) => r.ai_marked_rows_skipped > 0);
   return `<div class="table-wrap"><table>
       <thead><tr><th>${t("evaluate.table.dataset")}</th><th class="num">${t("evaluate.table.rows")}</th>
         <th class="num">${t("evaluate.table.labelsHit")}</th>
@@ -33,7 +34,8 @@ function evaluationsSection(model) {
       <tbody>${evaluationRows(runs)}</tbody>
     </table></div>
     <p class="muted">${t("evaluate.note")}${uncovered.length
-      ? ` ${t("evaluate.uncovered", { count: uncovered.length })}` : ""}</p>`;
+      ? ` ${t("evaluate.uncovered", { count: uncovered.length })}` : ""}${aiSkipped.length
+      ? ` ${t("evaluate.aiSkipped", { count: aiSkipped.length })}` : ""}</p>`;
 }
 
 /* ---------- starting one ---------- */

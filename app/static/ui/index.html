@@ -200,6 +200,16 @@
               <p id="train-minsamples-help" class="muted" data-i18n="train.minSamples.help"></p>
             </div>
           </div>
+          <div class="row" id="train-synthetic" hidden>
+            <div>
+              <label for="train-synthetic-rows" data-i18n="train.synthetic.label"></label>
+              <select id="train-synthetic-rows" aria-describedby="train-synthetic-help">
+                <option value="train" data-i18n="train.synthetic.train"></option>
+                <option value="exclude" data-i18n="train.synthetic.exclude"></option>
+              </select>
+              <p id="train-synthetic-help" class="muted" data-i18n="train.synthetic.help"></p>
+            </div>
+          </div>
           <button type="button" class="small ghost" id="train-preflight" data-i18n="train.preflight.button"></button>
           <p class="muted" data-i18n="train.preflight.help"></p>
           <div id="train-preflight-out" aria-live="polite"></div>
