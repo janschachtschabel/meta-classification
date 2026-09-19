@@ -268,8 +268,25 @@ Auswahl **KI-erzeugte Zeilen**:
   Weil dann auch Labels unter die Mindestzahl fallen können, kann das Modell weniger
   Labels haben.
 
-Ein Datensatz ohne Markierungen trainiert genau wie bisher; die Auswahl erscheint dann gar
-nicht.
+Daneben steht die Auswahl **Schwelle für dünn belegte Label**. Dünn belegt ist ein Label,
+das die Mindestzahl an Beispielen nur dank KI-markierter Zeilen erreicht — etwa 3 echte
+und 97 erzeugte Zeilen bei einer Mindestzahl von 20:
+
+- **Eigene Schwelle (Voreinstellung):** Das Label bekommt wie jedes andere eine auf sich
+  zugeschnittene Schwelle. Die wird aber auf seinen wenigen echten Zeilen eingestellt und
+  kann deshalb schwanken.
+- **Globale Schwelle:** Das Label nutzt die gemeinsame Schwelle aller Labels — stabiler,
+  aber nicht auf das Label zugeschnitten.
+
+Welche Wahl besser ist, hängt vom Label ab; deshalb entscheidest du. Die Detailansicht
+nennt die betroffenen Labels: bei eigener Schwelle als **Warnung** mit dem Rat, beim
+nächsten Training „Globale Schwelle“ zu wählen, falls ein Label zu oft oder zu selten
+vergeben wird; bei globaler Schwelle als Hinweis. Bei Einzel-Label-Aufgaben (binär oder
+eine Klasse je Zeile) spielt die Auswahl keine Rolle — dort entscheidet die höchste
+Wahrscheinlichkeit, nicht eine Schwelle.
+
+Ein Datensatz ohne Markierungen trainiert genau wie bisher; beide Auswahlen erscheinen dann
+gar nicht.
 
 In der **Detailansicht** eines solchen Modells steht:
 

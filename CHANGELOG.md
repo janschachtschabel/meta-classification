@@ -21,6 +21,14 @@ nobody could see afterwards. Plan: `docs/plans/2026-09-19-ai-marked-rows.md`.
 - **`synthetic_rows`** on `/train`: `train` (default) or `exclude` — generated rows left
   out when the dataset is read, before the dedupe; the generator's examples then validate
   again. The training form offers it when a dataset carries the marks.
+- **`thin_label_threshold`** on `/train`: `own` (default) or `global`. A *thin* label
+  reaches `min_samples_per_label` only through marked rows — 3 real rows and 97 generated
+  ones clear a minimum of 20. Its own threshold is tuned on those few real rows and can
+  swing; the global one is steadier but not fitted to the label. Which is better depends
+  on the label, so the user decides: the form offers the choice next to `synthetic_rows`,
+  the bundle lists `thin_labels` with the choice made, and the model detail names them —
+  a warning with a way out under `own`, a note under `global`. No effect on binary or
+  multiclass tasks, where argmax reads no threshold.
 - **`synthetic_data`** in the bundle metadata, and the evaluation line: what was trained
   on, what was left out, the rows the metrics came from, the labels no real row could
   validate. The model detail shows it ("KI-Daten", "Kennzahlen aus").

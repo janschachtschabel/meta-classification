@@ -2,7 +2,9 @@
 
 **Status: requested 2026-09-19 ("plane die Anpassung und beginne mit der Umsetzung");
 Phases A–D implemented the same day on branch `feat/ai-marked-rows`, each task test-first;
-the UI checked in a preview with its own data and models directories.**
+the UI checked in a preview with its own data and models directories. Two independent
+reviews followed; their findings are fixed, and the thin-label threshold became the
+user's choice (decision 7).**
 Companion to data-prep's `docs/plan-2026-09-19-ai-provenance-prompts.md`, which writes the
 marks this plan reads. Same conventions as `2026-09-11-training-memory.md`.
 
@@ -65,6 +67,15 @@ Blank, whitespace or a missing cell is no mark; a CSV without these columns has 
 6. Micro F1 keeps all label columns on the validated rows (a false positive of an
    unvalidated label is still a real error); macro P/R/F1 and `per_label_f1` cover the
    validated labels only.
+7. **Thin labels — the owner's call** (added after review): a label with fewer real rows
+   than `min_samples_per_label` reached training only through marked rows, so its own
+   threshold is tuned on a handful of real rows. The review flagged those cuts; the owner
+   decided the user chooses per run — `thin_label_threshold`, `own`
+   (default: the behaviour before this option) or `global` (the threshold search leaves
+   those columns at the global cut, `thresholds.tune_threshold_columns(keep_global=)`,
+   threaded through `tuning.select_c` / `cross_val_evaluate`). The bundle lists
+   `thin_labels` and the choice; the model detail warns under `own` and notes under
+   `global`. Single-label tasks read no threshold, so the choice changes nothing there.
 
 ## Scope
 
@@ -87,6 +98,8 @@ counting marks; restoring enriched cells; recognising `source=synthetic` without
 | `app/dataset_load.py` | read the mark columns if present, drop generated rows under "exclude", the text-group rule, return `marks` |
 | `app/data.py` | `three_way_split(..., train_only=None)` |
 | `app/prepare.py` | carry `marks` through every row drop; decide validate rows / scored labels / fallback |
+| `app/real_rows.py` (new, split out of `prepare.py` at the size guide) | the real-row split, the fallback, scored and thin labels |
+| `app/thresholds.py` | `keep_global=`: thin labels at the global cut when the run chose it (decision 7) |
 | `app/tuning.py` | `cross_val_evaluate(..., validate=None, scored=None)` |
 | `app/deploy.py` | pass `validate` / `scored` through (a few lines; the file stays "left whole") |
 | `app/training.py` | `synthetic_data` block, evaluation text |
@@ -137,7 +150,8 @@ compute_metrics(y_true, proba, classes, global_threshold, per_label, task_type="
                 *, scored: np.ndarray | None = None)
 ```
 
-`schemas.TrainRequest.synthetic_rows: Literal["train", "exclude"] = "train"`.
+`schemas.TrainRequest.synthetic_rows: Literal["train", "exclude"] = "train"` and
+`thin_label_threshold: Literal["own", "global"] = "own"` (decision 7).
 
 ### Data model — the `synthetic_data` block (only when the dataset had marked rows)
 
@@ -150,7 +164,9 @@ compute_metrics(y_true, proba, classes, global_threshold, per_label, task_type="
   "validated_on": "real_rows",
   "scored_rows": 812,
   "labels_not_validated": ["http://…/380"],
-  "fallback": null
+  "fallback": null,
+  "thin_labels": ["http://…/380"],
+  "thin_label_threshold": "own"
 }
 ```
 
