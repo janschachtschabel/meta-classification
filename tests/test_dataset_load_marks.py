@@ -104,6 +104,24 @@ def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows, drop_du
     assert whole.marks == expected
 
 
+def test_a_mark_that_reads_like_a_missing_value_is_still_a_mark(tmp_path):
+    """A mark names a label, and a label may be called "NA", "None" or "null" -- words
+    pandas reads as a missing cell, which would let the row validate. The text and label
+    cells keep pandas' reading (review 2026-09-19 #5)."""
+    path = _write(tmp_path, [
+        ("Brüche kürzen Übung", "math", "NA", "", ""),
+        ("Gleichungen lösen", "math", "", "None", ""),
+        ("Zellbiologie Grundlagen", "bio", "", "", "null"),
+        ("Photosynthese Versuch", "bio", "", "", ""),
+        ("NA", "bio", "", "", ""),
+    ])
+
+    data = load_dataset(path, ["title"], "labels", min_text_length=1)
+
+    assert data.marks == [GENERATED, EXAMPLE, ENRICHED, 0]
+    assert data.texts[-1] == "Photosynthese Versuch", "a title 'NA' is still no text"
+
+
 def test_an_unknown_synthetic_rows_mode_is_refused(tmp_path):
     path = _write(tmp_path, [("Bruchrechnung", "math")], columns=("title", "labels"))
 

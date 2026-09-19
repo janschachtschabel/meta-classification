@@ -138,7 +138,7 @@ def load_dataset(
         )
         try:
             for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
-                                      chunk_rows=chunk_rows):
+                                      chunk_rows=chunk_rows, verbatim=mark_cols):
                 collector.add(block)
                 emit(f"Reading and cleaning … {collector.rows_read:,} rows")
         except UnicodeDecodeError:
@@ -151,7 +151,8 @@ def load_dataset(
 
 
 def _read_blocks(
-    path: Path, encoding: str, *, separator: str, usecols: list[str], chunk_rows: int
+    path: Path, encoding: str, *, separator: str, usecols: list[str], chunk_rows: int,
+    verbatim: list[str] | None = None,
 ) -> Iterator[pd.DataFrame]:
     """The CSV in blocks of rows, only the needed columns, every cell as text. Empty or
     malformed CSVs surface as ``TrainingInputError`` (-> 400), like ``data.read_csv``.
@@ -159,9 +160,17 @@ def _read_blocks(
     ``engine="c"``: a separator longer than one character would otherwise switch pandas
     to its python engine and be read as a regular expression. The API allows one
     character; this refuses the rest (ValueError), as the whole-file read did.
+
+    ``verbatim`` columns are read as written, empty as "": a mark names a label, and a
+    label may be called "NA", "None" or "null", which pandas would read as a missing
+    cell. The C engine gives a column with a converter no missing-value reading; the
+    other columns keep it, as before.
     """
+    raw = verbatim or []
     try:
-        with pd.read_csv(path, sep=separator, usecols=usecols, dtype=str, encoding=encoding,
+        with pd.read_csv(path, sep=separator, usecols=usecols, encoding=encoding,
+                         dtype={c: str for c in usecols if c not in raw},
+                         converters={c: str for c in raw},
                          chunksize=chunk_rows, engine="c") as reader:
             yield from reader
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
