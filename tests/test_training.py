@@ -857,8 +857,12 @@ def test_drop_unlearnable_removes_orphaned_rows_and_remaps_split():
     ])
     splits = (np.array([0, 1, 2]), np.array([3, 4]), np.array([5]))
 
-    texts2, y2, classes2, (tr2, va2, te2) = _drop_unlearnable(texts, y, ["a", "b"], splits)
+    marks = np.array([0, 1, 0, 2, 4, 0], dtype=np.int8)
 
+    texts2, y2, classes2, (tr2, va2, te2), marks2 = _drop_unlearnable(
+        texts, y, ["a", "b"], splits, marks)
+
+    assert marks2.tolist() == [0, 1, 0, 4], "the provenance marks follow their rows"
     assert classes2 == ["a"]
     assert list(texts2) == ["text 0", "text 1", "text 2", "text 4"]
     assert y2.shape == (4, 1)
@@ -877,8 +881,9 @@ def test_drop_unlearnable_is_a_no_op_when_all_columns_learnable():
     y = np.array([[1, 0], [0, 1], [1, 0], [0, 1]])
     splits = (np.array([0, 1]), np.array([2]), np.array([3]))
 
-    texts2, y2, classes2, (tr2, va2, te2) = _drop_unlearnable(texts, y, ["a", "b"], splits)
+    texts2, y2, classes2, (tr2, va2, te2), marks2 = _drop_unlearnable(texts, y, ["a", "b"], splits)
 
+    assert marks2 is None
     assert list(texts2) == ["x", "y", "z", "w"]
     assert (y2 == y).all()
     assert classes2 == ["a", "b"]

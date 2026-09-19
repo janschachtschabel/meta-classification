@@ -21,6 +21,7 @@ from . import data as data_mod
 from .dataset_load import load_dataset
 from .errors import TrainingInputError
 from .profiles import TrainingConfig
+from .provenance import RowProvenance
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -61,9 +62,12 @@ def _drop_unlearnable(
     y_all: np.ndarray,
     classes: list[str],
     splits: tuple[np.ndarray, np.ndarray, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, list[str], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    marks: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str], tuple[np.ndarray, np.ndarray, np.ndarray],
+           np.ndarray | None]:
     """Drop label columns without positives in the TRAIN split, then the rows
-    those drops orphaned (all-zero targets), remapping the split indices.
+    those drops orphaned (all-zero targets), remapping the split indices. ``marks``
+    (provenance, one per row) follows the rows.
 
     A head needs positives to learn, so a label present only in val/test cannot
     be trained. Rows whose ONLY labels were dropped mirror ``prepare_targets``'s
@@ -74,18 +78,74 @@ def _drop_unlearnable(
     train_idx, val_idx, test_idx = splits
     learnable = y_all[train_idx].sum(axis=0) > 0
     if bool(learnable.all()):
-        return texts, y_all, classes, splits
+        return texts, y_all, classes, splits, marks
     y_all = y_all[:, learnable]
     classes = [c for c, keep in zip(classes, learnable, strict=False) if keep]
     keep = y_all.sum(axis=1) > 0
     if bool(keep.all()):
-        return texts, y_all, classes, splits
+        return texts, y_all, classes, splits, marks
     new_pos = np.cumsum(keep) - 1
 
     def remap(idx: np.ndarray) -> np.ndarray:
         return new_pos[idx[keep[idx]]]
 
-    return texts[keep], y_all[keep], classes, (remap(train_idx), remap(val_idx), remap(test_idx))
+    return (texts[keep], y_all[keep], classes, (remap(train_idx), remap(val_idx), remap(test_idx)),
+            None if marks is None else marks[keep])
+
+
+def _split_rows(
+    n: int, *, training_cfg: TrainingConfig, seed: int, y: np.ndarray | None,
+    train_only: np.ndarray | None, cv_folds: int,
+) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], str | None]:
+    """The train/val/test split, and why AI-marked rows validate after all (``None``:
+    they do not).
+
+    k-fold folds the real rows itself (``tuning.cross_val_evaluate``) and never reads
+    this split, so there it stays the one the dataset always got. The holdout draws val
+    and test from the real rows. Too few of them to fill either -- a pure Runs export has
+    none -- and the run falls back to every row and says so, rather than refusing the
+    synthetic-only training data-prep's Runs push exists for.
+    """
+
+    def every_row() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return data_mod.three_way_split(
+            n, val_size=training_cfg.validation_size, test_size=training_cfg.test_size,
+            seed=seed, y=y)
+
+    if train_only is None:
+        return every_row(), None
+    n_real = int(np.count_nonzero(~train_only))
+    if cv_folds >= 2:
+        reason = None if n_real >= cv_folds else f"only {n_real} real rows for {cv_folds} folds"
+        return every_row(), reason
+    try:
+        splits = data_mod.three_way_split(
+            n, val_size=training_cfg.validation_size, test_size=training_cfg.test_size,
+            seed=seed, y=y, train_only=train_only)
+    except ValueError:
+        # scikit-learn refuses to split this few rows: the same shortage as below.
+        splits = None
+    if splits is None or not (len(splits[1]) and len(splits[2])):
+        return every_row(), f"only {n_real} real rows, too few for a validation and a test part"
+    return splits, None
+
+
+def _provenance(
+    marks: np.ndarray | None, y_all: np.ndarray, *, mode: str, excluded: int,
+    fallback: str | None,
+) -> RowProvenance | None:
+    """What the marks decided -- or ``None`` when the dataset has none, and the run is
+    the one it was before marks existed."""
+    if marks is None or not (marks.any() or excluded):
+        return None
+    real = marks == 0
+    validate = real if marks.any() and fallback is None else None
+    scored = None
+    if validate is not None:
+        has_real = y_all[real].sum(axis=0) > 0
+        scored = None if bool(has_real.all()) else has_real
+    return RowProvenance(marks=marks, mode=mode, excluded_generated=excluded,
+                         validate=validate, scored=scored, fallback=fallback)
 
 
 @dataclass
@@ -105,6 +165,9 @@ class Prepared:
     val_idx: np.ndarray
     test_idx: np.ndarray
     uri_to_label: dict[str, str]
+    # Which rows an LLM wrote or touched and what that decided (``provenance``); None for
+    # a dataset without marks.
+    provenance: RowProvenance | None = None
 
 
 def prepare_data(
@@ -136,6 +199,7 @@ def prepare_data(
 
     # --- Load + clean (read/clean/filter sub-steps shown via phase_detail) ---
     on_progress(phase="loading", progress=5, message="Loading and preparing dataset...")
+    mode = req.get("synthetic_rows", "train")
     loaded = load_dataset(
         dataset_path,
         req["text_columns"],
@@ -147,6 +211,7 @@ def prepare_data(
         label_filter=req.get("label_filter"),
         text_column_weights=text_column_weights,
         label_names=_authoritative_label_names(settings),
+        synthetic_rows=mode,
         on_progress=lambda msg: on_progress(phase_detail=msg),
     )
     if should_stop():
@@ -173,6 +238,7 @@ def prepare_data(
         )
     texts = np.array([t for t, keep in zip(loaded.texts, row_keep, strict=False) if keep], dtype=object)
     kept_label_lists = [labs for labs, keep in zip(loaded.label_lists, row_keep, strict=False) if keep]
+    marks = None if loaded.marks is None else np.asarray(loaded.marks, dtype=np.int8)[row_keep]
     # Re-check AFTER dropping rare-label rows: the pre-filter guard above counts
     # rows that prepare_targets may have just removed, so the three-way split
     # could otherwise get an empty val/test and "succeed" with meaningless metrics.
@@ -189,19 +255,21 @@ def prepare_data(
         task_type = data_mod.detect_task_type(kept_label_lists, len(classes))
 
     # --- Train / val / test split ---
-    train_idx, val_idx, test_idx = data_mod.three_way_split(
-        len(texts), val_size=training_cfg.validation_size,
-        test_size=training_cfg.test_size, seed=settings.random_seed,
-        y=y_all if stratified else None,
+    train_only = marks != 0 if marks is not None and marks.any() else None
+    (train_idx, val_idx, test_idx), fallback = _split_rows(
+        len(texts), training_cfg=training_cfg, seed=settings.random_seed,
+        y=y_all if stratified else None, train_only=train_only, cv_folds=cv_folds,
     )
+    if fallback:
+        logger.warning("AI-marked rows validate after all: %s", fallback)
     if cv_folds < 2:
         # Classic split only: drop unlearnable label columns + the rows that
         # orphans (see _drop_unlearnable). CV trains on EVERY row and
         # prepare_targets already guarantees >= min_samples positives per kept
         # label, so dropping there would lose rare labels to a split that CV
         # does not even use.
-        texts, y_all, classes, (train_idx, val_idx, test_idx) = _drop_unlearnable(
-            texts, y_all, classes, (train_idx, val_idx, test_idx)
+        texts, y_all, classes, (train_idx, val_idx, test_idx), marks = _drop_unlearnable(
+            texts, y_all, classes, (train_idx, val_idx, test_idx), marks
         )
         # Train rows can never be orphaned (their labels have train positives by
         # definition), but a val/test split could in theory lose all its rows.
@@ -223,4 +291,6 @@ def prepare_data(
         text_column_weights=text_column_weights,
         train_idx=train_idx, val_idx=val_idx, test_idx=test_idx,
         uri_to_label={k: v for k, v in loaded.uri_to_label.items() if k in set(classes)},
+        provenance=_provenance(marks, y_all, mode=mode, excluded=loaded.excluded_generated,
+                               fallback=fallback),
     )
