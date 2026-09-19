@@ -74,8 +74,10 @@ def row_provenance(
     real = marks == 0
     validate = real if marks.any() and fallback is None else None
     scored = None
-    if validate is not None:
-        has_real = y_all[validate if evaluated is None else evaluated].sum(axis=0) > 0
+    if fallback is None:
+        # Also once "exclude" dropped the last mark: every row is real then, and the rule
+        # stays the one "train" gets, or the two runs of a dataset are not comparable.
+        has_real = y_all[real if evaluated is None else evaluated].sum(axis=0) > 0
         scored = None if bool(has_real.all()) else has_real
     thin = y_all[real].sum(axis=0) < min_samples
     return RowProvenance(marks=marks, mode=mode, excluded_generated=excluded,
