@@ -48,6 +48,14 @@ Unchanged by construction: a dataset without mark columns, or with blank ones, t
 same model — same C, thresholds and metrics (pinned by an end-to-end test in both
 evaluation modes).
 
+### Security
+
+- **anyio 4.14.1 → 4.14.2** in `requirements-hashes.lock`, the tree the image installs
+  (CVE-2026-63374, CVE-2026-64847, CVE-2026-63349; a patch release of starlette's
+  dependency, same requirements). The CI audit resolves `requirements.lock` afresh and
+  so never saw the pinned 4.14.1; data-prep's audit of its full lock, which pins the
+  same version, did.
+
 ## [Unreleased] — levers that never arrived (2026-09-12)
 
 Four findings from using the thing: three of them were fields or numbers the UI showed
