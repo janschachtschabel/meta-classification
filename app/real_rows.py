@@ -55,17 +55,23 @@ def split_rows(
 
 def row_provenance(
     marks: np.ndarray | None, y_all: np.ndarray, *, mode: str, excluded: int,
-    fallback: str | None,
+    fallback: str | None, evaluated: np.ndarray | None = None,
 ) -> RowProvenance | None:
     """What the marks decided -- or ``None`` when the dataset has none, and the run is
-    the one it was before marks existed."""
+    the one it was before marks existed.
+
+    A label is scored only when a real row of the rows the metrics are computed on
+    carries it: ``evaluated`` -- the holdout's test split -- or, for k-fold, every real
+    row. A label balancing lifted often has one real row, which the stratified split
+    puts into train; scored on a test split without it, it would read F1 0.0.
+    """
     if marks is None or not (marks.any() or excluded):
         return None
     real = marks == 0
     validate = real if marks.any() and fallback is None else None
     scored = None
     if validate is not None:
-        has_real = y_all[real].sum(axis=0) > 0
+        has_real = y_all[validate if evaluated is None else evaluated].sum(axis=0) > 0
         scored = None if bool(has_real.all()) else has_real
     return RowProvenance(marks=marks, mode=mode, excluded_generated=excluded,
                          validate=validate, scored=scored, fallback=fallback)

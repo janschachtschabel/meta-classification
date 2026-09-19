@@ -164,7 +164,10 @@ def prepare_data(
         return None
     n_texts = len(loaded.texts)
     if n_texts < 10:
-        raise TrainingInputError(f"Too few usable rows after cleaning ({n_texts}). Need at least 10.")
+        left_out = (f"; {loaded.excluded_generated} generated rows were left out "
+                    "(synthetic_rows=exclude)" if loaded.excluded_generated else "")
+        raise TrainingInputError(
+            f"Too few usable rows after cleaning ({n_texts}){left_out}. Need at least 10.")
 
     # --- Labels + task type ---
     on_progress(phase="preparing", progress=20, message=f"{n_texts} texts. Preparing labels...")
@@ -206,17 +209,24 @@ def prepare_data(
         len(texts), training_cfg=training_cfg, seed=settings.random_seed,
         y=y_all if stratified else None, train_only=train_only, cv_folds=cv_folds,
     )
-    if fallback:
-        logger.warning("AI-marked rows validate after all: %s", fallback)
     if cv_folds < 2:
         # Classic split only: drop unlearnable label columns + the rows that
         # orphans (see _drop_unlearnable). CV trains on EVERY row and
         # prepare_targets already guarantees >= min_samples positives per kept
         # label, so dropping there would lose rare labels to a split that CV
         # does not even use.
-        texts, y_all, classes, (train_idx, val_idx, test_idx), marks = _drop_unlearnable(
-            texts, y_all, classes, (train_idx, val_idx, test_idx), marks
-        )
+        dropped = _drop_unlearnable(texts, y_all, classes, (train_idx, val_idx, test_idx), marks)
+        if train_only is not None and fallback is None and not (
+                len(dropped[3][1]) and len(dropped[3][2])):
+            # The real rows' labels had no training positive, so the drop emptied val or
+            # test: the same shortage as too few real rows, and the same fallback.
+            (train_idx, val_idx, test_idx), _ = split_rows(
+                len(texts), training_cfg=training_cfg, seed=settings.random_seed,
+                y=y_all if stratified else None, train_only=None, cv_folds=cv_folds)
+            fallback = (f"the {int(np.count_nonzero(~train_only))} real rows carry no label "
+                        "left to validate on")
+            dropped = _drop_unlearnable(texts, y_all, classes, (train_idx, val_idx, test_idx), marks)
+        texts, y_all, classes, (train_idx, val_idx, test_idx), marks = dropped
         # Train rows can never be orphaned (their labels have train positives by
         # definition), but a val/test split could in theory lose all its rows.
         if min(len(val_idx), len(test_idx)) == 0:
@@ -224,6 +234,8 @@ def prepare_data(
                 "The validation or test split lost all its labeled rows after "
                 "dropping unlearnable labels; add more data or lower min_samples_per_label."
             )
+    if fallback:
+        logger.warning("AI-marked rows validate after all: %s", fallback)
     if len(classes) < 2:
         raise TrainingInputError("Fewer than 2 learnable labels; dataset too small/sparse.")
     if should_stop():
@@ -238,5 +250,6 @@ def prepare_data(
         train_idx=train_idx, val_idx=val_idx, test_idx=test_idx,
         uri_to_label={k: v for k, v in loaded.uri_to_label.items() if k in set(classes)},
         provenance=row_provenance(marks, y_all, mode=mode, excluded=loaded.excluded_generated,
-                                  fallback=fallback),
+                                  fallback=fallback,
+                                  evaluated=test_idx if cv_folds < 2 else None),
     )

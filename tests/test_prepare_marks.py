@@ -27,7 +27,7 @@ def _write(tmp_path, rows, header=HEADER, name="marked.csv"):
     return name
 
 
-def _prepare(tmp_path, name, *, cv_folds, **req):
+def _prepare(tmp_path, name, *, cv_folds, stratified=False, **req):
     settings = Settings(data_dir=tmp_path, models_dir=tmp_path / "models", auth_enabled=False)
     config = TrainingConfig(
         default_profile="fast", profiles={"fast": Profile("fast", "TF-IDF", True, True, [1.0])},
@@ -37,7 +37,7 @@ def _prepare(tmp_path, name, *, cv_folds, **req):
     request = {"dataset_name": name, "model_name": "m", "text_columns": ["title", "keywords"],
                "label_column": "subject", "csv_separator": ";", "label_separator": ",",
                "label_filter": None, **req}
-    prep = prepare_data(request, settings, config, cv_folds=cv_folds,
+    prep = prepare_data(request, settings, config, cv_folds=cv_folds, stratified=stratified,
                         on_progress=lambda **_: None, should_stop=lambda: False)
     assert prep is not None
     return prep
@@ -59,7 +59,11 @@ def test_a_holdout_split_validates_and_tests_on_real_rows_only(tmp_path):
 
 
 def test_the_marks_stay_on_their_rows_through_every_drop(tmp_path):
-    prep = _prepare(tmp_path, _write(tmp_path, _rows()), cv_folds=0)
+    """A label below the minimum goes first -- prepare_targets drops its row, and a mark
+    array that did not follow would be one row off from here on."""
+    rows = [["Einzelstück ohne Nachbarn", "solo", "Z", "", "", ""], *_rows()]
+
+    prep = _prepare(tmp_path, _write(tmp_path, rows), cv_folds=0)
 
     marks = prep.provenance.marks
     assert len(marks) == len(prep.texts)
@@ -107,10 +111,63 @@ def test_too_few_real_rows_fall_back_to_every_row_and_say_so(tmp_path, cv_folds)
 
 
 def test_exclude_drops_the_generated_rows_and_frees_the_examples(tmp_path):
-    prep = _prepare(tmp_path, _write(tmp_path, _rows()), cv_folds=0, synthetic_rows="exclude")
+    """k-fold, where every real row validates: the former examples must be among them."""
+    prep = _prepare(tmp_path, _write(tmp_path, _rows()), cv_folds=3, synthetic_rows="exclude")
 
     assert not any(text.startswith("Erzeugt") for text in prep.texts)
     assert prep.provenance.excluded_generated == 10
     assert prep.provenance.marks.tolist().count(ENRICHED) == 3
-    assert int(np.count_nonzero(prep.provenance.marks)) == 3, "the examples validate again"
+    examples = [i for i, text in enumerate(prep.texts) if text.startswith("Kaiser")]
+    assert len(examples) == 2 and prep.provenance.validate[examples].all(), "they validate again"
     assert _unscored(prep) == []
+
+
+def test_a_holdout_scores_only_the_labels_its_test_split_has_real_rows_of(tmp_path):
+    """A label balancing lifted has one or two real rows, and the stratified split puts
+    the only one into train. Scored anyway, it reads F1 0.0 and drags the macro average
+    down -- a number about the split, not the model (review #1)."""
+    rows = [r for r in _rows() if r[2] != "C"]
+    rows += [["Kaiser Augustus Quelle", "rom", "C", "", "", ""]]
+    rows += [[f"Erzeugt Antike Text {i}", f"antike{i}", "C", "C", "", ""] for i in range(12)]
+
+    prep = _prepare(tmp_path, _write(tmp_path, rows), cv_folds=0, stratified=True)
+
+    in_test = prep.y_all[prep.test_idx].sum(axis=0) > 0
+    assert "C" in _unscored(prep)
+    assert _unscored(prep) == [c for c, hit in zip(prep.classes, in_test, strict=True) if not hit]
+
+
+def test_a_holdout_that_loses_its_real_rows_to_the_label_drop_falls_back(tmp_path, monkeypatch):
+    """Val and test drawn from real rows whose labels have no training positive: the
+    unlearnable-label drop empties them. That is the same shortage as too few real rows,
+    and gets the same fallback instead of a failed run (review #2)."""
+    from app import data
+
+    rows = [[f"Erzeugt Mathe Text {i}", f"zahl{i}", "A", "A", "", ""] for i in range(12)]
+    rows += [[f"Photosynthese Versuch {i}", f"licht{i}", "B", "", "", ""] for i in range(3)]
+    real_split = data.three_way_split
+
+    def split(n, **kw):
+        if kw.get("train_only") is None:
+            return real_split(n, **kw)
+        train_only = kw["train_only"]
+        real = np.flatnonzero(~train_only)
+        return np.flatnonzero(train_only), real[:1], real[1:]
+
+    monkeypatch.setattr(data, "three_way_split", split)
+
+    prep = _prepare(tmp_path, _write(tmp_path, rows), cv_folds=0, stratified=True)
+
+    assert prep.provenance.fallback is not None
+    assert prep.provenance.validate is None
+    assert len(prep.val_idx) and len(prep.test_idx)
+
+
+def test_excluding_every_row_says_that_rows_were_left_out(tmp_path):
+    from app.errors import TrainingInputError
+
+    generated = [[f"Erzeugt {lab} Text {i}", f"kw{i}", lab, lab, "", ""]
+                 for lab in ("A", "B") for i in range(12)]
+
+    with pytest.raises(TrainingInputError, match="24 generated rows were left out"):
+        _prepare(tmp_path, _write(tmp_path, generated), cv_folds=3, synthetic_rows="exclude")
