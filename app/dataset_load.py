@@ -217,10 +217,13 @@ class _Collector:
             label_lists = [[lab for lab in labs if self.label_filter in lab] for labs in label_lists]
         marks = block_marks(frame, mode=self.mode).tolist() if self.has_marks else [0] * len(frame)
         for text, labels, mark in zip(cleaned.tolist(), label_lists, marks, strict=False):
+            if len(text) < self.min_text_length or not labels:
+                continue
+            # Still before the dedupe: a generated first occurrence must not take a real
+            # twin's place. After the check above: a row too short to train on anyway
+            # was not left out by this.
             if mark & GENERATED and self.mode == "exclude":
                 self.excluded_generated += 1
-                continue
-            if len(text) < self.min_text_length or not labels:
                 continue
             if mark:
                 self.marked_texts.add(text)

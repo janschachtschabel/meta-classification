@@ -103,3 +103,17 @@ def test_an_unknown_synthetic_rows_mode_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="synthetic_rows"):
         load_dataset(path, ["title"], "labels", synthetic_rows="keep")
+
+
+def test_only_generated_rows_that_would_have_trained_count_as_left_out(tmp_path):
+    """A row too short to train on was never going to be used; counting it as "left
+    out" would overstate what exclude removed (review #6)."""
+    path = _write(tmp_path, [
+        ("abc", "math", "math", "", ""),
+        ("Brüche kürzen", "math", "math", "", ""),
+        ("Gleichungen lösen", "math", "", "", ""),
+    ])
+
+    data = load_dataset(path, ["title"], "labels", synthetic_rows="exclude")
+
+    assert data.excluded_generated == 1
