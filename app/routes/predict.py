@@ -143,12 +143,13 @@ async def predict(request: Request, body: PredictRequest, _: str = Depends(requi
     **Parameters:** `model_name`; optionally `threshold` (overrides the trained value),
     `top_k` (`null` = the model **decides**: multilabel via its tuned per-label thresholds,
     multiclass via argmax; `N` = **ranking**: exactly the N most probable labels regardless
-    of thresholds, each flagged with `above_threshold`; `0` = ranking of the typical label
-    count), `label_filter` (only labels containing the substring), `include_baseline_diff`
-    (adds confidence minus the model's empty-text prediction per label), `include_label_f1`
-    (adds each label's F1 from the training evaluation — how much a high confidence on
-    THIS label is worth). The response includes `applied_settings` with the values
-    actually applied. **Auth:** readonly.
+    of thresholds, each flagged with `above_threshold` for a multilabel model; `0` =
+    ranking of the typical label count), `label_filter` (only labels containing the
+    substring), `include_baseline_diff` (adds confidence minus the model's empty-text
+    prediction per label), `include_label_f1` (adds each label's F1 from the training
+    evaluation — how much a high confidence on THIS label is worth; left out for a label
+    the bundle has no F1 for, such as one no real row could validate). The response
+    includes `applied_settings` with the values actually applied. **Auth:** readonly.
     """
     return await _predict(body)
 
@@ -195,7 +196,9 @@ async def predict_explain(
     In addition to the predictions: `all_scores` (confidence for **all** labels, each
     with `baseline_diff` and `label_f1`) and `word_importance` — the most influential
     words per predicted label, determined by leave-one-out (confidence drop when a word
-    is removed). Both reliability signals are always included here, no flag needed.
+    is removed). Both reliability signals are always included here, no flag needed;
+    `label_f1` is `null` for a label the bundle has no F1 for (unlike `/predict`, which
+    leaves it out).
 
     An `impact` is a difference between two *word lists*: the text's words rejoined by
     single spaces, with and without that one word — not against the `confidence` beside

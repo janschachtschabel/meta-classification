@@ -76,7 +76,20 @@ async def model_info(model_name: str, _: str = Depends(require_role("readonly"))
     """Configuration + training metadata/metrics of a model.
 
     Reads only the JSON metadata (weights are not loaded). Includes the backend,
-    classes, thresholds, task type and the test metrics. **Auth:** readonly.
+    classes, thresholds, task type and `label_vocabulary`; under `metadata` the training
+    record: the metrics (on the held-out test split, or out-of-fold for k-fold — see
+    `metadata.evaluation`), per-label F1 and support, the text columns and weights the
+    model expects, `info`, and `evaluations` (results of `POST /models/{name}/evaluate`).
+
+    A model trained on a dataset carrying data-prep's marks also has
+    `metadata.synthetic_data`: the run's `mode` (`synthetic_rows`); how many rows an LLM
+    wrote (`generated_rows`), showed as examples (`example_rows`) or completed
+    (`enriched_rows`), how many generated rows were left out (`excluded_generated_rows`)
+    and how many trained without validating (`train_only_rows`); what the metrics were
+    computed on (`validated_on`: `real_rows`, or `all_rows` with the reason in
+    `fallback`; `scored_rows`); the labels no real row could score (`labels_not_validated`
+    — they have no F1); and the thin labels with the cut chosen for them (`thin_labels`,
+    `thin_label_threshold`). **Auth:** readonly.
     """
     safe_name(model_name, "model name")
     try:
@@ -87,14 +100,17 @@ async def model_info(model_name: str, _: str = Depends(require_role("readonly"))
 
 @router.get("/models/{model_name}/labels", summary="Per-label diagnostics")
 async def model_labels(model_name: str, _: str = Depends(require_role("readonly"))) -> list[dict]:
-    """Every label with its F1, its support (rows carrying it) and its threshold,
-    **weakest first**.
+    """Every label with its F1, its support (rows carrying it in the training data,
+    AI-marked rows included) and its threshold, **weakest first**.
 
     The headline F1 says how good a model is on average; this says where it is weak,
     which is what decides whether one answer deserves a second look. `support` makes
     a score readable — 0.13 on 25 rows is a different statement from 0.13 on 5,000.
     `threshold` is `null` for binary/multiclass, where serving decides by argmax and
-    reads no threshold. **Auth:** readonly.
+    reads no threshold. `f1` is `null` for a label no real row could validate (listed in
+    `synthetic_data.labels_not_validated`, see `GET /models/{name}`) and, like `support`,
+    for bundles trained before it was recorded. Those labels come last: unknown is not
+    the same as weak. **Auth:** readonly.
     """
     safe_name(model_name, "model name")
     try:
@@ -136,8 +152,8 @@ async def set_model_info(
 @router.delete("/models/{model_name}", summary="Delete a model")
 @limiter.limit(default_limit)
 async def delete_model(request: Request, model_name: str, _: str = Depends(require_role("admin"))) -> dict:
-    """Remove a model from the in-memory cache and from disk (irreversible).
-    **Auth:** admin · rate limit active."""
+    """Remove a model from the in-memory cache and from disk (irreversible), and revoke
+    its share links. **Auth:** admin · rate limit active."""
     safe_name(model_name, "model name")
     try:
         # rmtree of a large bundle is blocking disk work — off the event loop.
@@ -184,7 +200,13 @@ async def export_model(
 async def import_model(
     request: Request,
     file: UploadFile = File(..., description="A model bundle (.zip) exported by this API"),
-    new_name: str | None = Form(None),
+    new_name: str | None = Form(
+        None,
+        description=(
+            "Install the model under this name instead of the archive's file name (minus "
+            "`.zip`). An existing name is refused (409)."
+        ),
+    ),
     _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -243,6 +265,11 @@ async def evaluate_model(
     learned are reported (`unknown_labels`), and rows carrying only such labels are
     excluded and counted (`rows_without_a_known_label`) rather than scored as failures
     — blaming a model for a label it was never given is not a number to compare on.
+
+    Rows an LLM wrote or touched (data-prep's marks) are never scored: measured on them,
+    a model is measured on how well it learned that LLM. They are skipped and counted in
+    `ai_marked_rows_skipped` (recorded only when rows were skipped); a dataset of nothing
+    but such rows fails the job.
 
     Runs as a background job on the same single worker as training, so it queues behind
     a running one exactly the same way; watch it on `/train/status` and find the outcome

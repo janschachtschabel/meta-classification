@@ -13,6 +13,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -84,7 +85,7 @@ def list_datasets(
 def dataset_info(
     request: Request,
     dataset_name: str,
-    separator: str = ";",
+    separator: str = Query(";", description="The CSV's field delimiter: exactly one character (else 400)."),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -110,8 +111,10 @@ def analyze(request: Request, req: AnalyzeRequest, _: str = Depends(require_role
     """Comprehensive statistics for a dataset to plan training.
 
     Returns sample/label counts, text lengths, labels per sample, the most frequent and
-    rare labels, plus a threshold analysis (how many labels have >= N examples). Helps to
-    choose `min_samples_per_label` and a `label_filter`. **Auth:** admin.
+    rare labels, plus a threshold analysis (how many labels have >= N examples), the
+    `min_samples_per_label` the automatic setting would choose for this size, and the
+    estimated minutes per profile on this server. Helps to choose
+    `min_samples_per_label`, a `label_filter` and a profile. **Auth:** admin.
     """
     path = _dataset_path(req.dataset_name, settings)
     # Planned before the analysis loads the file (see CapacityPlan.for_server).
@@ -158,8 +161,17 @@ def validate(
 @limiter.limit(export_limit)
 async def import_dataset(
     request: Request,
-    file: UploadFile = File(...),
-    new_name: str | None = Form(None),
+    file: UploadFile = File(
+        ...,
+        description="The dataset: a `.csv` or gzip-compressed `.csv.gz` file, within `max_upload_mb` (`GET /config`).",
+    ),
+    new_name: str | None = Form(
+        None,
+        description=(
+            "Store the dataset under this file name instead of the uploaded one; `.csv` is "
+            "appended when it ends in neither suffix. An existing name is refused (409)."
+        ),
+    ),
     _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -225,8 +237,8 @@ async def delete_dataset(
     request: Request, dataset_name: str, _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Delete a CSV file from the data directory (irreversible).
-    **Auth:** admin · rate limit active."""
+    """Delete a CSV file from the data directory (irreversible), and revoke its share
+    links. **Auth:** admin · rate limit active."""
     _dataset_path(dataset_name, settings).unlink()
     # Same reason as model delete: the next import under this name must not be
     # reachable through a link that was handed out for this file.

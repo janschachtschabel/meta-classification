@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import partial
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import job_history
 from ..jobs import job_runner
@@ -37,14 +37,17 @@ async def list_profiles(
 ) -> dict:
     """Available quality/effort profiles (`fast` / `auto` / `best`, cheapest first).
 
-    Per profile: name, description, the `C` values tried, threshold tuning
-    (`tune_threshold`, `threshold_per_label`) and the TF-IDF feature shape
+    Per profile: name, description, the `C` values tried, the evaluation mode
+    (`cv_folds`: 0 = holdout split, >= 2 = k-fold, null = `split.cv_folds`), threshold
+    tuning (`tune_threshold`, `threshold_per_label`) and the TF-IDF feature shape
     (`use_char`, effective `max_word_features` / `max_char_features`) — so it is
     visible what distinguishes the profiles. Profiles are defined in `config.yaml`
     and freely extensible.
 
-    Also returns the training-config defaults a `/train` request inherits when it
-    omits the field: `default_text_column_weights` and `default_min_samples_per_label`.
+    Also returns `default_profile` (the one `config.yaml` recommends and the admin UI
+    preselects; a `/train` request that omits `optimize_parameters` gets `auto`) and the
+    training-config defaults a `/train` request inherits when it omits the field:
+    `default_text_column_weights` and `default_min_samples_per_label`.
     **Auth:** readonly.
     """
     cfg = load_training_config(settings.config_file)
@@ -88,10 +91,12 @@ async def train(
     _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Start a training job in the background and return a job reference immediately.
+    """Start a training job in the background — or queue it behind the run already
+    going — and return a job reference immediately.
 
     Poll progress (phase, percent, estimated time remaining) via `GET /train/status`;
-    cancel via `POST /train/stop`.
+    cancel via `POST /train/stop`. Up to 10 runs wait in the queue, each starting when
+    the one before it ends (`status: "queued"`, `queue_position`).
 
     **Key body fields:**
     - `dataset_name`: a CSV in the data directory (upload beforehand via `POST /datasets/import`).
@@ -101,27 +106,39 @@ async def train(
     - `optimize_parameters`: quality/effort profile `fast` | `auto` | `best`, cheapest
       first (controls character n-grams, the C grid and the evaluation mode — i.e. the
       training time). `fast` evaluates on a holdout split and therefore deploys a model
-      fit on 85% of the rows; `auto` and `best` deploy on 100%.
+      fit on all rows but its test split (typically 85%); `auto` and `best` deploy on 100%.
     - `task_type`: optional override `multilabel` | `multiclass` | `binary`
       (default `auto` = automatic detection).
     - `label_filter`: optionally keep only labels containing this substring.
     - `min_samples_per_label`: minimum number of tagged items required for a label to be
-      included (rarer labels are dropped). Empty/`null` = automatic (scales with the
-      dataset size, ~20 for typical sets).
+      included (rarer labels are dropped). Default 20; `null` = automatic (scales with
+      the dataset size: 2 / 5 / 20 / 35).
     - `cv_folds`: evaluation mode — `0` = classic train/val/test split, `>= 2` = k-fold
-      cross-validation (every row trains and validates via out-of-fold metrics; the
-      deployed model is fit on 100% of the data). `null` = config default (`split.cv_folds`).
+      cross-validation (every row trains and — AI-marked rows aside — validates via
+      out-of-fold metrics; the deployed model is fit on 100% of the data). `null` = the
+      profile's own setting (fast 0, auto 3, best 5), falling back to `split.cv_folds`.
+    - `synthetic_rows`: `train` (default) or `exclude` the rows an LLM wrote.
+    - `thin_label_threshold`: `own` (default) or `global` cut for a label that reaches
+      `min_samples_per_label` only through AI-marked rows.
     - `text_column_weights`: how often each text column is repeated in the training text
       (`null` = the config default). The trained model expects input built the same way.
     - `max_word_features` / `max_char_features`: vocabulary caps for this run, overriding
       the profile's and the server's.
 
-    **Auto-optimization:** `C`, thresholds (global + per-label) and the task type are
-    determined automatically; `min_samples_per_label` is auto-scaled unless set. All of
-    it is stored in the model.
+    **AI-marked rows:** a dataset carrying data-prep's marks (`generated_for`,
+    `example_for`, `enriched_fields`) trains on the marked rows but never validates on
+    them: k-fold scores real rows only, a holdout draws its validation and test splits
+    from real rows only. With too few real rows for that, the metrics include the marked
+    rows and say so. A label no real row can score gets no F1. The bundle's
+    `synthetic_data` block records all of it (see `GET /models/{name}`).
 
-    **Errors:** 404 (dataset missing), 409 (model name already exists, or a training is
-    already running). **Auth:** admin · rate limit active.
+    **Auto-optimization:** `C`, thresholds (global + per-label) and the task type are
+    determined automatically; `min_samples_per_label` is auto-scaled when sent as `null`.
+    All of it is stored in the model.
+
+    **Errors:** 400 (unknown profile, invalid name), 404 (dataset missing), 409 (model
+    name already exists, a run under this name is already running or queued, or the
+    queue is full). **Auth:** admin · rate limit active.
     """
     safe_name(body.dataset_name, "dataset name")
     safe_name(body.model_name, "model name")
@@ -176,29 +193,43 @@ async def train(
 
 @router.get("/train/status", summary="Current training status")
 async def status(_: str = Depends(require_role("readonly"))) -> dict:
-    """Live status of the running (or most recent) training.
+    """Live status of the running (or most recent) job — a training or an evaluation.
 
-    Fields: `status` (idle/running/completed/error/stopped), `phase`
-    (loading → preparing → features → selecting → threshold → evaluating → saving → done),
-    `phase_detail` (e.g. which `C` value is currently being tried), `progress` (0–100),
-    `message`, `elapsed_seconds`, `eta_seconds` (estimated time remaining),
-    `seconds_since_heartbeat` (age of the newest progress signal while running; it keeps
-    growing when the training thread stalls silently — long values mean "possibly hung",
-    while `elapsed_seconds` grows either way), `rss_mb` (resident memory read at request
+    Fields: `status` (idle/running/completed/error/stopped), `kind` (`training` or
+    `evaluation`), `phase` (holdout: loading → preparing → features → selecting →
+    threshold → evaluating → saving → done; k-fold: loading → preparing →
+    cross-validating → saving → done; an evaluation: loading → evaluating → saving →
+    done; `error` when a run failed), `phase_detail` (e.g. which `C` value is currently
+    being tried), `progress` (0–100), `message`, `started_at`, `elapsed_seconds`,
+    `eta_seconds` (estimated time remaining), `seconds_since_heartbeat` (age of the
+    newest progress signal while running; it keeps growing when the training thread
+    stalls silently — long values mean "possibly hung", while `elapsed_seconds` grows
+    either way), `rss_mb` (resident memory read at request
     time: this process, plus the training process while a run has one — the container's
     limit applies to the sum), `peak_rss_mb` (the most the current or last run held —
     what the run sampled, raised to `rss_mb` when the newest sample is older than this
     reading; `GET /train/history` keeps the run's own sampling alone),
     `head_fit_threads` and `threads_requested` (what the newest head fit runs on, against
     what the CPU budget offered: fewer means the memory budget is holding the run back),
-    `model_name`, `results` (metrics on completion), `error`. **Auth:** readonly.
+    `model_name`, `results` (metrics on completion), `error`, and `queued` (the names of
+    the runs waiting, next first). **Auth:** readonly.
     """
     return job_runner.snapshot()
 
 
 @router.post("/train/stop", summary="Stop the running training", response_model=TrainStopResponse)
-async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> dict:
-    """Cancel the running training.
+async def stop(
+    hard: bool = Query(
+        False,
+        description=(
+            "false: stop at the next checkpoint (a run in a child process is ended after 30 s "
+            "without one). true: reset the status to idle at once and disown the run."
+        ),
+    ),
+    _: str = Depends(require_role("admin")),
+) -> dict:
+    """Cancel the running job (a training or an evaluation) and drop every queued run —
+    a stop means "end this", not "skip to the next one".
 
     `hard=false` (default): cooperative cancellation at the next checkpoint (between
     the C fits, or before the final training). A run in a CHILD process that has not
@@ -219,15 +250,18 @@ async def stop(hard: bool = False, _: str = Depends(require_role("admin"))) -> d
 
 
 @router.get("/train/history", summary="Outcomes of finished training runs")
-async def history(limit: int = 50, _: str = Depends(require_role("readonly"))) -> list[dict]:
-    """What every finished run left behind, newest first.
+async def history(
+    limit: int = Query(50, description="How many runs to return, newest first; clamped to 1-200."),
+    _: str = Depends(require_role("readonly")),
+) -> list[dict]:
+    """What every finished run left behind, newest first — trainings and evaluations alike.
 
-    Per run: the model name, how it ended, when and for how long, the request it was
-    started with, the headline scores (`f1_macro`, `f1_micro`, `n_labels`) and the most
-    memory it needed (`peak_rss_mb` — what the run itself sampled, which is the
-    comparable number between two runs; `GET /train/status` may show a higher one, since
-    it raises the peak to its own live reading). A run
-    that failed carries its `error` — and that is the case with no bundle to inspect
+    Per run: the model name, its `kind` (`training` or `evaluation`), how it ended, when
+    and for how long, the request it was started with, the headline scores (`f1_macro`,
+    `f1_micro`, `n_labels`) and the most memory it needed (`peak_rss_mb` — what the run
+    itself sampled, which is the comparable number between two runs; `GET /train/status`
+    may show a higher one, since it raises the peak to its own live reading). A run that
+    failed carries its `error` — and that is the case with no bundle to inspect
     afterwards, so this is the only place the reason survives.
 
     Not the full metrics: `per_label_f1` is one entry per label, and comparing two runs

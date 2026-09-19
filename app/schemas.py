@@ -1,4 +1,5 @@
-"""Pydantic request models for the API (responses are plain dicts)."""
+"""Pydantic request models for the API (the fixed-shape responses are in ``responses``,
+the rest are plain dicts)."""
 
 from __future__ import annotations
 
@@ -15,6 +16,28 @@ def _empty_to_none(value: object) -> object:
 
 # A blank string (common from Swagger form fields) collapses to None.
 OptionalFilter = Annotated[str | None, BeforeValidator(_empty_to_none)]
+
+# One wording per concept: several requests take the same field, and two descriptions of
+# one thing read as two different things. Text only — every field keeps its own type,
+# default and constraints at its declaration.
+_DATASET_NAME = (
+    "File name of a dataset in the data directory, as `GET /datasets` lists it (add one with "
+    "`POST /datasets/import`). A plain name: path characters are refused."
+)
+_LABEL_COLUMN = "Column holding each row's labels, several per cell separated by `label_separator`."
+_CSV_SEPARATOR = "The CSV's field delimiter: exactly one character."
+_LABEL_SEPARATOR = (
+    "Separator between the labels in one `label_column` cell, matched literally. Labels are "
+    "trimmed; empty ones are dropped."
+)
+_LABEL_FILTER = (
+    "Keep only labels containing this substring (case-sensitive), e.g. a vocabulary's URI "
+    "prefix; rows left without a label are dropped. Blank or null = every label."
+)
+_SERVING_MODEL = (
+    "The model to classify with, as `GET /models` lists it. The default names a model called "
+    "`default`, which exists only if one was trained or imported under that name (else 404)."
+)
 
 
 class ModelInfo(BaseModel):
@@ -57,11 +80,22 @@ class ModelInfo(BaseModel):
 
 
 class TrainRequest(BaseModel):
-    dataset_name: str = Field(..., examples=["data_30k.csv"])
-    model_name: str = Field(..., examples=["taxonid"])
+    dataset_name: str = Field(..., examples=["data_30k.csv"], description=_DATASET_NAME)
+    model_name: str = Field(
+        ..., examples=["taxonid"],
+        description=(
+            "Name the new model is stored and served under (`model_name` in `/predict`): at most "
+            "100 characters, no path characters. Refused (409) while a model, a queued run or the "
+            "running one already has it."
+        ),
+    )
     text_columns: list[str] = Field(
         ...,
-        description="Columns merged into the input text (title + description + keywords recommended).",
+        description=(
+            "Columns merged into the input text (title + description + keywords recommended). "
+            "A column the CSV lacks is skipped silently — `POST /datasets/{name}/validate` "
+            "reports it."
+        ),
         examples=[[
             "properties.cclom:title",
             "properties.cclom:general_description",
@@ -92,9 +126,19 @@ class TrainRequest(BaseModel):
             "are recorded in the model's metadata, see GET /models/{name})."
         ),
     )
-    label_column: str = Field(..., examples=["properties.ccm:taxonid"])
+    label_column: str = Field(
+        ..., examples=["properties.ccm:taxonid"],
+        description=(
+            _LABEL_COLUMN + " An optional `<label_column>_DISPLAYNAME` column — same order, same "
+            "separator — supplies readable names."
+        ),
+    )
     optimize_parameters: str = Field(
-        "auto", description="Quality/effort profile, cheapest first: fast | auto | best"
+        "auto",
+        description=(
+            "Quality/effort profile, cheapest first: fast | auto | best — or any other profile "
+            "config.yaml defines (`GET /train/profiles`). An unknown name answers 400."
+        ),
     )
     task_type: str | None = Field(
         None, examples=["auto"],
@@ -102,7 +146,7 @@ class TrainRequest(BaseModel):
     )
     label_filter: OptionalFilter = Field(
         None, examples=["http://w3id.org/openeduhub/vocabs/discipline/"],
-        description="Keep only labels containing this substring (optional).",
+        description=_LABEL_FILTER,
     )
     min_samples_per_label: int | None = Field(
         20, ge=1, examples=[20],
@@ -119,7 +163,8 @@ class TrainRequest(BaseModel):
         description=(
             "Evaluation mode: 0 = classic train/val/test split (the deployed model is fit on "
             "train+val, i.e. the test share is never learned from), >= 2 = k-fold "
-            "cross-validation (every row trains AND validates via out-of-fold metrics; the "
+            "cross-validation (every row trains AND validates via out-of-fold metrics — "
+            "AI-marked rows only train, see `synthetic_rows`; the "
             "deployed model is fit on 100% of the data). k only controls how much data the "
             "evaluation models see (67% at k=3, 80% at k=5), so a lower k is slightly "
             "pessimistic, not less honest. null = the profile's own setting "
@@ -135,7 +180,9 @@ class TrainRequest(BaseModel):
             "the metrics measure the model on real data. `exclude`: they are left out when "
             "the dataset is read, and the real rows shown to the generator as examples "
             "(`example_for`) validate again. Rows whose fields an LLM completed "
-            "(`enriched_fields`) train but never validate in either mode. A dataset "
+            "(`enriched_fields`) train but never validate in either mode. Too few real rows "
+            "to validate on, and the metrics include the marked rows after all "
+            "(`synthetic_data.fallback` says why). A dataset "
             "without these columns trains exactly as before. The bundle's `synthetic_data` "
             "block records what was done."
         ),
@@ -177,8 +224,8 @@ class TrainRequest(BaseModel):
     # Exactly one character: pandas parses a multi-char sep as a REGEX (python
     # engine) — a crafted one can backtrack catastrophically (ReDoS), and in
     # /train it would hang the training thread outside any stop checkpoint.
-    csv_separator: str = Field(";", min_length=1, max_length=1)
-    label_separator: str = ","
+    csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
+    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
     info: ModelInfo | None = Field(
         None,
         description=(
@@ -229,19 +276,41 @@ class _PredictOptions(BaseModel):
     # Bounded at the trust boundary: cap the batch size and per-text length so a
     # single request cannot exhaust the single worker's RAM/CPU (predict builds
     # n_texts x n_labels objects). Empty list -> 422.
-    texts: list[Annotated[str, Field(max_length=100_000)]] = Field(..., min_length=1, max_length=1000)
+    texts: list[Annotated[str, Field(max_length=100_000)]] = Field(
+        ..., min_length=1, max_length=1000,
+        description=(
+            "The texts to classify: 1-1000 per request, each at most 100,000 characters. Build "
+            "each the way the model's training text was built — the same fields, repeated by its "
+            "`text_column_weights` (`GET /models/{name}`); markup is cleaned as in training."
+        ),
+    )
     top_k: int | None = Field(
         None, ge=0, le=1000,
         description=(
             "null (default) = the model DECIDES: multilabel returns every label above its "
             "tuned per-label threshold, multiclass/binary the single best label. "
             "N = RANKING: exactly the N most probable labels regardless of thresholds "
-            "(each carries `above_threshold` so forced entries stay distinguishable). "
-            "0 = ranking of the training set's typical label count."
+            "(for a multilabel model each carries `above_threshold`, so forced entries stay "
+            "distinguishable). 0 = ranking of the training set's typical label count."
         ),
     )
-    threshold: float | None = Field(None, ge=0.0, le=1.0)
-    label_filter: OptionalFilter = None
+    threshold: float | None = Field(
+        None, ge=0.0, le=1.0,
+        description=(
+            "One confidence cut (0-1) for every label, replacing the model's tuned per-label "
+            "thresholds for this request; null (default) = the tuned ones. Multilabel only: "
+            "binary/multiclass decide by argmax. In ranking mode (`top_k` set) it only decides "
+            "`above_threshold`."
+        ),
+    )
+    label_filter: OptionalFilter = Field(
+        None,
+        description=(
+            "Return only labels whose URI contains this substring (case-sensitive). Applied "
+            "first, so a ranking — and a binary/multiclass model's single answer — is taken "
+            "among the matching labels. Blank or null = every label."
+        ),
+    )
     include_baseline_diff: bool = Field(
         False,
         description=(
@@ -254,14 +323,16 @@ class _PredictOptions(BaseModel):
         description=(
             "Attach `label_f1` (this label's F1 from the training evaluation) to every prediction. "
             "Confidence says how sure the model is HERE, `label_f1` how much that is worth: a 0.95 "
-            "on a label that only scores 0.60 overall is worth a human look. Null for labels the "
-            "bundle has no score for."
+            "on a label that only scores 0.60 overall is worth a human look. Left out (not null) "
+            "where the bundle has no F1 for the label: one no real row could validate "
+            "(`synthetic_data.labels_not_validated` in `GET /models/{name}`), or any label of a "
+            "bundle trained before per-label F1 was recorded."
         ),
     )
 
 
 class PredictRequest(_PredictOptions):
-    model_name: str = "default"
+    model_name: str = Field("default", description=_SERVING_MODEL)
 
 
 class MultiPredictRequest(_PredictOptions):
@@ -275,9 +346,21 @@ class MultiPredictRequest(_PredictOptions):
 
 
 class ExplainRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=100_000)
-    model_name: str = "default"
-    top_n_words: int = Field(5, ge=1, le=50)
+    text: str = Field(
+        ..., min_length=1, max_length=100_000,
+        description=(
+            "The one text to classify and explain, built like a `/predict` text. Word importance "
+            "reads its first 60 words."
+        ),
+    )
+    model_name: str = Field("default", description=_SERVING_MODEL)
+    top_n_words: int = Field(
+        5, ge=1, le=50,
+        description=(
+            "How many of the most influential words to list per predicted label; word importance "
+            "covers the top 5 predicted labels at most."
+        ),
+    )
 
 
 class FeedbackRequest(BaseModel):
@@ -287,42 +370,91 @@ class FeedbackRequest(BaseModel):
     are what stands between a key and an unbounded file on the volume.
     """
 
-    text: str = Field(..., min_length=1, max_length=100_000)
-    model_name: str
+    text: str = Field(
+        ..., min_length=1, max_length=100_000,
+        description="The text that was classified; it becomes the `text` column of `GET /feedback/export`.",
+    )
+    model_name: str = Field(
+        ...,
+        description=(
+            "The model whose prediction is corrected. Recorded with the correction, not looked "
+            "up; path characters are refused."
+        ),
+    )
     # What the model said, so a later reader can see WHAT was corrected, not only to
     # what. Optional: a correction is still a correction if nobody recorded the guess.
-    predicted: list[str] = Field(default_factory=list, max_length=100)
+    predicted: list[str] = Field(
+        default_factory=list, max_length=100,
+        description=(
+            "Label URIs the model predicted for `text` (up to 100), so a reader sees what was "
+            "corrected, not only to what. Optional; not part of the export."
+        ),
+    )
     # Empty means "none of these apply" — a real thing to say, and not trainable.
-    corrected: list[str] = Field(default_factory=list, max_length=100)
+    corrected: list[str] = Field(
+        default_factory=list, max_length=100,
+        description=(
+            "The label URIs that are right for `text` (up to 100): the row's `labels` in "
+            "`GET /feedback/export`. Empty = none of the labels apply — recorded, but left out "
+            "of the export, since a row without labels cannot train."
+        ),
+    )
     # Where it came from ("ui", a script, an integration), so a later merge can weigh
     # or filter by origin instead of guessing.
-    source: str = Field("ui", max_length=50)
+    source: str = Field(
+        "ui", max_length=50,
+        description="Where the correction came from (`ui`, a script, an integration), so it can be weighed by origin.",
+    )
 
 
 class EvaluateRequest(BaseModel):
     """Score an existing model on a dataset. The model's own label space decides what
     can be scored, so no label settings are accepted here beyond a filter."""
 
-    dataset_name: str
-    text_columns: list[str] = Field(..., min_length=1, max_length=20)
-    label_column: str
+    dataset_name: str = Field(..., description=_DATASET_NAME)
+    text_columns: list[str] = Field(
+        ..., min_length=1, max_length=20,
+        description=(
+            "Columns merged into the input text — the ones the model was trained on "
+            "(`metadata.text_columns` in `GET /models/{name}`). A column the CSV lacks is skipped."
+        ),
+    )
+    label_column: str = Field(
+        ...,
+        description=(
+            _LABEL_COLUMN + " Read as the truth, in the model's own label space: labels it never "
+            "learned are reported (`unknown_labels`), not scored."
+        ),
+    )
     # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
-    csv_separator: str = Field(";", min_length=1, max_length=1)
-    label_separator: str = ","
-    label_filter: OptionalFilter = None
+    csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
+    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
+    label_filter: OptionalFilter = Field(None, description=_LABEL_FILTER)
     # The model was fit on text assembled a particular way; scoring it on text
     # assembled differently measures a distribution it was not tuned on.
-    text_column_weights: dict[str, int] | None = None
+    text_column_weights: dict[str, int] | None = Field(
+        None,
+        description=(
+            "How often each text column is repeated in the evaluation text, as in `/train` "
+            '(e.g. `{"properties.cclom:title": 2}`; unlisted columns once). null (default) '
+            "repeats nothing: it does NOT read the model's own weights, so send its "
+            "`metadata.text_column_weights` (`GET /models/{name}`) to score it on text built the "
+            "way it was trained. Values below 1 count as 1; keys not in `text_columns` are ignored."
+        ),
+    )
 
 
 class AnalyzeRequest(BaseModel):
-    dataset_name: str
-    text_columns: list[str]
-    label_column: str
+    dataset_name: str = Field(..., description=_DATASET_NAME)
+    text_columns: list[str] = Field(
+        ...,
+        description="Columns merged into the input text, for the text statistics. A column the CSV lacks is skipped.",
+    )
+    label_column: str = Field(..., description=_LABEL_COLUMN)
     # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
-    csv_separator: str = Field(";", min_length=1, max_length=1)
-    label_separator: str = ","
-    label_filter: OptionalFilter = None
+    csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
+    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
+    label_filter: OptionalFilter = Field(None, description=_LABEL_FILTER)
 
 
 class ValidateRequest(BaseModel):
@@ -330,13 +462,25 @@ class ValidateRequest(BaseModel):
     minus the fields the endpoint does not use (the dataset name travels in
     the path; validation has no label filter)."""
 
-    text_columns: list[str]
-    label_column: str
+    text_columns: list[str] = Field(
+        ..., description="Columns merged into the input text; each one the CSV lacks is reported in `errors`.",
+    )
+    label_column: str = Field(..., description=_LABEL_COLUMN)
     # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
-    csv_separator: str = Field(";", min_length=1, max_length=1)
-    label_separator: str = ","
+    csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
+    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
 
 
 class ExportRequest(BaseModel):
-    generate_share_url: bool = False
-    expires_hours: int = Field(24, ge=1, le=168)
+    generate_share_url: bool = Field(
+        False,
+        description=(
+            "false (default): the response is the file itself. true: an expiring share link "
+            "instead (`share_url`, `share_id`, `expires_at`) — `GET /share/{id}` then serves the "
+            "file to anyone holding the link, without an API key."
+        ),
+    )
+    expires_hours: int = Field(
+        24, ge=1, le=168,
+        description="Lifetime of the share link in hours, 1-168 (one week). Read only with `generate_share_url=true`.",
+    )

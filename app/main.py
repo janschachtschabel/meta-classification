@@ -127,7 +127,7 @@ _TAGS_METADATA = [
     {"name": "System", "description": "Health check and (safe) configuration."},
     {"name": "Training", "description": "Train models asynchronously and monitor progress."},
     {"name": "Prediction", "description": "Classify texts with a trained model."},
-    {"name": "Models", "description": "List, inspect, delete, export/import and share models."},
+    {"name": "Models", "description": "List, inspect, evaluate, delete, export/import and share models."},
     {"name": "Datasets", "description": "Manage, analyze and validate CSV datasets."},
     {"name": "Feedback", "description": "Corrections to predictions, and the CSV they train from."},
 ]
@@ -139,7 +139,11 @@ _DESCRIPTION = (
     "and status, *admin* for training and management actions. `/health` is public.\n\n"
     "**Typical flow:** provide a dataset → `POST /train` → `GET /train/status` "
     "(phase, progress, estimated time remaining) → `POST /predict`. Multiple models "
-    "coexist; select per request via `model_name`."
+    "coexist; select per request via `model_name`.\n\n"
+    "**AI-written rows:** a dataset prepared in data-prep marks the rows an LLM wrote or "
+    "touched (`generated_for`, `example_for`, `enriched_fields`). Training learns from "
+    "them but validates on real rows only; when too few real rows force an exception, "
+    "the model says so (`synthetic_data` in `GET /models/{name}`)."
 )
 
 

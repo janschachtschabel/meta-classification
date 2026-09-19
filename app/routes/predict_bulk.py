@@ -66,11 +66,29 @@ def _text_columns_for(model_name: str, requested: list[str] | None) -> tuple[lis
 async def predict_csv(
     request: Request,
     file: UploadFile = File(..., description="A CSV carrying the text columns the model was trained on"),
-    model_name: str = Form(..., description="The model to classify with"),
-    text_columns: list[str] | None = Form(None, description="Override the bundle's text columns"),
-    separator: str = Form(";", description="CSV field separator"),
-    threshold: float | None = Form(None, description="Override the model's tuned threshold"),
-    top_k: int | None = Form(None, description="Ranking mode: the N most probable labels per row"),
+    model_name: str = Form(..., description="The model to classify with, as `GET /models` lists it."),
+    text_columns: list[str] | None = Form(
+        None,
+        description=(
+            "Override the bundle's text columns (e.g. a newer export renamed them); the recorded "
+            "weights then apply to the names that match. Omitted = the columns the model was trained on."
+        ),
+    ),
+    separator: str = Form(";", description="The CSV's field delimiter: exactly one character (else 400)."),
+    threshold: float | None = Form(
+        None,
+        description=(
+            "One confidence cut for every label, replacing the model's tuned per-label thresholds. "
+            "Multilabel only: binary/multiclass decide by argmax. Omitted = the tuned ones."
+        ),
+    ),
+    top_k: int | None = Form(
+        None,
+        description=(
+            "Ranking mode: exactly the N most probable labels per row, regardless of thresholds "
+            "(0 = the training set's typical label count). Omitted = the model decides."
+        ),
+    ),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
