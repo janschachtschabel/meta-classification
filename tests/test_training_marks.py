@@ -105,3 +105,20 @@ def test_a_pure_ai_dataset_trains_and_its_bundle_says_the_numbers_are_not_real(t
     block = registry.info("pure")["metadata"]["synthetic_data"]
     assert block["validated_on"] == "all_rows"
     assert block["fallback"]
+
+
+
+@pytest.mark.parametrize("mode", ["own", "global"])
+def test_the_bundle_names_its_thin_labels_and_the_cut_they_got(tmp_path, mode):
+    """C reached the minimum only through AI-marked rows. Whether it keeps a cut tuned
+    on its real rows or takes the global one is the run's choice, and the bundle says
+    which."""
+    _, registry = _train(tmp_path, [HEADER, *_rows()], name="thin", cv_folds=3,
+                         thin_label_threshold=mode)
+
+    block = registry.info("thin")["metadata"]["synthetic_data"]
+    assert block["thin_labels"] == ["C"]
+    assert block["thin_label_threshold"] == mode
+    model = registry.get("thin")
+    if mode == "global":
+        assert model.per_label_thresholds.get("C", model.global_threshold) == model.global_threshold

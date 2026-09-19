@@ -35,6 +35,9 @@ SAME_TEXT = 8
 # What a training run does with the generated rows: train on them (never validating on
 # them), or leave them out when the dataset is read.
 SYNTHETIC_MODES = ("train", "exclude")
+# Where a thin label -- one that reached the training minimum only through AI-marked
+# rows -- is cut: at its own threshold, tuned on its few real rows, or the global one.
+THIN_MODES = ("own", "global")
 
 _BITS = ((GENERATED_FOR, GENERATED), (EXAMPLE_FOR, EXAMPLE), (ENRICHED_FIELDS, ENRICHED))
 
@@ -69,7 +72,9 @@ class RowProvenance:
     ``validate`` holds the rows the metrics may be computed on and ``scored`` the
     classes a real row can validate; ``None`` means all of them. ``fallback`` says why
     the metrics include AI-marked rows after all — too few real rows to validate on —
-    and is ``None`` whenever they do not.
+    and is ``None`` whenever they do not. ``thin`` (per class) marks the labels with
+    fewer real rows than the training minimum, and ``thin_mode`` is the run's choice of
+    their cut.
     """
 
     marks: np.ndarray
@@ -78,10 +83,19 @@ class RowProvenance:
     validate: np.ndarray | None = None
     scored: np.ndarray | None = None
     fallback: str | None = None
+    thin: np.ndarray | None = None
+    thin_mode: str = "own"
 
     def train_only(self) -> np.ndarray:
         """Per row: used for training, never for validation."""
         return self.marks != 0
+
+    def keep_global(self) -> np.ndarray | None:
+        """The classes the threshold search gives the global cut: the thin ones, when
+        the run chose that; ``None`` when every label keeps its own."""
+        if self.thin_mode != "global" or self.thin is None or not self.thin.any():
+            return None
+        return self.thin
 
     def summary(self, classes: list[str], *, scored_rows: int) -> dict:
         """The ``synthetic_data`` block a bundle stores: what was trained on, and what
@@ -92,6 +106,8 @@ class RowProvenance:
 
         unvalidated = ([] if self.scored is None
                        else [c for c, ok in zip(classes, self.scored, strict=True) if not ok])
+        thin = ([] if self.thin is None
+                else [c for c, is_thin in zip(classes, self.thin, strict=True) if is_thin])
         return {
             "mode": self.mode,
             "generated_rows": count(GENERATED),
@@ -103,4 +119,6 @@ class RowProvenance:
             "scored_rows": scored_rows,
             "labels_not_validated": unvalidated,
             "fallback": self.fallback,
+            "thin_labels": thin,
+            "thin_label_threshold": self.thin_mode,
         }

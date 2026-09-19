@@ -152,3 +152,18 @@ def test_shrinkage_leaves_a_label_with_no_positives_at_the_global_threshold():
     proba = np.array([[0.9, 0.3], [0.8, 0.4], [0.2, 0.7], [0.1, 0.6]])
     global_t, columns = thresholds.tune_threshold_columns(y, proba, per_label=True, shrink_k=10.0)
     assert columns[1] == pytest.approx(global_t)
+
+
+def test_a_column_told_to_keep_the_global_cut_keeps_it_despite_its_positives():
+    """A label that reached the minimum only through AI-marked rows has a handful of
+    real positives; its own cut is tuned on those few. The run can decide to give it
+    the global cut instead."""
+    y = np.array([[1, 0], [1, 0], [0, 1], [0, 1], [1, 1], [0, 0]])
+    proba = np.array([[0.9, 0.2], [0.8, 0.1], [0.3, 0.12], [0.2, 0.14], [0.7, 0.13], [0.1, 0.05]])
+
+    global_t, own = thresholds.tune_threshold_columns(y, proba)
+    _, kept = thresholds.tune_threshold_columns(y, proba, keep_global=np.array([True, False]))
+
+    assert own[0] != global_t, "test setup: column 0 tunes a cut of its own"
+    assert kept[0] == global_t
+    assert kept[1] == own[1]

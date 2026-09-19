@@ -171,3 +171,22 @@ def test_excluding_every_row_says_that_rows_were_left_out(tmp_path):
 
     with pytest.raises(TrainingInputError, match="24 generated rows were left out"):
         _prepare(tmp_path, _write(tmp_path, generated), cv_folds=3, synthetic_rows="exclude")
+
+
+def test_labels_with_too_few_real_rows_are_named_thin(tmp_path):
+    """Thin: fewer rows that can validate the label than min_samples_per_label -- it
+    reached the minimum only through AI-marked rows, and a threshold tuned on its real
+    rows rests on a handful."""
+    prep = _prepare(tmp_path, _write(tmp_path, _rows()), cv_folds=3,
+                    min_samples_per_label=10, thin_label_threshold="global")
+
+    thin = [c for c, is_thin in zip(prep.classes, prep.provenance.thin, strict=True) if is_thin]
+    assert thin == ["B", "C"], "B: 12 rows, 3 of them enriched -> 9 real; C: none real"
+    assert prep.provenance.keep_global().tolist() == prep.provenance.thin.tolist()
+
+
+def test_own_thresholds_stay_unless_the_run_asks_for_the_global_one(tmp_path):
+    prep = _prepare(tmp_path, _write(tmp_path, _rows()), cv_folds=3, min_samples_per_label=10)
+
+    assert prep.provenance.thin_mode == "own"
+    assert prep.provenance.keep_global() is None

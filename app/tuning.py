@@ -48,6 +48,7 @@ def select_c(
     threshold_per_label: bool = True,
     threshold_shrink_k: float | None = None,
     thread_budget: ThreadBudget | None = None,
+    keep_global: np.ndarray | None = None,
 ):
     """Fit the head for each C, score macro-F1 on val; return the best.
 
@@ -72,6 +73,7 @@ def select_c(
 
     ``thread_budget`` replaces ``n_jobs`` per fit with what the run's memory budget
     allows on this matrix (see ``memory.ThreadBudget``); ``None`` keeps ``n_jobs``.
+    ``keep_global`` is handed to the threshold search (``thresholds``).
 
     :raises ValueError: if ``c_grid`` is empty (e.g. a misconfigured profile),
         instead of failing with an opaque IndexError / a ``None`` head downstream.
@@ -93,7 +95,8 @@ def select_c(
         proba = head.predict_proba(x_val)
         if tune_each:
             score, global_t, columns = tuned_score(
-                y_val, proba, per_label=threshold_per_label, shrink_k=threshold_shrink_k
+                y_val, proba, per_label=threshold_per_label, shrink_k=threshold_shrink_k,
+                keep_global=keep_global,
             )
             thresholds: tuple[float, np.ndarray] | None = (global_t, columns)
         else:
@@ -130,6 +133,7 @@ def cross_val_evaluate(
     thread_budget: ThreadBudget | None = None,
     validate: np.ndarray | None = None,
     scored: np.ndarray | None = None,
+    keep_global: np.ndarray | None = None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
     """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
 
@@ -169,7 +173,8 @@ def cross_val_evaluate(
     ``validate`` (bool per row, True for the real rows) narrows "all rows" when an LLM
     wrote or touched some of them: the held-out blocks partition only the real rows, every
     other row trains in every fold and is never scored, and C, the thresholds and the
-    metrics come from the real rows alone. ``scored`` is handed to ``compute_metrics``. ``None`` for both is the
+    metrics come from the real rows alone. ``scored`` is handed to ``compute_metrics``,
+    ``keep_global`` to the threshold search. ``None`` for all three is the
     evaluation over every row, fold for fold the one made before either existed.
 
     Fairness note: ``C`` and the thresholds are selected on the same OOF predictions
@@ -242,7 +247,8 @@ def cross_val_evaluate(
     thresholds_apply = tune_threshold and not is_single_label(task_type)
     if select_on_tuned_thresholds and thresholds_apply:
         best_c, global_t, columns = _best_under_own_thresholds(
-            y_rows, oof, c_grid, per_label=per_label, shrink_k=threshold_shrink_k
+            y_rows, oof, c_grid, per_label=per_label, shrink_k=threshold_shrink_k,
+            keep_global=keep_global,
         )
         # The winner's thresholds ARE the ones it was selected on; re-deriving them
         # would repeat the same search for the same answer.
@@ -251,7 +257,8 @@ def cross_val_evaluate(
         best_c = max(c_grid, key=lambda c: macro_f1(y_rows, _default_decision(oof[c], task_type)))
         if thresholds_apply:
             global_t, per_label_t = tune_thresholds(
-                y_rows, oof[best_c], classes, per_label=per_label, shrink_k=threshold_shrink_k)
+                y_rows, oof[best_c], classes, per_label=per_label, shrink_k=threshold_shrink_k,
+                keep_global=keep_global)
         else:
             global_t, per_label_t = 0.5, {}
     metrics = compute_metrics(y_rows, oof[best_c], classes, global_t, per_label_t,
@@ -266,6 +273,7 @@ def _best_under_own_thresholds(
     *,
     per_label: bool,
     shrink_k: float | None = None,
+    keep_global: np.ndarray | None = None,
 ) -> tuple[float, float, np.ndarray]:
     """The (C, global threshold, threshold columns) triple with the best macro F1,
     every candidate judged under thresholds tuned for itself.
@@ -277,7 +285,8 @@ def _best_under_own_thresholds(
     best_global, best_columns = 0.5, np.full(y_true.shape[1], 0.5)
     for c in c_grid:
         score, global_t, columns = tuned_score(
-            y_true, proba_by_c[c], per_label=per_label, shrink_k=shrink_k)
+            y_true, proba_by_c[c], per_label=per_label, shrink_k=shrink_k,
+            keep_global=keep_global)
         if score > best_f1:
             best_f1, best_c, best_global, best_columns = score, c, global_t, columns
     return best_c, best_global, best_columns

@@ -251,5 +251,7 @@ def prepare_data(
         uri_to_label={k: v for k, v in loaded.uri_to_label.items() if k in set(classes)},
         provenance=row_provenance(marks, y_all, mode=mode, excluded=loaded.excluded_generated,
                                   fallback=fallback,
-                                  evaluated=test_idx if cv_folds < 2 else None),
+                                  evaluated=test_idx if cv_folds < 2 else None,
+                                  min_samples=min_samples,
+                                  thin_mode=req.get("thin_label_threshold", "own")),
     )

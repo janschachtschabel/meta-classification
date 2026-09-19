@@ -140,6 +140,18 @@ class TrainRequest(BaseModel):
             "block records what was done."
         ),
     )
+    thin_label_threshold: Literal["own", "global"] = Field(
+        "own",
+        description=(
+            "Where a thin label is cut: one that reaches `min_samples_per_label` only through "
+            "AI-marked rows, so fewer of its rows can validate it than that minimum. `own` "
+            "(default): the per-label threshold tuned on those few real rows — tailored to "
+            "the label, but it can swing. `global`: the global threshold — steadier, but not "
+            "fitted to the label. Your decision: the bundle's `synthetic_data` block lists the "
+            "thin labels (`thin_labels`) and the choice made. No effect on a dataset without "
+            "data-prep's marks, nor on binary/multiclass tasks (argmax reads no threshold)."
+        ),
+    )
     # Upper bound 2_000_000: the vocabulary caps are the main RAM lever (the head
     # holds n_labels x n_features float32, the vectorizer the vocabulary itself), so
     # an unbounded value is an out-of-memory request, not a quality setting.

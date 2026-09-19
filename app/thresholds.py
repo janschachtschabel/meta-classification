@@ -41,6 +41,7 @@ def tune_threshold_columns(
     per_label: bool = True,
     grid: np.ndarray | None = None,
     shrink_k: float | None = None,
+    keep_global: np.ndarray | None = None,
 ) -> tuple[float, np.ndarray]:
     """The global threshold, and one threshold per COLUMN of ``proba``.
 
@@ -57,6 +58,11 @@ def tune_threshold_columns(
     positives in ``y_val``. A cut fitted on four positives is mostly noise and a cut
     fitted on six hundred is not, and the F1-argmax rule cannot tell the difference on
     its own. ``None`` disables it, which is what every caller did before it existed.
+
+    ``keep_global`` (bool per column) gives those columns the global cut whatever their
+    positives say: a label that reached the training minimum only through AI-marked rows
+    has a handful of real positives, and a run can decide its own cut would rest on too
+    few (``provenance.RowProvenance.keep_global``). ``None`` keeps every own cut.
     """
     grid = _DEFAULT_GRID if grid is None else grid
 
@@ -71,6 +77,8 @@ def tune_threshold_columns(
         for col in range(proba.shape[1]):
             truth = y_val[:, col]
             n_pos = int(truth.sum())
+            if keep_global is not None and keep_global[col]:
+                continue
             if n_pos == 0:
                 # No positives to tune on: every threshold scores f1=0, and the
                 # ">" update would hand the label the grid MINIMUM (0.05) —
@@ -92,7 +100,8 @@ def tune_threshold_columns(
 
 
 def tuned_score(
-    y_true: np.ndarray, proba: np.ndarray, *, per_label: bool, shrink_k: float | None = None
+    y_true: np.ndarray, proba: np.ndarray, *, per_label: bool, shrink_k: float | None = None,
+    keep_global: np.ndarray | None = None,
 ) -> tuple[float, float, np.ndarray]:
     """Macro F1 a candidate reaches under thresholds tuned for ITSELF, and those
     thresholds.
@@ -101,7 +110,7 @@ def tuned_score(
     ``apply_thresholds`` makes once the columns carry names.
     """
     global_t, columns = tune_threshold_columns(
-        y_true, proba, per_label=per_label, shrink_k=shrink_k)
+        y_true, proba, per_label=per_label, shrink_k=shrink_k, keep_global=keep_global)
     return macro_f1(y_true, (proba >= columns).astype(int)), global_t, columns
 
 
@@ -118,6 +127,7 @@ def tune_thresholds(
     per_label: bool = True,
     grid: np.ndarray | None = None,
     shrink_k: float | None = None,
+    keep_global: np.ndarray | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Find the global (and optionally per-label) threshold maximizing F1 on val.
 
@@ -126,7 +136,7 @@ def tune_thresholds(
     produces and what ``apply_thresholds`` falls back to.
     """
     best_global, columns = tune_threshold_columns(
-        y_val, proba, per_label=per_label, grid=grid, shrink_k=shrink_k)
+        y_val, proba, per_label=per_label, grid=grid, shrink_k=shrink_k, keep_global=keep_global)
     if not per_label:
         return best_global, {}
     return best_global, name_threshold_columns(columns, classes)

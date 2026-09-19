@@ -73,6 +73,8 @@ def test_the_summary_counts_each_kind_and_names_the_labels_no_real_row_validates
         "scored_rows": 2,
         "labels_not_validated": ["b"],
         "fallback": None,
+        "thin_labels": [],
+        "thin_label_threshold": "own",
     }
 
 

@@ -122,6 +122,8 @@ def select_on_split(
                 message=f"Selecting regularization strength C – {len(profile.c_grid)} candidates on validation...")
     # Single-label serving is argmax, so thresholds are neither tuned nor stored there.
     thresholds_apply = profile.tune_threshold and not is_single_label(prep.task_type)
+    # Thin labels take the global cut when the run chose that (provenance).
+    keep_global = prep.provenance.keep_global() if prep.provenance else None
     best_c, val_f1, head, val_thresholds = select_c(
         x_tr, y_train, x_va, y_val, profile.c_grid, n_jobs=settings.effective_n_jobs(),
         should_stop=should_stop, solver=settings.solver, task_type=prep.task_type,
@@ -130,6 +132,7 @@ def select_on_split(
         threshold_per_label=profile.threshold_per_label,
         threshold_shrink_k=profile.threshold_shrinkage_k,
         thread_budget=thread_budget,
+        keep_global=keep_global,
         # Distribute the C search across 55->75% so progress (and thus the ETA
         # derived from it) keeps moving through the longest phase.
         on_step=lambda i, total, c, f: on_progress(
@@ -155,7 +158,7 @@ def select_on_split(
                     message="Tuning per-label classification thresholds (on validation)...")
         global_t, per_label = tune_thresholds(
             y_val, head.predict_proba(x_va), classes, per_label=profile.threshold_per_label,
-            shrink_k=profile.threshold_shrinkage_k,
+            shrink_k=profile.threshold_shrinkage_k, keep_global=keep_global,
         )
 
     on_progress(phase="evaluating", progress=85,
@@ -324,6 +327,7 @@ def fit_evaluate_deploy(
                 # Rows an LLM wrote or touched train in every fold and are never scored.
                 validate=prep.provenance.validate if prep.provenance else None,
                 scored=prep.provenance.scored if prep.provenance else None,
+                keep_global=prep.provenance.keep_global() if prep.provenance else None,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).
                 on_step=lambda done, total, detail: on_progress(

@@ -1420,3 +1420,22 @@ def test_train_request_synthetic_rows_validation_and_plumbing():
     body = TrainRequest(**{**TRAIN_BODY, "synthetic_rows": "exclude"})
     req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
     assert req["synthetic_rows"] == "exclude"
+
+
+
+def test_train_request_thin_label_threshold_validation_and_plumbing():
+    """The user decides what a label that reached the minimum only through AI rows is
+    cut at; the choice has to reach the run through the _REQ_KEYS allowlist."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.routes import training as training_routes
+    from app.schemas import TrainRequest
+
+    with pytest.raises(ValidationError):
+        TrainRequest(**{**TRAIN_BODY, "thin_label_threshold": "tuned"})
+    assert TrainRequest(**TRAIN_BODY).thin_label_threshold == "own"
+
+    body = TrainRequest(**{**TRAIN_BODY, "thin_label_threshold": "global"})
+    req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
+    assert req["thin_label_threshold"] == "global"

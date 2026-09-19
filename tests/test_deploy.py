@@ -404,3 +404,35 @@ def test_the_holdout_scores_only_the_labels_a_real_row_can_validate(monkeypatch)
                            should_stop=lambda: False, on_progress=lambda **kwargs: None)
 
     assert seen["scored"] is prep.provenance.scored
+
+
+
+def test_both_paths_are_told_which_labels_keep_the_global_cut(monkeypatch):
+    from app.provenance import GENERATED, RowProvenance
+
+    y = np.array([[1, 0], [0, 1]] * 4, dtype=np.int8)
+    marks = np.array([0, 0, 0, 0, 0, 0, GENERATED, GENERATED], dtype=np.int8)
+    prep = _prepared(y)
+    prep.provenance = RowProvenance(marks=marks, mode="train", validate=marks == 0,
+                                    thin=np.array([False, True]), thin_mode="global")
+    seen: dict = {}
+
+    def cross_val(*args, **kwargs):
+        seen["cv"] = kwargs.get("keep_global")
+        raise _Stop
+
+    def search(*args, **kwargs):
+        seen["select"] = kwargs.get("keep_global")
+        raise _Stop
+
+    monkeypatch.setattr(deploy, "cross_val_evaluate", cross_val)
+    monkeypatch.setattr(deploy, "select_c", search)
+    with pytest.raises(_Stop):
+        deploy.fit_evaluate_deploy(prep, Settings(), Profile("t", c_grid=[1.0]), cv_folds=3,
+                                   on_progress=lambda **kwargs: None, should_stop=lambda: False)
+    with pytest.raises(_Stop):
+        deploy.select_on_split(_RowIdVectorizer, prep, Settings(), Profile("t", c_grid=[1.0]),
+                               should_stop=lambda: False, on_progress=lambda **kwargs: None)
+
+    assert seen["cv"].tolist() == [False, True]
+    assert seen["select"].tolist() == [False, True]

@@ -564,3 +564,15 @@ def test_more_folds_than_real_rows_is_refused_with_the_real_count(monkeypatch):
 
     with pytest.raises(TrainingInputError, match="2 real rows"):
         _recorded_cv(monkeypatch, y, k=3, validate=validate)
+
+
+@pytest.mark.parametrize("on_tuned_thresholds", [False, True])
+def test_cross_validation_gives_the_kept_labels_the_global_cut(on_tuned_thresholds):
+    texts, y, classes = _tiny_corpus()
+
+    _, global_t, per_label_t, _ = tuning.cross_val_evaluate(
+        lambda: TfidfBackend(use_char=False, max_word_features=200), texts, y, classes,
+        k=3, c_grid=[1.0], select_on_tuned_thresholds=on_tuned_thresholds,
+        keep_global=np.array([True, False]))
+
+    assert per_label_t["uri:math"] == global_t
