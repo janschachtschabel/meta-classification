@@ -21,6 +21,7 @@ import pandas as pd
 from .data import clean_text, read_csv, split_labels
 from .errors import TrainingInputError
 from .label_names import pair_names
+from .provenance import GENERATED, MARK_COLUMNS, SAME_TEXT, SYNTHETIC_MODES, block_marks
 
 # Rows per block: the step the loader already reported its cleaning progress in.
 CHUNK_ROWS = 50_000
@@ -33,6 +34,11 @@ class LoadedData:
     texts: list[str]
     label_lists: list[list[str]]
     uri_to_label: dict[str, str]
+    # data-prep's provenance marks per kept row (a ``provenance`` bitmask); None when
+    # the CSV has no mark column at all.
+    marks: list[int] | None = None
+    # Generated rows left out under ``synthetic_rows="exclude"``.
+    excluded_generated: int = 0
 
 
 def combine_text_columns(
@@ -71,6 +77,7 @@ def load_dataset(
     label_filter: str | None = None,
     text_column_weights: dict[str, int] | None = None,
     label_names: dict[str, str] | None = None,
+    synthetic_rows: str = "train",
     on_progress: Callable[[str], None] | None = None,
     chunk_rows: int = CHUNK_ROWS,
 ) -> LoadedData:
@@ -84,12 +91,21 @@ def load_dataset(
     combined training text (default 1) — see :func:`combine_text_columns`. Weights for
     columns the CSV does not have are ignored, exactly like the columns themselves.
 
+    data-prep's provenance columns (``provenance.MARK_COLUMNS``) are read when present and
+    come back as ``marks``, one per kept row. ``synthetic_rows="exclude"`` leaves the
+    generated rows out, before the dedupe, so a generated first occurrence cannot take a
+    real twin with it. A kept row with the text of a marked row — kept or dropped as its
+    duplicate — is marked ``SAME_TEXT``: the same text on both sides of a split would
+    carry the LLM's text into the validation.
+
     UTF-8 first; a file that turns out not to be UTF-8 anywhere is read again from the
     start as cp1252 (common for German metadata exports), whatever was read before is
     discarded — the whole-file reader behaved the same way. The blocks before the first
     non-UTF-8 byte have been cleaned by then, so such a file costs up to one extra
     cleaning pass; resuming mid-file instead would mix two decodings of one file.
     """
+    if synthetic_rows not in SYNTHETIC_MODES:
+        raise ValueError(f"synthetic_rows must be one of {SYNTHETIC_MODES}, got {synthetic_rows!r}")
     path = Path(path)
     header = read_csv(path, sep=separator, nrows=0)
     available = set(header.columns)
@@ -104,7 +120,9 @@ def load_dataset(
 
     dn_col = displayname_column or f"{label_column}_DISPLAYNAME"
     has_dn = dn_col in available
-    usecols = list(dict.fromkeys([*text_cols, label_column, *([dn_col] if has_dn else [])]))
+    mark_cols = [c for c in MARK_COLUMNS if c in available]
+    usecols = list(dict.fromkeys(
+        [*text_cols, label_column, *([dn_col] if has_dn else []), *mark_cols]))
 
     def emit(msg: str) -> None:
         if on_progress is not None:
@@ -116,7 +134,7 @@ def load_dataset(
             text_cols=text_cols, label_column=label_column, dn_col=dn_col if has_dn else None,
             label_separator=label_separator, label_filter=label_filter,
             min_text_length=min_text_length, drop_duplicates=drop_duplicates,
-            weights=text_column_weights,
+            weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
         )
         try:
             for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
@@ -168,12 +186,19 @@ class _Collector:
     min_text_length: int
     drop_duplicates: bool
     weights: dict[str, int] | None
+    mode: str = "train"
+    has_marks: bool = False
     texts: list[str] = field(default_factory=list)
     label_lists: list[list[str]] = field(default_factory=list)
     uri_to_label: dict[str, str] = field(default_factory=dict)
     used: set[str] = field(default_factory=set)
     seen: set[str] = field(default_factory=set)
     rows_read: int = 0
+    marks: list[int] = field(default_factory=list)
+    # Texts of marked rows, the dedupe's dropped copies included: a kept row with such a
+    # text is train-only too. Few rows carry a mark, so this stays small.
+    marked_texts: set[str] = field(default_factory=set)
+    excluded_generated: int = 0
 
     def add(self, frame: pd.DataFrame) -> None:
         cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
@@ -190,15 +215,23 @@ class _Collector:
         self.used.update(uri for labels in label_lists for uri in labels)
         if self.label_filter:
             label_lists = [[lab for lab in labs if self.label_filter in lab] for labs in label_lists]
-        for text, labels in zip(cleaned.tolist(), label_lists, strict=False):
+        marks = block_marks(frame, mode=self.mode).tolist() if self.has_marks else [0] * len(frame)
+        for text, labels, mark in zip(cleaned.tolist(), label_lists, marks, strict=False):
+            if mark & GENERATED and self.mode == "exclude":
+                self.excluded_generated += 1
+                continue
             if len(text) < self.min_text_length or not labels:
                 continue
+            if mark:
+                self.marked_texts.add(text)
             if self.drop_duplicates:
                 if text in self.seen:
                     continue
                 self.seen.add(text)
             self.texts.append(text)
             self.label_lists.append(labels)
+            if self.has_marks:
+                self.marks.append(mark)
         self.rows_read += len(frame)
 
     def result(self, label_names: dict[str, str] | None) -> LoadedData:
@@ -209,5 +242,10 @@ class _Collector:
             self.uri_to_label.update(
                 {uri: name for uri, name in label_names.items() if uri in self.used and name}
             )
+        marks = None
+        if self.has_marks:
+            marks = [mark or (SAME_TEXT if text in self.marked_texts else 0)
+                     for text, mark in zip(self.texts, self.marks, strict=True)]
         return LoadedData(texts=self.texts, label_lists=self.label_lists,
-                          uri_to_label=self.uri_to_label)
+                          uri_to_label=self.uri_to_label, marks=marks,
+                          excluded_generated=self.excluded_generated)
