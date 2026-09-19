@@ -209,6 +209,8 @@ class _Collector:
     # entry per marked row -- small, unless a pure Runs export marks every row.
     marked_texts: set[str] = field(default_factory=set)
     excluded_generated: int = 0
+    # Texts "exclude" left out, under the dedupe: a second copy is not counted again.
+    left_out: set[str] = field(default_factory=set)
 
     def add(self, frame: pd.DataFrame) -> None:
         cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
@@ -231,9 +233,13 @@ class _Collector:
                 continue
             # Still before the dedupe: a generated first occurrence must not take a real
             # twin's place. After the check above: a row too short to train on anyway
-            # was not left out by this.
+            # was not left out by this -- nor, under the dedupe, a copy of a text that
+            # was kept or left out already.
             if mark & GENERATED and self.mode == "exclude":
-                self.excluded_generated += 1
+                if not (self.drop_duplicates and (text in self.seen or text in self.left_out)):
+                    self.excluded_generated += 1
+                    if self.drop_duplicates:
+                        self.left_out.add(text)
                 continue
             if mark:
                 self.marked_texts.add(text)

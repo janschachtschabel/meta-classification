@@ -142,3 +142,19 @@ def test_only_generated_rows_that_would_have_trained_count_as_left_out(tmp_path)
 
     assert data.excluded_generated == 1
 
+
+@pytest.mark.parametrize(("drop_duplicates", "left_out"), [(True, 1), (False, 3)])
+def test_a_generated_copy_counts_as_left_out_once(tmp_path, drop_duplicates, left_out):
+    """Under the dedupe a second copy of a text would not have trained either -- nor a
+    generated row whose text a kept row already has (review 2026-09-19 #16)."""
+    path = _write(tmp_path, [
+        ("Brüche kürzen Übung", "math", "math", "", ""),
+        ("Brüche kürzen Übung", "math", "math", "", ""),
+        ("Gleichungen lösen", "math", "", "", ""),
+        ("Gleichungen lösen", "math", "math", "", ""),
+    ])
+
+    data = load_dataset(path, ["title"], "labels", synthetic_rows="exclude",
+                        drop_duplicates=drop_duplicates)
+
+    assert data.excluded_generated == left_out
