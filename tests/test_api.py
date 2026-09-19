@@ -1401,3 +1401,22 @@ def test_classifying_a_csv_reports_an_unknown_model_and_an_oversized_upload(trai
     finally:
         settings.max_upload_mb = original
     assert not list((_TMP / "data").glob(".predict-*")), "the spooled upload is cleaned up"
+
+
+def test_train_request_synthetic_rows_validation_and_plumbing():
+    """What a run does with the rows an LLM wrote: train on them (never validating on
+    them), or leave them out. Anything else is a typo the caller wants to hear about,
+    and a valid value has to REACH the run through the _REQ_KEYS allowlist."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.routes import training as training_routes
+    from app.schemas import TrainRequest
+
+    with pytest.raises(ValidationError):
+        TrainRequest(**{**TRAIN_BODY, "synthetic_rows": "keep"})
+    assert TrainRequest(**TRAIN_BODY).synthetic_rows == "train"
+
+    body = TrainRequest(**{**TRAIN_BODY, "synthetic_rows": "exclude"})
+    req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
+    assert req["synthetic_rows"] == "exclude"

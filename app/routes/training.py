@@ -26,7 +26,7 @@ router = APIRouter(tags=["Training"])
 _REQ_KEYS = (
     "dataset_name", "model_name", "text_columns", "label_column",
     "csv_separator", "label_separator", "label_filter", "task_type",
-    "min_samples_per_label", "cv_folds",
+    "min_samples_per_label", "cv_folds", "synthetic_rows",
     "text_column_weights", "max_word_features", "max_char_features",
 )
 

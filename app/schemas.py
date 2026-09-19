@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, field_validator
 
@@ -124,6 +124,20 @@ class TrainRequest(BaseModel):
             "evaluation models see (67% at k=3, 80% at k=5), so a lower k is slightly "
             "pessimistic, not less honest. null = the profile's own setting "
             "(fast: 0, auto: 3, best: 5), which falls back to split.cv_folds."
+        ),
+    )
+    synthetic_rows: Literal["train", "exclude"] = Field(
+        "train",
+        description=(
+            "What this run does with rows an LLM wrote, as data-prep marks them "
+            "(`generated_for`). `train` (default): they train, but never validate — the "
+            "folds, the validation and the test split are drawn from real rows only, so "
+            "the metrics measure the model on real data. `exclude`: they are left out when "
+            "the dataset is read, and the real rows shown to the generator as examples "
+            "(`example_for`) validate again. Rows whose fields an LLM completed "
+            "(`enriched_fields`) train but never validate in either mode. A dataset "
+            "without these columns trains exactly as before. The bundle's `synthetic_data` "
+            "block records what was done."
         ),
     )
     # Upper bound 2_000_000: the vocabulary caps are the main RAM lever (the head
