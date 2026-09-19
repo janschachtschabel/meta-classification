@@ -79,8 +79,13 @@ def test_exclude_drops_generated_rows_before_the_dedupe(tmp_path):
     assert data.excluded_generated == 1
 
 
+@pytest.mark.parametrize(("drop_duplicates", "expected"), [
+    # The dedupe keeps the first copy, and a marked copy it drops still marks that one.
+    (True, [SAME_TEXT, 0, GENERATED, ENRICHED]),
+    (False, [SAME_TEXT, 0, GENERATED, EXAMPLE, ENRICHED, SAME_TEXT]),
+])
 @pytest.mark.parametrize("chunk_rows", [1, 2, 3])
-def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows):
+def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows, drop_duplicates, expected):
     rows = [
         ("Säuren und Basen", "chem", "", "", ""),
         ("Gedichte der Romantik", "german", "", "", ""),
@@ -90,12 +95,13 @@ def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows):
         ("Kaiser Augustus", "hist", "", "", ""),
     ]
     path = _write(tmp_path, rows)
-    whole = load_dataset(path, ["title"], "labels", drop_duplicates=False)
+    whole = load_dataset(path, ["title"], "labels", drop_duplicates=drop_duplicates)
 
-    blocks = load_dataset(path, ["title"], "labels", drop_duplicates=False, chunk_rows=chunk_rows)
+    blocks = load_dataset(path, ["title"], "labels", drop_duplicates=drop_duplicates,
+                          chunk_rows=chunk_rows)
 
     assert (blocks.texts, blocks.marks) == (whole.texts, whole.marks)
-    assert whole.marks == [SAME_TEXT, 0, GENERATED, EXAMPLE, ENRICHED, SAME_TEXT]
+    assert whole.marks == expected
 
 
 def test_an_unknown_synthetic_rows_mode_is_refused(tmp_path):
@@ -117,3 +123,4 @@ def test_only_generated_rows_that_would_have_trained_count_as_left_out(tmp_path)
     data = load_dataset(path, ["title"], "labels", synthetic_rows="exclude")
 
     assert data.excluded_generated == 1
+
