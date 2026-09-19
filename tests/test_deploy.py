@@ -356,3 +356,51 @@ def test_without_a_memory_budget_no_run_is_refused(monkeypatch):
                                    on_progress=lambda **kwargs: None,
                                    should_stop=lambda: False)
     assert isinstance(excinfo.value, _NoFit), "the run was refused instead of reaching its fit"
+
+
+# --- rows an LLM wrote: the two evaluation paths must be TOLD which rows are real ---
+
+
+class _Stop(Exception):
+    """Ends a run right after the call a test inspects."""
+
+
+def _marked_prepared() -> Prepared:
+    from app.provenance import GENERATED, RowProvenance
+
+    y = np.array([[1, 0], [0, 1]] * 4, dtype=np.int8)
+    marks = np.array([0, 0, 0, 0, 0, 0, GENERATED, GENERATED], dtype=np.int8)
+    prep = _prepared(y)
+    prep.provenance = RowProvenance(marks=marks, mode="train", validate=marks == 0,
+                                    scored=np.array([True, False]))
+    return prep
+
+
+def test_k_fold_is_told_which_rows_may_validate_and_which_labels_score(monkeypatch):
+    prep, seen = _marked_prepared(), {}
+
+    def cross_val(*args, **kwargs):
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(deploy, "cross_val_evaluate", cross_val)
+    with pytest.raises(_Stop):
+        deploy.fit_evaluate_deploy(prep, Settings(), Profile("t", c_grid=[1.0]), cv_folds=3,
+                                   on_progress=lambda **kwargs: None, should_stop=lambda: False)
+
+    assert seen["validate"] is prep.provenance.validate
+    assert seen["scored"] is prep.provenance.scored
+
+
+def test_the_holdout_scores_only_the_labels_a_real_row_can_validate(monkeypatch):
+    prep, seen = _marked_prepared(), {}
+
+    def metrics(*args, **kwargs):
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(deploy, "compute_metrics", metrics)
+    deploy.select_on_split(_RowIdVectorizer, prep, Settings(), Profile("t", c_grid=[1.0]),
+                           should_stop=lambda: False, on_progress=lambda **kwargs: None)
+
+    assert seen["scored"] is prep.provenance.scored

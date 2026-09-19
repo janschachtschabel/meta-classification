@@ -163,6 +163,9 @@ def select_on_split(
     metrics = compute_metrics(
         y_test, head.predict_proba(x_te), classes, global_t, per_label,
         task_type=prep.task_type,
+        # val and test hold real rows only (prepare); a label whose rows an LLM wrote
+        # has nothing to be scored on there.
+        scored=prep.provenance.scored if prep.provenance else None,
     )
     return best_c, global_t, per_label, metrics
 
@@ -318,6 +321,9 @@ def fit_evaluate_deploy(
                 stratified=profile.stratified_splits,
                 should_stop=should_stop, task_type=prep.task_type,
                 thread_budget=thread_budget,
+                # Rows an LLM wrote or touched train in every fold and are never scored.
+                validate=prep.provenance.validate if prep.provenance else None,
+                scored=prep.provenance.scored if prep.provenance else None,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
                 # at a frozen 45% for ~25 min, turning the ETA meaningless).
                 on_step=lambda done, total, detail: on_progress(
