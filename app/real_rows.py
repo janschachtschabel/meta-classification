@@ -72,14 +72,17 @@ def row_provenance(
     if marks is None or not (marks.any() or excluded):
         return None
     real = marks == 0
+    # Counted in place: selecting the real rows would copy the label matrix, the largest
+    # array a run holds (``data.prepare_targets``).
+    real_counts = y_all.sum(axis=0, where=real[:, None])
     validate = real if marks.any() and fallback is None else None
     scored = None
     if fallback is None:
         # Also once "exclude" dropped the last mark: every row is real then, and the rule
         # stays the one "train" gets, or the two runs of a dataset are not comparable.
-        has_real = y_all[real if evaluated is None else evaluated].sum(axis=0) > 0
+        has_real = (real_counts if evaluated is None else y_all[evaluated].sum(axis=0)) > 0
         scored = None if bool(has_real.all()) else has_real
-    thin = y_all[real].sum(axis=0) < min_samples
+    thin = real_counts < min_samples
     return RowProvenance(marks=marks, mode=mode, excluded_generated=excluded,
                          validate=validate, scored=scored, fallback=fallback,
                          thin=thin, thin_mode=thin_mode)
