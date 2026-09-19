@@ -132,7 +132,10 @@ async function onTrainStart(ev) {
   if ($("#train-cv").value !== "") shared.cv_folds = Number($("#train-cv").value);
   // Hidden = the dataset carries no marks, and a choice left over from another dataset
   // must not travel with this one.
-  if (!$("#train-synthetic").hidden) shared.synthetic_rows = $("#train-synthetic-rows").value;
+  if (!$("#train-synthetic").hidden) {
+    shared.synthetic_rows = $("#train-synthetic-rows").value;
+    shared.thin_label_threshold = $("#train-thin-threshold").value;
+  }
   // Empty field = omit, so the request default (20) applies rather than a silent 0.
   const minSamples = $("#train-minsamples").value.trim();
   if (minSamples !== "") shared.min_samples_per_label = Number(minSamples);

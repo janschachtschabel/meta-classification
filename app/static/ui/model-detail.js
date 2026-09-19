@@ -92,6 +92,26 @@ function aiWarning(meta) {
     ? `<p class="error">${t("modelDetail.aiData.fallback")}</p>` : "";
 }
 
+/* Thin labels reached the training minimum only through AI-marked rows. Cut at their
+   own threshold, that threshold rests on a handful of real rows -- a warning, with
+   what to do about it; cut at the global one, a note on what was decided. Silent for
+   binary/multiclass, where serving picks the best label and reads no threshold. The
+   bundle lists URIs; the names come from the label table this panel already loaded. */
+function thinNote(model, labels) {
+  if (["binary", "multiclass"].includes(model.task_type)) return "";
+  const meta = model.metadata || {};
+  const s = synthOf(meta);
+  const thin = s && Array.isArray(s.thin_labels) ? s.thin_labels : [];
+  if (!thin.length) return "";
+  const nameOf = new Map((labels || []).map((row) => [row.uri, row.label]));
+  const shown = thin.slice(0, 5).map((uri) => esc(String(nameOf.get(uri) || uri))).join(", ");
+  const listed = shown + (thin.length > 5
+    ? t("modelDetail.thin.more", { count: thin.length - 5 }) : "");
+  return s.thin_label_threshold === "global"
+    ? `<p class="muted">${t("modelDetail.thin.global", { count: thin.length, labels: listed })}</p>`
+    : `<p class="error">${t("modelDetail.thin.own", { count: thin.length, labels: listed })}</p>`;
+}
+
 function notValidatedNote(meta) {
   const s = synthOf(meta);
   const labels = s && Array.isArray(s.labels_not_validated) ? s.labels_not_validated : [];
@@ -250,6 +270,7 @@ async function showModelDetail(name) {
     <h3>${t("modelDetail.perLabel")}</h3>
     <p class="muted">${t("modelDetail.perLabelNote")}</p>
     ${notValidatedNote(model.metadata)}
+    ${thinNote(model, labels)}
     <div id="detail-labels"></div>
 
     <div class="detail-actions">
