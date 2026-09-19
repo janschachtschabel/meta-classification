@@ -3,8 +3,8 @@
 Second stage of the training pipeline (see ``training.py`` for the orchestration).
 Two evaluation modes: the classic train/val/test split (select/tune on validation,
 honest metrics on the held-out test, deploy on train+val) or k-fold
-cross-validation (every row trains AND validates via out-of-fold, deploy on 100%
-of the data).
+cross-validation (every row trains, every real one -- none an LLM wrote or touched --
+validates via out-of-fold, deploy on 100% of the data).
 
 All label-wise fits run under the caller-configured joblib backend: 'threading'
 with a float32-preserving, GIL-releasing solver (newton-cg by default) trains all
@@ -260,8 +260,8 @@ def fit_evaluate_deploy(
     """Select C + thresholds, then refit the deploy model on all available data.
     Returns ``None`` if cancelled.
 
-    ``cv_folds >= 2`` runs k-fold cross-validation (every row trains AND validates
-    via out-of-fold) and deploys on 100% of the data; otherwise the classic
+    ``cv_folds >= 2`` runs k-fold cross-validation (every row trains, every real one
+    validates via out-of-fold) and deploys on 100% of the data; otherwise the classic
     train/val/test split is used and the deploy model is refit on train+val. All
     label-wise fits share ONE input matrix under the configured joblib backend
     (threading + a float32 solver); each fit's solver buffers come on top, so every
@@ -311,8 +311,10 @@ def fit_evaluate_deploy(
                 on_progress(phase="features", progress=40,
                             message="Vectorizing once for all folds (shared matrix)...")
                 shared_matrix = new_vectorizer().fit_transform(texts.tolist())
+            validate = prep.provenance.validate if prep.provenance else None
+            rows = "all rows train + validate" if validate is None else "all rows train, real rows validate"
             on_progress(phase="cross-validating", progress=45,
-                        message=f"{cv_folds}-fold cross-validation (all rows train + validate)...")
+                        message=f"{cv_folds}-fold cross-validation ({rows})...")
             selected = cross_val_evaluate(
                 new_vectorizer, texts.tolist(), y_all, prep.classes, matrix=shared_matrix,
                 k=cv_folds, c_grid=profile.c_grid, seed=settings.random_seed,
@@ -325,7 +327,7 @@ def fit_evaluate_deploy(
                 should_stop=should_stop, task_type=prep.task_type,
                 thread_budget=thread_budget,
                 # Rows an LLM wrote or touched train in every fold and are never scored.
-                validate=prep.provenance.validate if prep.provenance else None,
+                validate=validate,
                 scored=prep.provenance.scored if prep.provenance else None,
                 keep_global=prep.provenance.keep_global() if prep.provenance else None,
                 # Distribute the k x |grid| fits across 45->90% (the 30k CV run sat
