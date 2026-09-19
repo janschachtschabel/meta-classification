@@ -117,3 +117,67 @@ def test_the_decision_rule_is_the_one_serving_applies():
 
     assert result["metrics"]["decision_rule"] == "argmax"
     assert result["metrics"]["f1_macro"] > 0, "argmax picks 'a' even below 0.5"
+
+
+class _RecordingModel(_StubModel):
+    """Remembers which texts it was asked to score."""
+
+    def __init__(self, classes):
+        super().__init__(classes, [[0.9, 0.1]] * 10)
+        self.scored: list[str] = []
+
+    def predict_proba(self, texts):
+        self.scored.extend(texts)
+        return super().predict_proba(texts)
+
+
+class _Registry:
+    def __init__(self, model):
+        self.model, self.records = model, []
+
+    def get(self, name):
+        return self.model
+
+    def append_evaluation(self, name, record):
+        self.records.append(record)
+
+
+def _evaluate_csv(tmp_path, lines):
+    from app.settings import Settings
+
+    (tmp_path / "eval.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    model = _RecordingModel(["a", "b"])
+    registry = _Registry(model)
+    evaluate.run_evaluation(
+        {"model_name": "m", "dataset_name": "eval.csv", "text_columns": ["title"],
+         "label_column": "labels"},
+        Settings(data_dir=tmp_path, models_dir=tmp_path / "models", auth_enabled=False),
+        registry, on_progress=lambda **_: None, should_stop=lambda: False,
+    )
+    return model, registry
+
+
+def test_rows_an_llm_wrote_or_touched_are_skipped_and_counted(tmp_path):
+    """An evaluation is a validation: a model measured on text an LLM wrote measures
+    how well it learned that LLM."""
+    model, registry = _evaluate_csv(tmp_path, [
+        "title;labels;generated_for;example_for;enriched_fields",
+        "Bruchrechnung Aufgabe;a;;;",
+        "Erzeugter Text eins;a;a;;",
+        "Photosynthese Versuch;b;;;",
+        "Beispielzeile zwei;b;;b;",
+        "Ergänzte Zeile drei;a;;;keywords",
+    ])
+
+    assert model.scored == ["Bruchrechnung Aufgabe", "Photosynthese Versuch"]
+    assert registry.records[0]["ai_marked_rows_skipped"] == 3
+    assert registry.records[0]["n_rows"] == 2
+
+
+def test_a_dataset_of_ai_rows_only_cannot_be_evaluated_and_says_why(tmp_path):
+    import pytest
+
+    from app.errors import TrainingInputError
+
+    with pytest.raises(TrainingInputError, match="AI-marked"):
+        _evaluate_csv(tmp_path, ["title;labels;generated_for", "Erzeugter Text eins;a;a"])

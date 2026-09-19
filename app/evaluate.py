@@ -117,17 +117,24 @@ def run_evaluation(
         label_filter=req.get("label_filter"),
         text_column_weights=req.get("text_column_weights"),
     )
-    if not data.texts:
+    # A row an LLM wrote or touched is never scored: measured on it, a model is measured
+    # on how well it learned that LLM (data-prep's marks, see ``provenance``).
+    real = [i for i, mark in enumerate(data.marks or [0] * len(data.texts)) if not mark]
+    skipped = len(data.texts) - len(real)
+    texts = [data.texts[i] for i in real]
+    label_lists = [data.label_lists[i] for i in real]
+    if not texts:
+        detail = f": all {skipped} are AI-marked" if skipped else ""
         raise TrainingInputError(
-            f"No usable rows in '{req['dataset_name']}' for those columns."
+            f"No usable rows in '{req['dataset_name']}' for those columns{detail}."
         )
     if should_stop():
         return {}
 
     on_progress(phase="evaluating", progress=40,
-                message=f"Scoring {name} on {len(data.texts)} rows …")
+                message=f"Scoring {name} on {len(texts)} rows …")
     model = registry.get(name)
-    result = evaluate_model(model, data.texts, data.label_lists)
+    result = evaluate_model(model, texts, label_lists)
     if should_stop():
         return {}
 
@@ -138,6 +145,7 @@ def run_evaluation(
         "evaluated_at": datetime.now(UTC).isoformat(),
         "duration_seconds": round(time.time() - started, 1),
         **result,
+        **({"ai_marked_rows_skipped": skipped} if skipped else {}),
     }
     on_progress(phase="saving", progress=90, message="Recording the result …")
     registry.append_evaluation(name, record)
