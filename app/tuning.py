@@ -34,7 +34,8 @@ from .vectorizers import TfidfBackend
 def _default_decision(proba: np.ndarray, task_type: str) -> np.ndarray:
     """Decision used while SELECTING (before thresholds exist): argmax for
     single-label tasks, the neutral 0.5 cut for multilabel."""
-    return argmax_onehot(proba) if is_single_label(task_type) else (proba >= 0.5).astype(int)
+    return (argmax_onehot(proba) if is_single_label(task_type)
+            else (proba >= 0.5).astype(np.int8))
 
 
 def select_c(

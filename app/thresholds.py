@@ -68,7 +68,7 @@ def tune_threshold_columns(
 
     best_global, best_global_f1 = 0.5, -1.0
     for threshold in grid:
-        score = macro_f1(y_val, (proba >= threshold).astype(int))
+        score = macro_f1(y_val, (proba >= threshold).astype(np.int8))
         if score > best_global_f1:
             best_global_f1, best_global = score, float(threshold)
 
@@ -88,7 +88,7 @@ def tune_threshold_columns(
             scores = proba[:, col]
             best_t, best_f1 = best_global, -1.0
             for threshold in grid:
-                score = f1_score(truth, (scores >= threshold).astype(int), zero_division=0)
+                score = f1_score(truth, (scores >= threshold).astype(np.int8), zero_division=0)
                 if score > best_f1:
                     best_f1, best_t = score, float(threshold)
             if shrink_k is not None:
@@ -111,7 +111,7 @@ def tuned_score(
     """
     global_t, columns = tune_threshold_columns(
         y_true, proba, per_label=per_label, shrink_k=shrink_k, keep_global=keep_global)
-    return macro_f1(y_true, (proba >= columns).astype(int)), global_t, columns
+    return macro_f1(y_true, (proba >= columns).astype(np.int8)), global_t, columns
 
 
 def name_threshold_columns(columns: np.ndarray, classes: list[str]) -> dict[str, float]:
@@ -146,8 +146,13 @@ def apply_thresholds(
     proba: np.ndarray, classes: list[str], global_threshold: float, per_label: dict[str, float]
 ) -> np.ndarray:
     """Turn probabilities into a binary prediction matrix using thresholds."""
-    preds = np.zeros_like(proba, dtype=int)
+    # int8, not the int64 numpy gives for `int`: this is the same shape as `proba` and
+    # holds only 0/1, so int64 spends 8 bytes per bit — 600 MB per allocation at 250k rows
+    # x 300 labels, freed and re-made once per threshold candidate, in the middle of the
+    # phase the training memory budget protects. `data.prepare_targets` makes the same
+    # argument for the target matrix; sklearn scores an int8 indicator identically.
+    preds = np.zeros_like(proba, dtype=np.int8)
     for col, uri in enumerate(classes):
         threshold = per_label.get(uri, global_threshold)
-        preds[:, col] = (proba[:, col] >= threshold).astype(int)
+        preds[:, col] = (proba[:, col] >= threshold).astype(np.int8)
     return preds

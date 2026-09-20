@@ -23,7 +23,7 @@ def argmax_onehot(proba: np.ndarray) -> np.ndarray:
     """One-hot argmax decision — the rule serving applies to binary/multiclass
     (``ClassifierModel.predict`` returns the single best label there and
     ignores thresholds entirely)."""
-    preds = np.zeros_like(proba, dtype=int)
+    preds = np.zeros_like(proba, dtype=np.int8)  # see apply_thresholds on the dtype
     preds[np.arange(proba.shape[0]), proba.argmax(axis=1)] = 1
     return preds
 

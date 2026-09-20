@@ -37,3 +37,30 @@ def test_scoring_every_label_is_the_unrestricted_computation():
     assert everything == compute_metrics(Y, PROBA, CLASSES, 0.5, {})
     assert everything["f1_macro"] == pytest.approx(2 / 3)
     assert everything["per_label_f1"]["c"] == 0.0
+
+
+def test_decision_matrices_use_a_compact_dtype():
+    """A 0/1 decision matrix is the same shape as the probabilities it comes from, and
+    int64 spends 8 bytes per bit.
+
+    ``data.prepare_targets`` already refuses that for the target matrix, with the
+    arithmetic in its docstring: 1.34 GB instead of 168 MB at 600k rows x 300 labels. The
+    decision matrices are the SAME shape and were left at int64 — and at 250k x 300 one of
+    them is 600 MB, allocated and freed once per threshold candidate, in the middle of the
+    phase the training memory budget exists to protect. scikit-learn scores an int8
+    indicator matrix identically.
+    """
+    import numpy as np
+
+    from app import thresholds, tuning
+    from app.metrics import argmax_onehot
+
+    proba = np.array([[0.9, 0.2, 0.7], [0.1, 0.8, 0.3]], dtype=np.float32)
+    classes = ["a", "b", "c"]
+
+    applied = thresholds.apply_thresholds(proba, classes, 0.5, {})
+    assert applied.dtype == np.int8
+    assert applied.tolist() == [[1, 0, 1], [0, 1, 0]], "the decision itself is unchanged"
+
+    assert argmax_onehot(proba).dtype == np.int8
+    assert tuning._default_decision(proba, "multilabel").dtype == np.int8
