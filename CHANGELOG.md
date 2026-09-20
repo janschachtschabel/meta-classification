@@ -4,6 +4,14 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased] — two defects the API-docs review turned up (2026-09-20)
 
+### Changed
+
+- **Every parameter in `/docs` is described.** The twelve path parameters
+  (`model_name`, `dataset_name`, `share_id`) carried no text; each router now declares
+  its name once as an annotated alias, so the routes that share a name share the
+  wording. Text only: with the description texts removed, the OpenAPI schema is
+  identical to before.
+
 ### Fixed
 
 - **An evaluation scored the model on text it was never trained on.** `POST

@@ -9,8 +9,10 @@ before, so the API documentation is unchanged.
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 
 from .. import data as data_mod
@@ -22,6 +24,11 @@ from ..sharing import get_share_store
 from .models import staged_zip_response
 
 router = APIRouter(tags=["Models"])
+
+# The id both share routes take in their path, described once for both.
+ShareId = Annotated[str, PathParam(description=(
+    "The `share_id` an export with `generate_share_url=true` returned. Whoever holds it can "
+    "download the file without a key, so treat it as a secret; unknown or expired answers 404."))]
 
 
 @router.get("/share", summary="List active share links")
@@ -38,7 +45,7 @@ async def list_share_links(_: str = Depends(require_role("admin"))) -> list[dict
 @router.delete("/share/{share_id}", summary="Revoke a share link")
 @limiter.limit(default_limit)
 async def revoke_share_link(
-    request: Request, share_id: str, _: str = Depends(require_role("admin")),
+    request: Request, share_id: ShareId, _: str = Depends(require_role("admin")),
 ) -> dict:
     """Withdraw a share link before it expires.
 
@@ -55,7 +62,7 @@ async def revoke_share_link(
 @limiter.limit(export_limit)  # public endpoint: throttle share-id brute-forcing
 async def download_shared(
     request: Request,
-    share_id: str,
+    share_id: ShareId,
     settings: Settings = Depends(get_settings),
 ) -> Response:
     """Download a previously exported share resource (model ZIP or dataset CSV).

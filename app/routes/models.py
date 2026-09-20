@@ -9,6 +9,7 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -20,6 +21,9 @@ from fastapi import (
     Request,
     Response,
     UploadFile,
+)
+from fastapi import (
+    Path as PathParam,
 )
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -35,6 +39,11 @@ from ..settings import Settings, get_settings
 from ..sharing import get_share_store
 
 router = APIRouter(tags=["Models"])
+
+# The name every model route takes in its path, described once for all of them.
+ModelName = Annotated[str, PathParam(description=(
+    "Name of a model as `GET /models` lists it: at most 100 characters and no path "
+    "characters (400 otherwise). A name no model has answers 404."))]
 
 
 def staged_zip_response(name: str) -> FileResponse:
@@ -72,7 +81,7 @@ async def list_models(_: str = Depends(require_role("readonly"))) -> list[str]:
 
 
 @router.get("/models/{model_name}", summary="Model details & metrics")
-async def model_info(model_name: str, _: str = Depends(require_role("readonly"))) -> dict:
+async def model_info(model_name: ModelName, _: str = Depends(require_role("readonly"))) -> dict:
     """Configuration + training metadata/metrics of a model.
 
     Reads only the JSON metadata (weights are not loaded). Includes the backend,
@@ -100,7 +109,7 @@ async def model_info(model_name: str, _: str = Depends(require_role("readonly"))
 
 
 @router.get("/models/{model_name}/labels", summary="Per-label diagnostics")
-async def model_labels(model_name: str, _: str = Depends(require_role("readonly"))) -> list[dict]:
+async def model_labels(model_name: ModelName, _: str = Depends(require_role("readonly"))) -> list[dict]:
     """Every label with its F1, its support (rows carrying it in the training data,
     AI-marked rows included) and its threshold, **weakest first**.
 
@@ -124,7 +133,7 @@ async def model_labels(model_name: str, _: str = Depends(require_role("readonly"
 @limiter.limit(default_limit)
 async def set_model_info(
     request: Request,
-    model_name: str,
+    model_name: ModelName,
     body: ModelInfo,
     _: str = Depends(require_role("admin")),
 ) -> dict:
@@ -152,7 +161,7 @@ async def set_model_info(
 
 @router.delete("/models/{model_name}", summary="Delete a model")
 @limiter.limit(default_limit)
-async def delete_model(request: Request, model_name: str, _: str = Depends(require_role("admin"))) -> dict:
+async def delete_model(request: Request, model_name: ModelName, _: str = Depends(require_role("admin"))) -> dict:
     """Remove a model from the in-memory cache and from disk (irreversible), and revoke
     its share links. **Auth:** admin · rate limit active."""
     safe_name(model_name, "model name")
@@ -172,7 +181,7 @@ async def delete_model(request: Request, model_name: str, _: str = Depends(requi
 @limiter.limit(export_limit)
 async def export_model(
     request: Request,
-    model_name: str,
+    model_name: ModelName,
     body: ExportRequest | None = Body(None),
     _: str = Depends(require_role("admin")),
 ) -> Response | dict:
@@ -250,7 +259,7 @@ async def import_model(
 @limiter.limit(train_limit)
 async def evaluate_model(
     request: Request,
-    model_name: str,
+    model_name: ModelName,
     body: EvaluateRequest,
     _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),

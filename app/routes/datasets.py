@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -17,6 +18,9 @@ from fastapi import (
     Request,
     Response,
     UploadFile,
+)
+from fastapi import (
+    Path as PathParam,
 )
 from fastapi.responses import FileResponse
 
@@ -31,6 +35,11 @@ from ..settings import Settings, get_settings
 from ..sharing import get_share_store
 
 router = APIRouter(tags=["Datasets"])
+
+# The name every dataset route takes in its path, described once for all of them.
+DatasetName = Annotated[str, PathParam(description=(
+    "File name of a dataset in the data directory, as `GET /datasets` lists it: `.csv` or "
+    "`.csv.gz`, no path characters (400 otherwise). A name no dataset has answers 404."))]
 
 
 def _dataset_path(dataset_name: str, settings: Settings) -> Path:
@@ -84,7 +93,7 @@ def list_datasets(
 @limiter.limit(export_limit)  # the row count reads the whole file -> throttle like the heavy endpoints
 def dataset_info(
     request: Request,
-    dataset_name: str,
+    dataset_name: DatasetName,
     separator: str = Query(";", description="The CSV's field delimiter: exactly one character (else 400)."),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
@@ -134,7 +143,7 @@ def analyze(request: Request, req: AnalyzeRequest, _: str = Depends(require_role
 @limiter.limit(export_limit)  # parses the whole CSV -> throttle like the other heavy endpoints
 def validate(
     request: Request,
-    dataset_name: str,
+    dataset_name: DatasetName,
     req: ValidateRequest,
     _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
@@ -212,7 +221,7 @@ async def import_dataset(
 @limiter.limit(export_limit)
 async def export_dataset(
     request: Request,
-    dataset_name: str,
+    dataset_name: DatasetName,
     body: ExportRequest | None = Body(None),
     _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
@@ -234,7 +243,7 @@ async def export_dataset(
 @router.delete("/datasets/{dataset_name}", summary="Delete a dataset")
 @limiter.limit(default_limit)
 async def delete_dataset(
-    request: Request, dataset_name: str, _: str = Depends(require_role("admin")),
+    request: Request, dataset_name: DatasetName, _: str = Depends(require_role("admin")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Delete a CSV file from the data directory (irreversible), and revoke its share
