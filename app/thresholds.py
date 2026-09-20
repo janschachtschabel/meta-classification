@@ -116,7 +116,7 @@ def tuned_score(
 
 def name_threshold_columns(columns: np.ndarray, classes: list[str]) -> dict[str, float]:
     """Attach label URIs to threshold columns — the form a bundle persists."""
-    return {uri: float(t) for uri, t in zip(classes, columns, strict=False)}
+    return {uri: float(t) for uri, t in zip(classes, columns, strict=True)}
 
 
 def tune_thresholds(

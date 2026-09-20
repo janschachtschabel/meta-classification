@@ -248,7 +248,10 @@ async def delete_dataset(
 ) -> dict:
     """Delete a CSV file from the data directory (irreversible), and revoke its share
     links. **Auth:** admin · rate limit active."""
-    _dataset_path(dataset_name, settings).unlink()
+    # missing_ok: _dataset_path already answered 404 for a name that is not there, so
+    # reaching here with the file gone means it went in between — a double click, not
+    # a server fault.
+    _dataset_path(dataset_name, settings).unlink(missing_ok=True)
     # Same reason as model delete: the next import under this name must not be
     # reachable through a link that was handed out for this file.
     get_share_store().revoke_for("dataset", dataset_name)

@@ -90,6 +90,27 @@ Findings SEC-1, SEC-4 and OPS-1 of
   twice, and a duplicated row in training data is not a harmless kind of wrong. The
   whole-file `feedback.to_csv()` is gone; it had no caller left but was a second CSV writer
   to keep in step with the first.
+- **`safe_name` counted characters where the filesystem counts bytes.** The comment above
+  the limit reasoned in bytes ("filesystems cap that around 255"), but 100 four-byte
+  characters are 400 of them — verified in a Linux container, where such a name raises
+  `ENAMETOOLONG`, an unhandled `OSError`, i.e. the opaque 500 the length check was written
+  to prevent. A 200-byte bound sits beside the character one. It also refuses `"` and `;`
+  now: the model export builds its `Content-Disposition` by hand, so `x";filename="…`
+  served the bundle under a name of the caller's choosing — through a share link, without
+  a key.
+- **An invalid `APIV3_LOG_LEVEL` crashed at import with a stdlib traceback.**
+  `logging.basicConfig` runs before `create_app`, so a typo like `WARN` was a
+  CrashLoopBackOff whose only diagnosis was `Unknown level:` from inside `logging`.
+  The setting is a `Literal` now, like `training_isolation`, and names the field. Case is
+  normalised first — `info` has always worked and tightening the check is not a licence to
+  break a spelling operators already use.
+- **`DELETE /datasets/{name}` answered 500 on a double click.** `unlink()` without
+  `missing_ok` after the existence check; the 404 from the check is the honest answer for
+  a name that is already gone.
+- **Three `zip(..., strict=False)` calls pair a label list with a per-column array** whose
+  lengths are a pipeline invariant. They are `strict=True` now, so a future off-by-one
+  raises instead of silently producing a short threshold dict — labels quietly falling back
+  to the global cut is the kind of wrong that shows up as a metric nobody can explain.
 - **A training run leaked a file handle in the API process.** `run_in_child` closed the
   child's stdin but never its stdout: the relay returns as soon as it has an answer — on a
   kill, on the stop grace expiring, on a `done` message — while the pump thread is still

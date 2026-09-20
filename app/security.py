@@ -57,10 +57,13 @@ def require_role(required: str = "readonly"):
     return dependency
 
 
-# A name becomes one path component. Filesystems cap that around 255 bytes, and a
-# non-ASCII name costs several bytes per character — 100 leaves room to spare while
-# staying far above any real model or dataset name.
+# A name becomes one path component, and BOTH limits matter. Filesystems cap a component
+# at ~255 bytes, so the byte bound is the one the OS enforces; the character bound keeps
+# the name readable and is far above any real model or dataset name. Counting characters
+# alone was not enough: 100 four-byte characters are 400 bytes, which ext4 refuses with
+# ENAMETOOLONG — an unhandled OSError, i.e. the opaque 500 this check exists to prevent.
 _MAX_NAME_LENGTH = 100
+_MAX_NAME_BYTES = 200  # under 255 with room for the ".part"/".tmp" suffixes staging adds
 
 
 def safe_name(name: str, kind: str = "name") -> str:
@@ -72,6 +75,12 @@ def safe_name(name: str, kind: str = "name") -> str:
             status_code=400,
             detail=f"Invalid {kind}: too long ({len(name)} characters, maximum {_MAX_NAME_LENGTH}).",
         )
+    if len(name.encode("utf-8")) > _MAX_NAME_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Invalid {kind}: too long ({len(name.encode('utf-8'))} bytes, maximum "
+                    f"{_MAX_NAME_BYTES}). Non-ASCII characters cost several bytes each."),
+        )
     if (
         not name
         or ".." in name
@@ -79,6 +88,12 @@ def safe_name(name: str, kind: str = "name") -> str:
         or "\\" in name
         or ":" in name  # Windows drive-relative ("D:x") + NTFS ADS ("x:stream") escape the dir
         or name.startswith(".")
+        # A quote or semicolon ends the filename parameter of the Content-Disposition
+        # header the model export builds by hand, so `x";filename="setup.exe` would serve
+        # the bundle under a name of the caller's choosing — and that handler also serves
+        # share links, i.e. it is reachable without a key.
+        or '"' in name
+        or ";" in name
         # Every control character, not just NUL: the name reaches a Content-Disposition
         # header on the export path, where a CR or LF is a header split — and a name
         # carrying one is createable on the Linux deployment target.
@@ -86,7 +101,8 @@ def safe_name(name: str, kind: str = "name") -> str:
     ):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid {kind}: {name!r}. Must not contain path characters (/, \\, :, ..).",
+            detail=(f"Invalid {kind}: {name!r}. Must not contain path characters "
+                    f"(/, \\, :, ..), quotes or semicolons."),
         )
     return name
 

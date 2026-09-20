@@ -105,3 +105,41 @@ def test_safe_name_rejects_control_characters():
             safe_name(name, "model name")
         assert raised.value.status_code == 400
     safe_name("subjects_v2.1", "model name")  # ordinary names still pass
+
+
+def test_safe_name_bounds_bytes_not_only_characters():
+    """A path component is capped in BYTES; the check counted characters.
+
+    The comment above the limit reasons in bytes ("filesystems cap that around 255") but
+    100 four-byte characters are 400 of them. Verified in a Linux container: such a name
+    raises ENAMETOOLONG, which is an unhandled OSError -- an opaque 500 for a malformed
+    name, which is precisely the outcome the length check was written to prevent.
+    """
+    from fastapi import HTTPException
+
+    from app.security import safe_name
+
+    wide = "\U0001F600" * 96 + ".csv"  # 100 characters, 388 bytes
+    assert len(wide) == 100 and len(wide.encode()) > 255
+    with pytest.raises(HTTPException) as refused:
+        safe_name(wide, "dataset name")
+    assert refused.value.status_code == 400
+    assert "bytes" in refused.value.detail
+
+    # Names that fit stay accepted, non-ASCII included.
+    assert safe_name("Größenordnung.csv", "dataset name") == "Größenordnung.csv"
+    assert safe_name("ä" * 100, "model name") == "ä" * 100  # 200 bytes
+
+
+def test_safe_name_rejects_quotes_that_would_break_a_download_header():
+    """One export path builds `Content-Disposition` by hand, and a `"` in the name splits
+    the header into a second filename parameter. Reachable unauthenticated, because that
+    handler also serves share links."""
+    from fastapi import HTTPException
+
+    from app.security import safe_name
+
+    for hostile in ('x";filename="setup.exe', 'a"b', "a;b"):
+        with pytest.raises(HTTPException) as refused:
+            safe_name(hostile, "model name")
+        assert refused.value.status_code == 400

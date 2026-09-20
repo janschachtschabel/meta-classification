@@ -81,7 +81,7 @@ def _drop_unlearnable(
     if bool(learnable.all()):
         return texts, y_all, classes, splits, marks
     y_all = y_all[:, learnable]
-    classes = [c for c, keep in zip(classes, learnable, strict=False) if keep]
+    classes = [c for c, keep in zip(classes, learnable, strict=True) if keep]
     keep = y_all.sum(axis=1) > 0
     if bool(keep.all()):
         return texts, y_all, classes, splits, marks

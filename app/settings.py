@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .memory import MiB, memory_limit_bytes
@@ -173,7 +173,16 @@ class Settings(BaseSettings):
     parallel_backend: str = "threading"
 
     # --- Logging ---
-    log_level: str = "INFO"
+    # A Literal, like training_isolation: logging.basicConfig runs at import and raises a
+    # bare "Unknown level: 'WARN'" from inside the stdlib before anything can name the
+    # variable, so a one-character typo became a CrashLoopBackOff with a stdlib traceback
+    # for a diagnosis. pydantic rejects it here instead, naming the field. Case is
+    # normalised first: "info" has always worked (every reader upper-cases), and tightening
+    # the check is not a licence to break a spelling operators already use.
+    log_level: Annotated[
+        Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        BeforeValidator(lambda value: value.upper() if isinstance(value, str) else value),
+    ] = "INFO"
 
     # --- Rate limiting ---
     rate_limit_enabled: bool = True

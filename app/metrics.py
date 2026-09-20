@@ -78,5 +78,5 @@ def compute_metrics(
         "decision_rule": "argmax" if single else "thresholds",
         "predicted_labels_per_row": round(float(preds.sum(axis=1).mean()), 3),
         "true_labels_per_row": round(float(y_true.sum(axis=1).mean()), 3),
-        "per_label_f1": {uri: float(score) for uri, score in zip(names, per_label_f1, strict=False)},
+        "per_label_f1": {uri: float(score) for uri, score in zip(names, per_label_f1, strict=True)},
     }
