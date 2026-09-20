@@ -38,8 +38,9 @@ docker compose logs -f               # follow the startup
 TLS — and keeps datasets and models in the named volume `classification-data`, so
 `docker compose down` is safe and only `down -v` deletes your data.
 
-To run the published image instead of building, the CI publishes
-`ghcr.io/<owner>/<repo>:main` (the name follows the GitHub repository):
+To run the published image instead of building, pull what the CI publishes —
+`ghcr.io/janschachtschabel/meta-classification` (the name follows the GitHub
+repository; the package is public, so no `docker login` is needed):
 
 ```bash
 docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
@@ -51,12 +52,18 @@ docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
   -e APIV3_FEEDBACK_FILE=/data/feedback.jsonl \
   -e APIV3_JOB_HISTORY_FILE=/data/job_history.jsonl \
   -v classification-data:/data \
-  ghcr.io/<owner>/<repo>:main
+  ghcr.io/janschachtschabel/meta-classification:latest
 ```
 
 The five path variables are what make the volume the source of truth; without them the
 container would write inside its own filesystem and lose everything on the next `docker
 run`. `docker compose` sets them for you.
+
+**Tags:** `latest` is the newest release (currently the same image as `3.2.0`, `3.2`
+and `3`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
+production pin a version or a `sha-` tag rather than a moving one. The published
+images are built for **linux/amd64** only — on arm64 (Apple Silicon) build locally
+with `docker compose up -d` or run under emulation.
 
 ### B · Without Docker
 
