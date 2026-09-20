@@ -177,7 +177,8 @@ split:
   Every shipped profile sets its own, so the `split.cv_folds` above only applies to
   custom profiles that leave it unset. Per request: `0` = holdout split, `2–20` =
   k-fold CV. The distinction that matters is not accuracy but *data usage* — under
-  k-fold CV every row trains AND validates (out-of-fold) and the deployed model is
+  k-fold CV every row trains AND validates (out-of-fold; rows data-prep marks as
+  AI-written or -touched train only) and the deployed model is
   fit on 100 % of the data, while a holdout split permanently spends its test share
   on measurement. `k` only controls how much data the evaluation models see
   (`k=3` → 67 %, `k=5` → 80 %), so fewer folds bias the reported score slightly

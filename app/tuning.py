@@ -135,7 +135,8 @@ def cross_val_evaluate(
     scored: np.ndarray | None = None,
     keep_global: np.ndarray | None = None,
 ) -> tuple[float, float, dict[str, float], dict] | None:
-    """k-fold out-of-fold evaluation using ALL rows for both training and metrics.
+    """k-fold out-of-fold evaluation: every row trains, and every row is scored -- every
+    real one, when ``validate`` narrows it.
 
     Every row is predicted exactly once by a model that did not train on it; by default
     the vectorizer is refit per fold, so there is no feature leakage.

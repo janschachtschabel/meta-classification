@@ -6,8 +6,9 @@ Pipeline in three modules, one responsibility each:
   - here            : orchestration + persisted metadata
 
 Two evaluation modes (``split.cv_folds`` in config, or ``cv_folds`` per request):
-the classic train/val/test split, or k-fold cross-validation (every row trains
-AND validates via out-of-fold, deploy on 100% of the data).
+the classic train/val/test split, or k-fold cross-validation (every row trains,
+every real one -- none an LLM wrote or touched -- validates via out-of-fold, deploy on
+100% of the data).
 
 Callback-driven (``on_progress`` / ``should_stop``) so it carries no threading
 logic itself; ``jobs.JobRunner`` runs it in the background.
@@ -73,7 +74,7 @@ def _build_metadata(
     n = int(len(prep.texts))
     if cv_folds >= 2:
         evaluation = f"{cv_folds}-fold cross-validation (out-of-fold metrics; deployed on all {n})"
-        n_train, n_val, n_test = n, 0, 0  # every row trains + validates via OOF; no fixed holdout
+        n_train, n_val, n_test = n, 0, 0  # every row trains, the real ones validate via OOF
     else:
         evaluation = "holdout train/val/test split (metrics on the untouched test split)"
         n_train = int(len(prep.train_idx))

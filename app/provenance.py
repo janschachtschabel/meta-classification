@@ -9,6 +9,10 @@ on text the same LLM wrote from the same examples it was trained on.
   - ``example_for``: a REAL row shown to the generator as an example — its paraphrases
     are in the data, so the row itself would be recognised rather than classified.
   - ``enriched_fields``: a REAL row whose empty or short fields an LLM filled.
+    data-prep enriches exact twins alike -- rows equal in every field its enrichment
+    reads -- so, as long as those fields are among the text columns trained on, a twin
+    never keeps the untouched text beside its enriched copy: the text rule
+    (``SAME_TEXT``) knows rows by their text.
 
 Such rows train, but never validate. A leaf: imports nothing of ours.
 """
@@ -43,8 +47,9 @@ _BITS = ((GENERATED_FOR, GENERATED), (EXAMPLE_FOR, EXAMPLE), (ENRICHED_FIELDS, E
 
 
 def _marked(column: pd.Series) -> np.ndarray:
-    # Blank, whitespace and a missing cell are no mark: a CSV read as text hands over
-    # NaN for an empty cell, and an export may write spaces.
+    # Blank, whitespace and a missing cell are no mark: an export may write spaces, and a
+    # frame built in memory may hold NaN. The loader reads mark cells as written, so a
+    # text such as "NA" or "NaN" names a label there, and is a mark.
     return (column.fillna("").astype(str).str.strip() != "").to_numpy()
 
 

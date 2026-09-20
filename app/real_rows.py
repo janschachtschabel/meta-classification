@@ -56,7 +56,7 @@ def split_rows(
 def row_provenance(
     marks: np.ndarray | None, y_all: np.ndarray, *, mode: str, excluded: int,
     fallback: str | None, evaluated: np.ndarray | None = None,
-    min_samples: int = 1, thin_mode: str = "own",
+    min_samples: int = 1, thin_mode: str = "own", dropped: int = 0,
 ) -> RowProvenance | None:
     """What the marks decided -- or ``None`` when the dataset has none, and the run is
     the one it was before marks existed.
@@ -68,16 +68,25 @@ def row_provenance(
 
     A label with fewer real rows than ``min_samples`` is thin: it reached the training
     minimum only through AI-marked rows, and ``thin_mode`` is the run's choice of its cut.
+
+    ``excluded`` is the count of generated rows "exclude" left out, as reported; ``dropped``
+    counts every row it dropped, copies of kept texts included -- a run that dropped only
+    copies left nothing out, but is a marked run all the same.
     """
-    if marks is None or not (marks.any() or excluded):
+    if marks is None or not (marks.any() or excluded or dropped):
         return None
     real = marks == 0
+    # Counted in place: selecting the real rows would copy the label matrix, the largest
+    # array a run holds (``data.prepare_targets``).
+    real_counts = y_all.sum(axis=0, where=real[:, None])
     validate = real if marks.any() and fallback is None else None
     scored = None
-    if validate is not None:
-        has_real = y_all[validate if evaluated is None else evaluated].sum(axis=0) > 0
+    if fallback is None:
+        # Also once "exclude" dropped the last mark: every row is real then, and the rule
+        # stays the one "train" gets, or the two runs of a dataset are not comparable.
+        has_real = (real_counts if evaluated is None else y_all[evaluated].sum(axis=0)) > 0
         scored = None if bool(has_real.all()) else has_real
-    thin = y_all[real].sum(axis=0) < min_samples
+    thin = real_counts < min_samples
     return RowProvenance(marks=marks, mode=mode, excluded_generated=excluded,
                          validate=validate, scored=scored, fallback=fallback,
                          thin=thin, thin_mode=thin_mode)

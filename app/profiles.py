@@ -250,7 +250,7 @@ class TrainingConfig:
     validation_size: float = 0.15
     test_size: float = 0.15
     # 0 = classic train/val/test split; >=2 = k-fold cross-validation (all rows
-    # train + validate via out-of-fold, deploy on 100%).
+    # train, the real ones validate via out-of-fold, deploy on 100%).
     cv_folds: int = 0
     min_text_length: int = 5
     drop_duplicates: bool = True

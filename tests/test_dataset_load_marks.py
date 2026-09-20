@@ -79,8 +79,13 @@ def test_exclude_drops_generated_rows_before_the_dedupe(tmp_path):
     assert data.excluded_generated == 1
 
 
+@pytest.mark.parametrize(("drop_duplicates", "expected"), [
+    # The dedupe keeps the first copy, and a marked copy it drops still marks that one.
+    (True, [SAME_TEXT, 0, GENERATED, ENRICHED]),
+    (False, [SAME_TEXT, 0, GENERATED, EXAMPLE, ENRICHED, SAME_TEXT]),
+])
 @pytest.mark.parametrize("chunk_rows", [1, 2, 3])
-def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows):
+def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows, drop_duplicates, expected):
     rows = [
         ("Säuren und Basen", "chem", "", "", ""),
         ("Gedichte der Romantik", "german", "", "", ""),
@@ -90,12 +95,31 @@ def test_the_marks_do_not_depend_on_the_block_size(tmp_path, chunk_rows):
         ("Kaiser Augustus", "hist", "", "", ""),
     ]
     path = _write(tmp_path, rows)
-    whole = load_dataset(path, ["title"], "labels", drop_duplicates=False)
+    whole = load_dataset(path, ["title"], "labels", drop_duplicates=drop_duplicates)
 
-    blocks = load_dataset(path, ["title"], "labels", drop_duplicates=False, chunk_rows=chunk_rows)
+    blocks = load_dataset(path, ["title"], "labels", drop_duplicates=drop_duplicates,
+                          chunk_rows=chunk_rows)
 
     assert (blocks.texts, blocks.marks) == (whole.texts, whole.marks)
-    assert whole.marks == [SAME_TEXT, 0, GENERATED, EXAMPLE, ENRICHED, SAME_TEXT]
+    assert whole.marks == expected
+
+
+def test_a_mark_that_reads_like_a_missing_value_is_still_a_mark(tmp_path):
+    """A mark names a label, and a label may be called "NA", "None" or "null" -- words
+    pandas reads as a missing cell, which would let the row validate. The text and label
+    cells keep pandas' reading (review 2026-09-19 #5)."""
+    path = _write(tmp_path, [
+        ("Brüche kürzen Übung", "math", "NA", "", ""),
+        ("Gleichungen lösen", "math", "", "None", ""),
+        ("Zellbiologie Grundlagen", "bio", "", "", "null"),
+        ("Photosynthese Versuch", "bio", "", "", ""),
+        ("NA", "bio", "", "", ""),
+    ])
+
+    data = load_dataset(path, ["title"], "labels", min_text_length=1)
+
+    assert data.marks == [GENERATED, EXAMPLE, ENRICHED, 0]
+    assert data.texts[-1] == "Photosynthese Versuch", "a title 'NA' is still no text"
 
 
 def test_an_unknown_synthetic_rows_mode_is_refused(tmp_path):
@@ -117,3 +141,20 @@ def test_only_generated_rows_that_would_have_trained_count_as_left_out(tmp_path)
     data = load_dataset(path, ["title"], "labels", synthetic_rows="exclude")
 
     assert data.excluded_generated == 1
+
+
+@pytest.mark.parametrize(("drop_duplicates", "left_out"), [(True, 1), (False, 3)])
+def test_a_generated_copy_counts_as_left_out_once(tmp_path, drop_duplicates, left_out):
+    """Under the dedupe a second copy of a text would not have trained either -- nor a
+    generated row whose text a kept row already has (review 2026-09-19 #16)."""
+    path = _write(tmp_path, [
+        ("Brüche kürzen Übung", "math", "math", "", ""),
+        ("Brüche kürzen Übung", "math", "math", "", ""),
+        ("Gleichungen lösen", "math", "", "", ""),
+        ("Gleichungen lösen", "math", "math", "", ""),
+    ])
+
+    data = load_dataset(path, ["title"], "labels", synthetic_rows="exclude",
+                        drop_duplicates=drop_duplicates)
+
+    assert data.excluded_generated == left_out
