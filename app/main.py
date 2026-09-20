@@ -212,6 +212,32 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, _unhandled_exception_handler)
 
     @app.middleware("http")
+    async def refuse_oversized_bodies(request: Request, call_next):
+        """Refuse a body larger than the upload cap on its DECLARED size, before it
+        is read.
+
+        The per-route caps run too late to bound what reaches disk: FastAPI resolves
+        ``UploadFile`` during dependency injection, so Starlette has already streamed the
+        whole part into a spooled temp file by the time a route body runs — and it
+        enforces ``max_part_size`` only for non-file parts. Under the chart's read-only
+        root filesystem that spill lands in an emptyDir on node ephemeral storage, and
+        ``POST /predict/csv`` needs only a readonly key.
+
+        Content-Length is client-supplied and a chunked body carries none, so this is a
+        cheap ceiling rather than the whole answer — the streaming caps in ``security``
+        stay where they are and remain the real enforcement.
+        """
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit():
+            limit = settings.max_upload_mb * 1024 * 1024
+            if int(declared) > limit:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request body exceeds {settings.max_upload_mb} MB limit."},
+                )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def security_headers(request: Request, call_next):
         """Baseline hardening headers on every response. No HSTS (TLS is
         terminated at the reverse proxy, which should set it)."""

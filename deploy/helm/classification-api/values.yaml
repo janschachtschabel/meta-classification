@@ -162,9 +162,24 @@ config:
     warmupModels: ""
     ## @param config.limits.rateLimitEnabled Enable the in-process rate limiter (keys on client IP — see README for proxy note)
     rateLimitEnabled: true
+    ## @param config.limits.forwardedAllowIps Addresses whose X-Forwarded-For uvicorn may trust (e.g. the
+    ## ingress controller's pod CIDR, "10.42.0.0/16"). Empty = trust nothing beyond localhost, which behind
+    ## an ingress means every client shares ONE rate-limit bucket, since they all arrive from the
+    ## controller's address. Set it whenever ingress.enabled is true and rateLimitEnabled is true.
+    ## Do NOT set "*": any client could then spoof the header and bypass the limiter entirely.
+    forwardedAllowIps: ""
 
   ## @param config.extraEnv Extra plain environment variables (map) injected into the container
   extraEnv: {}
+
+########################################################################################################################
+
+## @param tmpSizeLimit Ceiling for the /tmp emptyDir that readOnlyRootFilesystem makes necessary.
+## Starlette spools a multipart upload there before any route sees it. This is NODE ephemeral
+## storage: without a limit an upload burst evicts neighbours on the same node. Keep it at a small
+## multiple of config.limits.maxUploadMb — the app refuses a declared body over that cap before
+## reading it, so this only has to hold the uploads that are legitimately in flight at once.
+tmpSizeLimit: 1Gi
 
 ########################################################################################################################
 

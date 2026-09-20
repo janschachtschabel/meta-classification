@@ -18,6 +18,11 @@ class HealthResponse(BaseModel):
     version: str = Field(..., description="Version of the running MetaClassify build.")
 
 
+class ReadyResponse(BaseModel):
+    status: str = Field(..., description="`ready` — the storage this process serves from is usable.")
+    version: str = Field(..., description="Version of the running MetaClassify build.")
+
+
 class ConfigResponse(BaseModel):
     """Non-sensitive configuration overview (never includes API keys)."""
 

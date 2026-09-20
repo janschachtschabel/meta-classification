@@ -75,9 +75,12 @@ spec:
           timeoutSeconds: {{ .timeoutSeconds }}
         {{- end }}
         {{- with .Values.readinessProbe }}
+        # /ready, not /health: readiness decides whether this pod gets TRAFFIC, so it has
+        # to be able to say no. /health returns a literal and cannot -- a pod whose volume
+        # came back read-only stayed Ready while every request failed.
         readinessProbe:
           httpGet:
-            path: /health
+            path: /ready
             port: http
           failureThreshold: {{ .failureThreshold }}
           initialDelaySeconds: {{ .initialDelaySeconds }}
@@ -101,7 +104,13 @@ spec:
         {{- end }}
       volumes:
       - name: tmp
-        emptyDir: {}
+        # sizeLimit, not an unbounded emptyDir: this is NODE ephemeral storage, so an
+        # upload that outgrows it would evict neighbours on the same node rather than
+        # fail this pod. The app refuses a declared body over APIV3_MAX_UPLOAD_MB before
+        # reading it, so the headroom here only has to cover concurrent uploads that are
+        # each within the cap.
+        emptyDir:
+          sizeLimit: {{ .Values.tmpSizeLimit | quote }}
       {{- if not .Values.persistence.enabled }}
       - name: data
         emptyDir: {}

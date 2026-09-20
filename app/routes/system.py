@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 
 from .. import __version__
 from ..jobs import job_runner
 from ..memory import MiB
 from ..registry import get_registry
-from ..responses import ConfigResponse, HealthResponse
+from ..responses import ConfigResponse, HealthResponse, ReadyResponse
 from ..security import require_role
 from ..settings import Settings, get_settings
 
@@ -22,8 +23,34 @@ _START = time.monotonic()  # process start (module import) for the uptime gauge
 
 @router.get("/health", summary="Health check (public)", response_model=HealthResponse)
 async def health() -> dict:
-    """Public health check for load balancers and container probes (no auth)."""
+    """Public health check for load balancers and container probes (no auth).
+
+    Deliberately a literal: this is the LIVENESS signal, and the only honest answer to
+    "should this process be restarted?" is yes when it cannot answer at all. Whether it
+    can usefully serve is `/ready`.
+    """
     return {"status": "healthy", "version": __version__}
+
+
+@router.get("/ready", summary="Readiness check (public)", response_model=ReadyResponse)
+async def ready(settings: Settings = Depends(get_settings)) -> dict:
+    """Whether this process can actually serve — 503 with the reason when it cannot.
+
+    Separate from `/health` because they answer different questions, and pointing a
+    readiness probe at a hardcoded literal meant the pod took traffic no matter what.
+    The failures this deployment has are storage ones: a PVC that came back read-only,
+    a models directory that is not there. Warmup failure is not one of them — it is
+    best-effort by design and a cold load is slow, not broken.
+
+    Public like `/health`: a kubelet sends no custom headers, and the body names only
+    which directory is unreachable.
+    """
+    for label, directory in (("data", settings.data_dir), ("models", settings.models_dir)):
+        if not directory.is_dir():
+            raise HTTPException(503, f"Storage for {label} is not available.")
+        if not os.access(directory, os.W_OK):
+            raise HTTPException(503, f"Storage for {label} is not writable.")
+    return {"status": "ready", "version": __version__}
 
 
 @router.get("/metrics", summary="Prometheus metrics (public)", response_class=PlainTextResponse)

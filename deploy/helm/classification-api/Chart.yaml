@@ -7,6 +7,9 @@ type: application
 
 # Chart version (SemVer of the packaging itself).
 version: 0.1.0
-# Version of the shipped application — matches the image tag.
-appVersion: "latest"
+# Version of the shipped application — matches the image tag. Never "latest": every
+# other artifact here is pinned (base image by digest, Actions by SHA, CI images by
+# exact tag), and a mutable tag means two installs of this chart a week apart run
+# different code. CI overrides it per release with --app-version.
+appVersion: "3.2.0"
 kubeVersion: ">=1.23.0-0"

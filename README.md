@@ -130,7 +130,7 @@ That is the whole minimum. [`.env.example`](.env.example) carries the same two k
 every other option with a comment explaining what it costs;
 [`docs/configuration.md`](docs/configuration.md) is the full reference.
 
-**Three endpoints need no key at all:** `/health` and `/metrics` (operational gauges
+**Four endpoints need no key at all:** `/health`, `/ready` and `/metrics` (operational gauges
 only), and `GET /share/{id}` — a share link is a *bearer capability*, the unguessable id
 plus its expiry are the authorization, so it can be handed to someone who has no key.
 Creating such links stays admin-only.
@@ -496,7 +496,7 @@ numbers say where it stopped.
 - **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
 - **Share links:** `GET /share/{id}` (public bearer download), `GET /share` and `DELETE /share/{id}` (admin: review what is outstanding, withdraw it early)
 - **Datasets:** `GET /datasets`, `GET /datasets/{name}`, `POST /datasets/analyze`, `POST /datasets/{name}/validate`, import/export/delete
-- **System:** `GET /health`, `GET /config`, `GET /metrics` (Prometheus text format, public — operational gauges only: uptime, model counts, training status)
+- **System:** `GET /health` (liveness — answers as long as the process runs), `GET /ready` (readiness — 503 when the data or models directory is missing or read-only, so a pod with a broken volume is taken out of the load balancer instead of serving errors), `GET /config`, `GET /metrics` (Prometheus text format, public — operational gauges only: uptime, model counts, training status)
 
 ## Status & monitoring
 
@@ -706,7 +706,7 @@ For hosting in other ML serving systems:
 ## Deployment
 
 - **Docker (local):** see [Installation](#installation) — `docker compose up -d`, state in the `classification-data` volume. This section covers what comes after that: running it somewhere other than your own machine.
-- **Kubernetes:** Helm chart in [`deploy/helm/classification-api`](deploy/helm/classification-api/README.md) — StatefulSet with exactly **1 replica** (process-local state + one PVC), probes on `/health`, API keys via chart secret.
+- **Kubernetes:** Helm chart in [`deploy/helm/classification-api`](deploy/helm/classification-api/README.md) — StatefulSet with exactly **1 replica** (process-local state + one PVC), liveness/startup on `/health` and readiness on `/ready`, API keys via chart secret.
 - **CI/CD:** GitHub Actions ([`.github/workflows/`](.github/workflows)) run the three quality gates and publish the image to GHCR; GitLab ([`.gitlab-ci.yml`](.gitlab-ci.yml)) mirrors that for self-hosted registries + Helm-chart push (credentials via CI/CD variables only).
 
 ### Backup & restore
@@ -768,12 +768,12 @@ python -m mypy app --config-file pyproject.toml    # types
 
 - Models are pickle-free (skops); import rejects any file with unknown types, unexpected member names (allowlist of the four bundle files), and archives that inflate both past 64 MB and far beyond their upload size (zip-bomb guard). Bundles are written atomically (staged in a hidden tmp dir, then renamed), so a crash can never leave a half-readable model.
 - Single-worker design (training status, model cache and rate limiter are process-local). Plan a shared store before running multiple workers.
-- Rate limiting keys on the client IP and covers every expensive or public route: `/predict*`, `/train`, all import/export endpoints, the CSV-reading `GET /datasets`, `GET /datasets/{name}`, `/datasets/analyze` + `/datasets/{name}/validate`, and the key-less `GET /share/{id}` (throttles share-id brute-forcing). Cheap status routes and `/health` stay unthrottled by design (probes, UI polling). Behind a reverse proxy all clients share the proxy's IP, so limits act globally — run uvicorn with `--proxy-headers --forwarded-allow-ips <proxy>` (or swap the limiter key function) so real client IPs are used.
+- Rate limiting keys on the client IP and covers every expensive or public route: `/predict*`, `/train`, all import/export endpoints, the CSV-reading `GET /datasets`, `GET /datasets/{name}`, `/datasets/analyze` + `/datasets/{name}/validate`, and the key-less `GET /share/{id}` (throttles share-id brute-forcing). Cheap status routes and `/health` stay unthrottled by design (probes, UI polling). Behind a reverse proxy all clients share the proxy's IP, so limits act globally until uvicorn is told which peer may speak for a client. The image already runs with `--proxy-headers`; supply the trusted source with `FORWARDED_ALLOW_IPS` (Helm: `config.limits.forwardedAllowIps`, e.g. the ingress controller's pod CIDR). Never `*` — any client could then spoof `X-Forwarded-For` and bypass the limiter entirely.
 - Every response carries baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`). No HSTS in-app — set it at the TLS-terminating reverse proxy.
 - The Docker base image is digest-pinned; the Helm chart runs with `readOnlyRootFilesystem: true`, `runAsNonRoot`, dropped capabilities and `seccompProfile: RuntimeDefault`. Writable paths are the `/data` PVC (datasets + models) plus an `emptyDir` at `/tmp` (multipart uploads over ~1 MB spool there — it must be writable or uploads fail).
 - Dependencies: `requirements.lock` pins the direct dependencies (the exact versions the test suite ran against); `requirements-hashes.lock` pins the **full transitive tree with sha256 hashes** (compiled from the lock via `uv pip compile --generate-hashes --universal`, targeting the image's Python 3.11). Docker and CI install with `--require-hashes --only-binary=:all:` — nothing unpinned or tampered with can enter the image. Update deliberately: bump the lock, re-run ruff/mypy/pytest, recompile the hashes file (command in the lock header).
 - Docker: see `Dockerfile` (runs as non-root).
-- **What to alert on** (Prometheus / uptime checks): `GET /health` non-200 (liveness); `apiv3_training_running == 1` for longer than your largest expected training run (stuck job); an unexpected drop of `apiv3_models_total` (lost volume/PVC); volume usage of the data mount (datasets + bundles grow). Error tracking: unhandled exceptions are logged server-side with full tracebacks (`api_v3.*` loggers) — ship container logs to your aggregator.
+- **What to alert on** (Prometheus / uptime checks): `GET /health` non-200 (liveness) and `GET /ready` non-200 (the pod is up but cannot serve); `apiv3_training_running == 1` for longer than your largest expected training run (stuck job); an unexpected drop of `apiv3_models_total` (lost volume/PVC); volume usage of the data mount (datasets + bundles grow). Error tracking: unhandled exceptions are logged server-side with full tracebacks (`api_v3.*` loggers) — ship container logs to your aggregator.
 
 ## License
 

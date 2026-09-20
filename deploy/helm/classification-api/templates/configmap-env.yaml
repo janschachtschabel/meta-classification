@@ -33,6 +33,15 @@ data:
   APIV3_MAX_MODELS_IN_MEMORY: {{ .Values.config.limits.maxModelsInMemory | quote }}
   APIV3_WARMUP_MODELS: {{ .Values.config.limits.warmupModels | quote }}
   APIV3_RATE_LIMIT_ENABLED: {{ .Values.config.limits.rateLimitEnabled | quote }}
+  {{- if .Values.config.limits.forwardedAllowIps }}
+
+  # ---- Who may claim a client IP on this pod's behalf ----
+  # uvicorn runs with --proxy-headers, but it honours X-Forwarded-For only when the TCP
+  # peer is in this list. Behind an ingress the peer is the controller pod, so without
+  # this every request in the cluster keys on ONE address and every rate limit becomes a
+  # single global bucket. Read by uvicorn itself, not by the app, hence no APIV3_ prefix.
+  FORWARDED_ALLOW_IPS: {{ .Values.config.limits.forwardedAllowIps | quote }}
+  {{- end }}
   {{- range $key, $value := .Values.config.extraEnv }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}

@@ -427,3 +427,73 @@ def test_startup_sweeps_upload_staging_left_by_a_kill(tmp_path):
     assert (tmp_path / "real_dataset.csv").exists(), "a real dataset is never touched"
     assert not list(tmp_path.glob("*.part"))
     assert not list(tmp_path.glob(".predict-*"))
+
+
+def test_an_oversized_body_is_refused_before_it_is_spooled(monkeypatch, tmp_path):
+    """The cap must bite on the declared size, not after the bytes are on disk.
+
+    ``UploadFile`` is resolved during dependency injection, so by the time a route body
+    runs, Starlette has already streamed the whole multipart part into a spooled temp
+    file — and it enforces its own ``max_part_size`` only for NON-file parts. The route's
+    own cap therefore bounded only the second copy, the one written into the data dir. On
+    the shipped chart ``/tmp`` is an emptyDir with no sizeLimit, i.e. node ephemeral
+    storage, and ``POST /predict/csv`` needs only a readonly key.
+
+    The assertion that matters is not the 413 — the route produced that before — but that
+    the route never ran at all.
+    """
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_MAX_UPLOAD_MB="1")
+
+    def must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the body reached the route: the size guard came too late")
+
+    # Patched where it is USED: routes/datasets.py bound the name at import, so patching
+    # app.security would leave the route calling the real one and the 413 below would
+    # prove nothing.
+    monkeypatch.setattr("app.routes.datasets.spool_upload_capped", must_not_run)
+
+    oversized = client.post(
+        "/datasets/import",
+        files={"file": ("big.csv", b"x" * (2 * 1024 * 1024), "text/csv")},
+        headers={"X-API-Key": "admin-key"},
+    )
+    assert oversized.status_code == 413, oversized.text
+    assert "1 MB" in oversized.json()["detail"]
+
+    # A body within the cap still reaches the route (the guard is a ceiling, not a wall).
+    monkeypatch.undo()
+    accepted = client.post(
+        "/datasets/import",
+        files={"file": ("small.csv", b"title;label\na;uri:math\n", "text/csv")},
+        headers={"X-API-Key": "admin-key"},
+    )
+    assert accepted.status_code == 200, accepted.text
+
+
+def test_readiness_fails_when_the_storage_it_needs_is_gone(monkeypatch, tmp_path):
+    """`/ready` has to be able to say no, which is what separates it from `/health`.
+
+    All three probes pointed at `/health`, which returns a literal and checks nothing.
+    The failures this deployment actually has are the ones it cannot see: a PVC that
+    remounted read-only, an unreadable models dir. Warmup failure is deliberately
+    swallowed at startup (best-effort, never fatal) — correct there, wrong for
+    readiness, because the pod then takes traffic while every /predict 500s.
+    """
+    client = _fresh_client(monkeypatch, tmp_path)
+    # The lifespan creates these in production; this client never enters it.
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "models").mkdir(parents=True, exist_ok=True)
+
+    ready = client.get("/ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["status"] == "ready"
+
+    # /health keeps answering regardless: it is the liveness signal, and a pod whose
+    # volume vanished should be taken out of the load balancer, not restarted in a loop.
+    import shutil
+
+    shutil.rmtree(tmp_path / "models")
+    not_ready = client.get("/ready")
+    assert not_ready.status_code == 503, not_ready.text
+    assert "models" in not_ready.json()["detail"]
+    assert client.get("/health").status_code == 200

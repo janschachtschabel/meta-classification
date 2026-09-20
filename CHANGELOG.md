@@ -30,8 +30,42 @@ Findings SEC-1, SEC-4 and OPS-1 of
   GitHub workflows audit the ghcr.io image, which is not what the self-hosted registry
   serves; anyio 4.14.1 sat pinned with three CVEs while every gate on this side was green.
 
+- **A body larger than the upload cap is refused before it is read.** The per-route caps
+  ran too late to bound what reached disk: FastAPI resolves `UploadFile` during dependency
+  injection, so Starlette had already streamed the whole part into a spooled temp file by
+  the time a route body ran — and it enforces its own part limit only for non-file parts.
+  Under the chart's read-only root that spill lands in an emptyDir on *node* ephemeral
+  storage, and `POST /predict/csv` needs only a readonly key. A middleware now answers 413
+  on the declared `Content-Length`. Content-Length is client-supplied and a chunked body
+  carries none, so the streaming caps stay exactly where they are and remain the real
+  enforcement; this is the cheap ceiling in front of them. The chart's `/tmp` volume gained
+  a `sizeLimit` (`tmpSizeLimit`, default 1Gi) for the same reason.
+- **Rate limits behind an ingress no longer collapse into one bucket.** The image has run
+  with `--proxy-headers` since July, but uvicorn honours `X-Forwarded-For` only from a peer
+  in its trusted list — which the chart never set, so behind an ingress every request in the
+  cluster keyed on the controller's address and `300/minute` meant 300 for everyone
+  together. New chart value `config.limits.forwardedAllowIps` templates `FORWARDED_ALLOW_IPS`
+  into the pod. Left empty by default, and documented as never `*`, since that would let any
+  client spoof the header and bypass the limiter outright.
+
+### Added
+
+- **`GET /ready`** — a readiness check that can actually fail. All three Kubernetes probes
+  pointed at `/health`, which returns a literal and verifies nothing, so a pod whose volume
+  came back read-only stayed `Ready` and kept taking traffic while every request failed.
+  `/ready` answers 503 naming the directory when the data or models storage is missing or
+  unwritable. `/health` is unchanged and stays the liveness signal — startup and liveness
+  probes still use it, because "restart me" and "stop sending me traffic" are different
+  answers. Public like `/health`: a kubelet sends no headers.
+
 ### Changed
 
+- **A branch build now also pushes an immutable `sha-<commit>` tag**, and the chart's
+  `appVersion` is a version instead of `latest`. Helm revisions N and N−1 both resolved to
+  `:main`, so `helm rollback` restored the values and re-deployed the same image — and with
+  `pullPolicy: IfNotPresent` a node that had cached it never even re-pulled. Every other
+  artifact here was already pinned (base image by digest, Actions by SHA); the chart was the
+  exception.
 - **`clean_text` leaves nested and unbalanced markup alone** instead of half-eating it —
   the visible side of the fix above. `<tag with <nested> bracket>` used to clean to
   `bracket` and now cleans to `<tag with bracket`; `[text](url(with)parens)` is left
