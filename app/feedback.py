@@ -113,23 +113,77 @@ def read_all() -> list[dict]:
     return entries
 
 
-def to_csv() -> str:
-    """The corrections as a CSV a training run can read directly.
+def _iter_entries():
+    """Every readable correction, oldest first, one at a time.
 
-    Written with ``csv.writer`` because editorial text carries semicolons and quotes,
-    and hand-joining would split one row across two and corrupt everything after it.
+    The line-by-line twin of :func:`read_all`, for the export: the file is uncapped by
+    design, so materialising it to decide what to write scales with the collection rather
+    than with the answer. Same forgiveness — a line that did not finish being written
+    costs that line, never the export.
+    """
+    path = _feedback_path()
+    if not path.exists():
+        return
+    try:
+        handle = path.open(encoding="utf-8")
+    except OSError:
+        logger.warning("Feedback file at %s is unreadable; reporting none.", path)
+        return
+    with handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                logger.warning("Dropping an unparseable line from the feedback at %s.", path)
+                continue
+            if isinstance(entry, dict):
+                yield entry
 
-    Corrections with no corrected label are recorded but NOT exported: "none of these
-    apply" is a real thing to say, and it is also not trainable — ``load_dataset`` drops
-    label-less rows, so exporting them would overstate what the file contributes.
+
+def iter_csv(limit: int | None = None, offset: int = 0):
+    """The corrections as CSV, yielded row by row.
+
+    Streaming rather than returning a string: the response can start before the file has
+    been read, and neither the entries nor the finished document is ever held whole.
+
+    ``offset`` skips that many exportable corrections and ``limit`` caps how many follow,
+    both oldest-first, so they compose into a cursor: take a page, add its size to the
+    offset, ask again. The cursor is a POSITION and not the ``recorded_at`` stamp it would
+    be natural to reach for — the clock is coarser than the writes (on Windows five
+    appends in a row share one microsecond value), so a stamp cursor would either skip
+    every correction sharing the boundary instant or hand it out twice. Duplicated rows in
+    training data are not a harmless kind of wrong. Position is exact here precisely
+    because the file is append-only and never rewritten.
+
+    Rows without a corrected label are skipped as ever, and count against neither
+    ``offset`` nor ``limit``: both address the exported rows, which is what a caller pages
+    through.
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, delimiter=CSV_SEPARATOR, lineterminator="\n")
+
+    def drain() -> str:
+        text = buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        return text
+
     writer.writerow(EXPORT_COLUMNS)
-    for entry in read_all():
+    yield drain()
+
+    seen = written = 0
+    for entry in _iter_entries():
+        if limit is not None and written >= limit:
+            return
         labels = [label for label in entry.get("corrected") or [] if isinstance(label, str)]
         text = entry.get("text")
         if not labels or not isinstance(text, str):
             continue
+        seen += 1
+        if seen <= offset:
+            continue
         writer.writerow([text, LABEL_SEPARATOR.join(labels)])
-    return buffer.getvalue()
+        written += 1
+        yield drain()

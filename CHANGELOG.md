@@ -71,6 +71,25 @@ Findings SEC-1, SEC-4 and OPS-1 of
 
 ### Fixed
 
+- **Six route handlers did blocking work on the event loop.** The app is single-worker by
+  contract, so the loop is the whole server. The heavy routes were offloaded long ago, but
+  the cheap-looking readers were not — and `GET /models`, `GET /models/{name}` and
+  `GET /models/{name}/labels` take `Registry._disk_lock`, which `export_to` holds for
+  seconds while it compresses a 180 MB bundle. One model lookup during an export froze
+  `/health`, `/metrics` and everything in flight. Also offloaded: the model count in
+  `/metrics` (public and unthrottled), and `GET /train/history`, which waited on the lock
+  the training thread holds across a full rewrite of the history file. Pinned by a source
+  rule (`tests/test_event_loop_is_not_blocked.py`) rather than a timing assertion, in the
+  manner of `tests/test_no_url_fetch.py`.
+- **`GET /feedback/export` built the whole file in memory, on the loop.** Three copies of
+  a collection that is uncapped by design. It streams row by row now, and gained `limit`
+  and `offset` so a caller can take a page instead of everything ever recorded. The cursor
+  is a position, not the `recorded_at` stamp that would be the obvious choice: the clock is
+  coarser than the writes — five appends in a row share one microsecond value — so a stamp
+  cursor would either skip every correction recorded in the boundary instant or hand it out
+  twice, and a duplicated row in training data is not a harmless kind of wrong. The
+  whole-file `feedback.to_csv()` is gone; it had no caller left but was a second CSV writer
+  to keep in step with the first.
 - **A training run leaked a file handle in the API process.** `run_in_child` closed the
   child's stdin but never its stdout: the relay returns as soon as it has an answer — on a
   kill, on the stop grace expiring, on a `done` message — while the pump thread is still

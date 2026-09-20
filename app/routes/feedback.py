@@ -5,7 +5,8 @@ Thin, like every route module: the store and the export shape live in ``app.feed
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 
 from .. import feedback as feedback_store
 from ..errors import FeedbackWriteError
@@ -53,7 +54,22 @@ async def record_feedback(
             response_model=None)
 @limiter.limit(export_limit)
 async def export_feedback(
-    request: Request, _: str = Depends(require_role("admin"))
+    request: Request,
+    limit: int | None = Query(
+        None, ge=1, le=100_000,
+        description="At most this many corrections, oldest first. Omitted = all of them.",
+    ),
+    offset: int = Query(
+        0, ge=0,
+        description=(
+            "Exported corrections to skip, oldest first. With `limit` this pages the "
+            "collection: take a page, add its size to the offset, ask again. Counts "
+            "EXPORTED rows, so a correction recorded without a label does not shift the "
+            "page. Position rather than a timestamp because several corrections can share "
+            "one clock tick."
+        ),
+    ),
+    _: str = Depends(require_role("admin")),
 ) -> Response:
     """Every correction as a CSV `/train` can read directly.
 
@@ -62,11 +78,15 @@ async def export_feedback(
     corrected label are left out: the loader drops label-less rows, so including them
     would overstate what the file contributes.
 
+    Streamed row by row. The collection is uncapped on purpose — it is training data, not
+    a log — so a response that built the whole document first grew with the volume rather
+    than with the answer, and held three copies of it while doing so.
+
     **Auth:** admin — posting one correction is part of the job; walking off with every
     text an editor ever pasted is not.
     """
-    return Response(
-        content=feedback_store.to_csv(),
+    return StreamingResponse(
+        feedback_store.iter_csv(limit=limit, offset=offset),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="feedback.csv"'},
     )

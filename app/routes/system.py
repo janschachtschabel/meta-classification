@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 
@@ -64,6 +65,9 @@ async def metrics() -> PlainTextResponse:
     """
     snap = job_runner.snapshot()
     registry = get_registry()
+    # Off the loop like every other registry read: an iterdir plus a stat per bundle,
+    # on a public endpoint that carries no rate limit.
+    models_total = await asyncio.to_thread(registry.list)
     progress = float(snap["progress"] or 0)
     lines = [
         "# HELP apiv3_info Build information (value is always 1).",
@@ -74,7 +78,7 @@ async def metrics() -> PlainTextResponse:
         f"apiv3_uptime_seconds {time.monotonic() - _START:.1f}",
         "# HELP apiv3_models_total Trained model bundles on disk.",
         "# TYPE apiv3_models_total gauge",
-        f"apiv3_models_total {len(registry.list())}",
+        f"apiv3_models_total {len(models_total)}",
         "# HELP apiv3_models_in_memory Models resident in the LRU cache.",
         "# TYPE apiv3_models_in_memory gauge",
         f"apiv3_models_in_memory {registry.in_memory_count()}",

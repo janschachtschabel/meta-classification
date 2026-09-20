@@ -77,7 +77,7 @@ def staged_zip_response(name: str) -> FileResponse:
 @router.get("/models", summary="List all models")
 async def list_models(_: str = Depends(require_role("readonly"))) -> list[str]:
     """Names of all available models (bundles in the model directory). **Auth:** readonly."""
-    return get_registry().list()
+    return await asyncio.to_thread(get_registry().list)
 
 
 @router.get("/models/{model_name}", summary="Model details & metrics")
@@ -103,7 +103,7 @@ async def model_info(model_name: ModelName, _: str = Depends(require_role("reado
     """
     safe_name(model_name, "model name")
     try:
-        return get_registry().info(model_name)
+        return await asyncio.to_thread(get_registry().info, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
 
@@ -124,7 +124,7 @@ async def model_labels(model_name: ModelName, _: str = Depends(require_role("rea
     """
     safe_name(model_name, "model name")
     try:
-        return get_registry().label_diagnostics(model_name)
+        return await asyncio.to_thread(get_registry().label_diagnostics, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
 

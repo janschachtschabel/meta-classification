@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -270,4 +271,6 @@ async def history(
     Bounded to the newest 200 runs on disk. A run killed mid-flight leaves no entry —
     it never finished. **Auth:** readonly.
     """
-    return job_history.recent(limit=max(1, min(limit, 200)))
+    # The runner thread holds the same lock across a full read-modify-rewrite of the
+    # history file, so waiting for it on the loop means waiting for a training.
+    return await asyncio.to_thread(job_history.recent, limit=max(1, min(limit, 200)))
