@@ -242,6 +242,14 @@ def run_in_child(
         except subprocess.TimeoutExpired:
             child.kill()
             code = child.wait()
+        # Only now, and not a line earlier: the relay returns as soon as it has an answer
+        # (a kill, the stop grace, a done message) while the pump thread is still blocked
+        # reading this pipe, and closing a buffered reader out from under a blocked reader
+        # waits for that reader's lock — i.e. deadlocks until the child writes something.
+        # Once the child is gone the read ends by itself and the close is free. Without
+        # the close the API process held one file object per run until the Popen was
+        # collected.
+        _close(child.stdout)
         # Nothing will publish what the child staged — also when the relay itself failed.
         # Only now: until the child is gone, it may still be writing there.
         if "done" not in outcome:
@@ -272,6 +280,10 @@ def _relay(child: subprocess.Popen, on_progress: Callable[..., None],
         try:
             for line in stream:
                 lines.put(line)
+        except (OSError, ValueError):
+            # The parent closed this end while we were blocked on it — the ordinary way
+            # a run that ended early releases the pipe, not a failure to report.
+            pass
         finally:
             lines.put(None)  # however reading ended, the relay must hear that it did
 

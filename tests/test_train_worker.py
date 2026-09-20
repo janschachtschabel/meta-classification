@@ -302,6 +302,12 @@ def _ended_alone(child: subprocess.Popen, within: float) -> None:
         if child.poll() is None:
             child.kill()
             child.wait()
+        # These tests drive a worker by hand, so nothing else owns its pipes. Closed
+        # after the child is gone, for the reason run_in_child documents: closing a
+        # reader another thread is blocked on waits for that reader.
+        for pipe in (child.stdin, child.stdout):
+            if pipe is not None and not pipe.closed:
+                pipe.close()
 
 
 def test_a_child_whose_parent_is_gone_ends_at_once(tmp_path):
@@ -377,3 +383,35 @@ def test_the_train_route_runs_a_training_in_a_child_process(tmp_path, monkeypatc
     finally:
         get_settings.cache_clear()
         get_registry.cache_clear()
+
+
+def test_the_childs_pipes_are_closed_when_the_run_ends(tmp_path, monkeypatch):
+    """Both ends of the pipe are released, on the paths that do not read to EOF.
+
+    ``_relay`` returns as soon as it has an answer — on a kill, on the stop grace
+    expiring, on a ``done`` message — while the pump thread is still blocked reading the
+    child's stdout. Only stdin was closed afterwards, so the API process kept a file
+    object per run until the garbage collector got to the Popen. In a single-worker
+    server that runs for weeks, "eventually" is not a lifetime.
+    """
+    spawned: list[subprocess.Popen] = []
+    real_popen = subprocess.Popen
+
+    def remember(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        spawned.append(child)
+        return child
+
+    monkeypatch.setattr(train_worker.subprocess, "Popen", remember)
+    monkeypatch.setattr(train_worker, "_STOP_GRACE_SECONDS", 1)
+    monkeypatch.setattr(train_worker, "_EXIT_GRACE_SECONDS", 1)
+    # Answers nothing, so the relay leaves while the pump is still mid-read.
+    monkeypatch.setattr(train_worker, "_worker_command", lambda: [
+        sys.executable, "-c", "import sys, time; sys.stdin.readline(); time.sleep(300)"])
+
+    _run(tmp_path, should_stop=lambda: True, kill_requested=_deadline(25))
+
+    assert len(spawned) == 1
+    child = spawned[0]
+    assert child.stdin is not None and child.stdin.closed, "stdin left open"
+    assert child.stdout is not None and child.stdout.closed, "stdout left open"

@@ -109,7 +109,10 @@ pytest:
     - pip install --require-hashes -r requirements-hashes.lock
     - pip install -r requirements-dev.txt
   script:
-    - python -m pytest tests -q
+    # Under coverage, with the floor in pyproject as the gate (see the GitHub workflow).
+    - python -m coverage run -m pytest tests -q
+    - python -m coverage combine
+    - python -m coverage report
 
 # -----------------------------------------------------------------------------
 # Known CVEs in the tree the image ships. Own job in the `test` stage so a

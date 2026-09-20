@@ -44,6 +44,8 @@ venv/
 
 # Test/coverage & packaging artifacts
 .coverage
+# parallel=true writes .coverage.<host>.<pid>.<rand> before `coverage combine`
+.coverage.*
 htmlcov/
 *.egg-info/
 build/

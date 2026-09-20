@@ -52,8 +52,14 @@ jobs:
       - name: Types (mypy)
         run: python -m mypy app --config-file pyproject.toml
 
-      - name: Tests (pytest)
-        run: python -m pytest tests -q
+      - name: Tests (pytest, under coverage)
+        # The gate is the floor in pyproject (fail_under), not this command: a change
+        # that deletes a guard and its test stays green on pytest alone.
+        # `combine` is needed because the training child is its own interpreter.
+        run: |
+          python -m coverage run -m pytest tests -q
+          python -m coverage combine
+          python -m coverage report
 
       - name: OpenAPI smoke
         # The app must import cleanly and expose the core endpoints.

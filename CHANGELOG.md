@@ -50,6 +50,17 @@ Findings SEC-1, SEC-4 and OPS-1 of
 
 ### Added
 
+- **Coverage is measured, and the measurement is a gate.** Nothing ran it — not locally,
+  not in any of the three pipelines — so "is this path tested?" was answered by reading
+  imports, which cannot see branches. Both pipelines now run the suite under `coverage`
+  with a floor in `pyproject.toml`. The first measurement is **95 % of `app/`** across
+  3,465 statements, with 23 modules at 100 %; the floor sits at 92 so a platform-specific
+  branch cannot turn CI red, and it is there to be raised, never lowered.
+- **pytest has a configuration**, so a warning nobody acts on is now an error rather than a
+  line in the log (`filterwarnings = ["error"]`), a typo'd marker fails instead of silently
+  doing nothing (`--strict-markers`), and a typo in the config block fails too
+  (`--strict-config`). Starlette's notice that its test client uses `httpx` is the one
+  exception, ignored by name: the replacement it points at is not in the pinned tree.
 - **`GET /ready`** — a readiness check that can actually fail. All three Kubernetes probes
   pointed at `/health`, which returns a literal and verifies nothing, so a pod whose volume
   came back read-only stayed `Ready` and kept taking traffic while every request failed.
@@ -57,6 +68,17 @@ Findings SEC-1, SEC-4 and OPS-1 of
   unwritable. `/health` is unchanged and stays the liveness signal — startup and liveness
   probes still use it, because "restart me" and "stop sending me traffic" are different
   answers. Public like `/health`: a kubelet sends no headers.
+
+### Fixed
+
+- **A training run leaked a file handle in the API process.** `run_in_child` closed the
+  child's stdin but never its stdout: the relay returns as soon as it has an answer — on a
+  kill, on the stop grace expiring, on a `done` message — while the pump thread is still
+  blocked reading that pipe, so nothing released it until the garbage collector reached the
+  `Popen`. Found by turning warnings into errors (`ResourceWarning`), which is the whole
+  argument for doing so. The close happens *after* the child is gone, deliberately: closing
+  a buffered reader another thread is blocked on waits for that thread's lock, which
+  deadlocks until the child writes something.
 
 ### Changed
 

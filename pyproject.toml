@@ -25,10 +25,45 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.4", "mypy>=1.9", "types-PyYAML>=6.0"]
+dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.4", "mypy>=1.9", "types-PyYAML>=6.0",
+       "coverage[toml]>=7.0"]
 
 # No build-system on purpose: this is an application, not a library.
 # Install runtime deps with `pip install -r requirements.txt` and run via uvicorn.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --strict-markers: a typo'd marker is an error, not a silently inert decorator.
+# --strict-config: a typo in THIS block is an error too.
+addopts = "--strict-markers --strict-config"
+# A warning nobody acts on is a deprecation that lands as a breakage on the next
+# upgrade, so they fail here. The one exception is Starlette's own notice that its
+# TestClient uses httpx: it fires on import of the test client, the replacement it
+# names is not in the pinned tree, and swapping the HTTP client of the whole suite is
+# not something to do as a side effect of turning warnings into errors.
+filterwarnings = [
+    "error",
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+# The training child is a separate interpreter; without this its lines read as
+# uncovered and train_worker looks far worse than it is tested.
+parallel = true
+concurrency = ["thread", "multiprocessing"]
+
+[tool.coverage.report]
+# Measured 95 % on 2026-09-20. The floor sits a little under it so a legitimate
+# platform branch cannot turn CI red, and is meant to be RAISED as it climbs --
+# never lowered to accommodate a drop.
+fail_under = 92
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    'if __name__ == "__main__":',
+]
 
 [tool.ruff]
 line-length = 120
