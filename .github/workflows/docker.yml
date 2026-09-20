@@ -53,8 +53,30 @@ jobs:
       - name: Tests (pytest)
         run: python -m pytest tests -q
 
+  # Supply-chain gate: no image ships a pinned package with a known
+  # vulnerability — tag releases included. It scans requirements-hashes.lock,
+  # the tree the image installs; ci.yml's fresh resolve of requirements.lock
+  # does not gate here, because it audits versions the image does not contain.
+  audit:
+    name: Gate — pip-audit of the image's tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Matches the Docker base (python:3.11-slim, Linux): the scan
+          # evaluates the lock's platform markers for this interpreter.
+          python-version: "3.11"
+      - name: Scan the tree the image installs
+        # Same scan as ci.yml's audit job, which explains the flags.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off
+
   build:
-    needs: test
+    needs: [test, audit]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -75,13 +75,30 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
+          # Matches the Docker base (python:3.11-slim, Linux): the image scan
+          # evaluates the lock's platform markers for this interpreter.
           python-version: "3.11"
 
-      - name: Scan the pinned dependency tree
-        # requirements.lock holds the direct pins the suite runs against; the
-        # transitive tree is compiled from it, so a finding here names the
-        # package to bump. Fails the job, which is the point of a weekly run.
+      - name: Install pip-audit
+        id: install
         run: |
           python -m pip install --upgrade pip
           pip install pip-audit
-          python -m pip_audit -r requirements.lock --progress-spinner off
+
+      # Each scan fails the job, which is the point of a weekly run.
+      - name: Scan the direct pins, dependencies resolved afresh
+        # requirements.lock holds only the 13 direct pins; pip-audit resolves
+        # their dependencies anew, so this covers today's newest transitive
+        # versions (what a dev install or the next recompile gets), not the
+        # ones the image ships. A finding here names the direct package to bump.
+        run: python -m pip_audit -r requirements.lock --progress-spinner off
+
+      - name: Scan the tree the image installs
+        # requirements-hashes.lock, pin for pin as the Dockerfile installs it,
+        # transitive packages included. --disable-pip audits the pins as
+        # written; --no-deps alone would still have pip resolve the file in a
+        # throwaway venv. Sees what the scan above cannot: anyio 4.14.1 sat
+        # pinned here with three CVEs while that scan was green (2026-09-19).
+        # Runs even when the scan above failed, so both always report.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off

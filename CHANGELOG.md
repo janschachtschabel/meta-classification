@@ -84,6 +84,10 @@ dataset enriched before it is best enriched again.
   dependency, same requirements). The CI audit resolves `requirements.lock` afresh and
   so never saw the pinned 4.14.1; data-prep's audit of its full lock, which pins the
   same version, did.
+- **CI audits the tree the image installs.** The audit job adds a pin-for-pin scan of
+  `requirements-hashes.lock` (`--require-hashes --disable-pip`) to the fresh resolve of
+  `requirements.lock`, and `docker.yml` gates the image build on the same scan. With
+  anyio set back to 4.14.1 it fails on the three CVEs above.
 
 ## [Unreleased] — levers that never arrived (2026-09-12)
 
