@@ -102,11 +102,18 @@ class ExplainRequest(BaseModel):
     )
 
 
+# A label URI, bounded per ITEM. `max_length` on a list field bounds the list, not what
+# is in it, so the 100-entry caps below left the request as a whole unbounded — and this
+# is the one write a readonly key can make, into a file that is deliberately never capped.
+LabelUri = Annotated[str, Field(max_length=500)]
+
+
 class FeedbackRequest(BaseModel):
     """One correction an editor made to a prediction.
 
     The bounds are the point: this is the only write a *readonly* key can make, so they
-    are what stands between a key and an unbounded file on the volume.
+    are what stands between a key and an unbounded file on the volume — the list caps
+    below bound how many, ``LabelUri`` bounds how big each one is.
     """
 
     text: str = Field(
@@ -122,20 +129,20 @@ class FeedbackRequest(BaseModel):
     )
     # What the model said, so a later reader can see WHAT was corrected, not only to
     # what. Optional: a correction is still a correction if nobody recorded the guess.
-    predicted: list[str] = Field(
+    predicted: list[LabelUri] = Field(
         default_factory=list, max_length=100,
         description=(
-            "Label URIs the model predicted for `text` (up to 100), so a reader sees what was "
-            "corrected, not only to what. Optional; not part of the export."
+            "Label URIs the model predicted for `text` (up to 100, each at most 500 characters), "
+            "so a reader sees what was corrected, not only to what. Optional; not part of the export."
         ),
     )
     # Empty means "none of these apply" — a real thing to say, and not trainable.
-    corrected: list[str] = Field(
+    corrected: list[LabelUri] = Field(
         default_factory=list, max_length=100,
         description=(
-            "The label URIs that are right for `text` (up to 100): the row's `labels` in "
-            "`GET /feedback/export`. Empty = none of the labels apply — recorded, but left out "
-            "of the export, since a row without labels cannot train."
+            "The label URIs that are right for `text` (up to 100, each at most 500 characters): "
+            "the row's `labels` in `GET /feedback/export`. Empty = none of the labels apply — "
+            "recorded, but left out of the export, since a row without labels cannot train."
         ),
     )
     # Where it came from ("ui", a script, an integration), so a later merge can weigh

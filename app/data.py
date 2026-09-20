@@ -40,8 +40,15 @@ def read_csv(path: str | Path, **kwargs: object) -> pd.DataFrame:
 
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
-_MD_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")  # [text](url) / ![alt](url) -> text/alt
+# Both classes exclude their own OPENING delimiter, and that is load-bearing rather than
+# cosmetic: with `[^>]+` a run of unclosed "<" made every start position consume to the end
+# of the string before failing — quadratic, 52 s for one text at the 100,000-character
+# maximum /predict accepts, with the GIL held throughout. Excluding "<" lets a start
+# position fail in O(1). The cost is that nested or unbalanced markup is now left alone
+# instead of being half-eaten (pinned in tests/test_data.py); well-formed markup, which
+# cannot contain its own opening delimiter, cleans exactly as before.
+_HTML_TAG_RE = re.compile(r"<[^<>]+>")
+_MD_LINK_RE = re.compile(r"!?\[([^\[\]]*)\]\([^()]*\)")  # [text](url) / ![alt](url) -> text/alt
 _MD_MARK_RE = re.compile(r"[*_`~#>]+")  # emphasis / code / heading / quote markers
 _WS_RE = re.compile(r"\s+")
 

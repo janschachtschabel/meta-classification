@@ -1,5 +1,6 @@
 """Tests for dataset loading, cleaning and label preparation."""
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,42 @@ def test_clean_text():
     assert data.clean_text(None) == ""
     assert data.clean_text("x\x00y") == "xy"
     # HTML tags and Markdown markup are stripped.
+    assert data.clean_text("<p>Hallo <b>Welt</b></p>") == "Hallo Welt"
+    assert data.clean_text("# Titel **fett** [link](http://x)") == "Titel fett link"
+
+
+def test_clean_text_does_not_backtrack_on_unclosed_markup():
+    """Unclosed ``[`` or ``<`` must not cost more than linear time.
+
+    Both cleaning patterns used to let a start position consume to the end of the
+    string before failing, once per position: 52 s for ONE text at the 100,000-character
+    maximum ``PredictRequest`` accepts, with the GIL held the whole time. Serving calls
+    this per text, so a single readonly request took the process down.
+
+    The budget is deliberately loose. The fixed patterns need ~2 ms here and the broken
+    ones ~65 s, so anything in between catches the regression while leaving four orders
+    of magnitude of headroom for a loaded CI runner.
+    """
+    for hostile in ("[" * 50_000, "<" * 50_000):
+        started = time.perf_counter()
+        data.clean_text(hostile)
+        assert time.perf_counter() - started < 2.0
+
+
+def test_clean_text_strips_only_well_formed_markup():
+    """Nested and unbalanced markup is left alone rather than half-eaten.
+
+    The patterns exclude their own opening delimiter, which is what makes them linear
+    (see the test above). The visible consequence is here: a ``<`` inside a tag or a
+    ``(`` inside a link target no longer lets the match run past the construct it was
+    meant to cover. Real markup contains neither, so well-formed input is unaffected.
+    """
+    # Only the inner, well-formed tag goes; the stray ">" is then taken by the
+    # blockquote-marker pattern, as it always was. Before, the whole "<tag with <nested>"
+    # was swallowed and only "bracket" survived.
+    assert data.clean_text("<tag with <nested> bracket>") == "<tag with bracket"
+    assert data.clean_text("[text](url(with)parens)") == "[text](url(with)parens)"
+    # Well-formed markup is untouched by the change — this is the case that matters.
     assert data.clean_text("<p>Hallo <b>Welt</b></p>") == "Hallo Welt"
     assert data.clean_text("# Titel **fett** [link](http://x)") == "Titel fett link"
 

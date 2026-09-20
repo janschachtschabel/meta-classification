@@ -127,6 +127,13 @@ def test_feedback_is_bounded_at_the_trust_boundary(trained_model):
         "corrected": [f"uri:{i}" for i in range(200)]}).status_code == 422
     assert client.post("/feedback", headers=RO, json={
         "text": "x", "model_name": "../escape", "corrected": ["uri:hist"]}).status_code == 400
+    # `max_length` on a list field bounds the LIST, not its items: without a bound on the
+    # item the 100-entry cap allowed a single request of any size at all. A label URI is
+    # a URI, so 500 characters is already far above anything real.
+    for field in ("corrected", "predicted"):
+        oversized = client.post("/feedback", headers=RO, json={
+            "text": "x", "model_name": "api_model", field: ["u" * 501]})
+        assert oversized.status_code == 422, f"{field} item is unbounded: {oversized.text[:120]}"
 
 
 def test_a_correction_that_cannot_be_stored_says_so_instead_of_failing_as_a_bug(

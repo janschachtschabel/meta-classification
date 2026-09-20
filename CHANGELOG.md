@@ -2,6 +2,45 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — the audit's blockers (2026-09-20)
+
+Findings SEC-1, SEC-4 and OPS-1 of
+[`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md).
+
+### Security
+
+- **One `/predict` request could freeze the whole API.** The two patterns that strip
+  HTML and Markdown in `clean_text` backtracked quadratically: a text of unclosed `[`
+  or `<` made every start position consume to the end of the string before failing.
+  Measured on the shipped interpreter, one text at the 100,000-character maximum the
+  schema accepts took **52 s**, and the GIL was held throughout — so the thread offload
+  on the serving path did not keep the event loop alive, `/health` included. `/predict`
+  needs only a *readonly* key, the rate limiter cannot help (one request suffices), and
+  under the Helm chart the liveness probe would kill the pod after ~90 s, taking a
+  running training with it. Both patterns now exclude their own opening delimiter, which
+  makes a failing start position O(1): the same input is back under 2 ms.
+- **A readonly key could write a correction of any size.** `predicted` and `corrected`
+  on `POST /feedback` carried `max_length=100`, which in pydantic bounds the *list*, not
+  the strings in it — so one request could carry megabytes into a file that is
+  deliberately never capped, and that a later training run reads. Each label URI is now
+  bounded at 500 characters. (`model_name` was already bounded, by `safe_name`, which
+  answers 400 rather than 422 — left as it is.)
+- **The pipeline that builds the deployed image now has a CVE gate.** `.gitlab-ci.yml`
+  gained a `pip-audit` job in the `test` stage, so a vulnerable pin stops the build. The
+  GitHub workflows audit the ghcr.io image, which is not what the self-hosted registry
+  serves; anyio 4.14.1 sat pinned with three CVEs while every gate on this side was green.
+
+### Changed
+
+- **`clean_text` leaves nested and unbalanced markup alone** instead of half-eating it —
+  the visible side of the fix above. `<tag with <nested> bracket>` used to clean to
+  `bracket` and now cleans to `<tag with bracket`; `[text](url(with)parens)` is left
+  untouched. **Well-formed markup is unaffected**, because a real tag or link cannot
+  contain its own opening delimiter — the existing cases are pinned unchanged in
+  `tests/test_data.py`. Models trained before this change saw the old cleaning for such
+  rows; the difference is confined to malformed markup and disappears on the next
+  retrain.
+
 ## [Unreleased] — two defects the API-docs review turned up (2026-09-20)
 
 ### Changed
