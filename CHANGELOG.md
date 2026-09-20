@@ -6,6 +6,10 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ### Changed
 
+- **`schemas.py` became `app/schemas/`** — 488 lines carrying three unrelated reasons to
+  change, split into `training`, `serving`, `datasets` and the `common` wording they
+  share. A pure move: the OpenAPI schema is byte-identical, and every importer keeps
+  saying `from ..schemas import TrainRequest`.
 - **Every parameter in `/docs` is described.** The twelve path parameters
   (`model_name`, `dataset_name`, `share_id`) carried no text; each router now declares
   its name once as an annotated alias, so the routes that share a name share the
