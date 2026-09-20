@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
+from .bundle_meta import as_mapping
 from .dataset_load import load_dataset
 from .errors import TrainingInputError
 from .metrics import compute_metrics
@@ -87,6 +88,22 @@ def evaluate_model(model, texts: list[str], label_lists: list[list[str]]) -> dic
     return result
 
 
+def _weights_for(registry: Registry, name: str, req: dict) -> dict:
+    """How often each text column is repeated in the evaluation text.
+
+    A model was fit on text assembled a particular way, so a request that says nothing
+    is scored the way the model was trained: the bundle's own weights, narrowed to the
+    columns this run reads (as a training request narrows them). A caller who really
+    wants every column once sends an explicit empty mapping.
+    """
+    asked = req.get("text_column_weights")
+    if asked is not None:
+        return dict(asked)
+    recorded = as_mapping(as_mapping(registry.info(name).get("metadata"))
+                          .get("text_column_weights"))
+    return {col: weight for col, weight in recorded.items() if col in req["text_columns"]}
+
+
 def run_evaluation(
     req: dict,
     settings: Settings,
@@ -107,6 +124,7 @@ def run_evaluation(
     """
     started = time.time()
     name = req["model_name"]
+    weights = _weights_for(registry, name, req)
     on_progress(phase="loading", progress=5, message=f"Reading {req['dataset_name']} …")
     data = load_dataset(
         settings.data_dir / req["dataset_name"],
@@ -115,7 +133,7 @@ def run_evaluation(
         separator=req.get("csv_separator", ";"),
         label_separator=req.get("label_separator", ","),
         label_filter=req.get("label_filter"),
-        text_column_weights=req.get("text_column_weights"),
+        text_column_weights=weights,
     )
     # A row an LLM wrote or touched is never scored: measured on it, a model is measured
     # on how well it learned that LLM (data-prep's marks, see ``provenance``).
@@ -142,6 +160,9 @@ def run_evaluation(
         "dataset": req["dataset_name"],
         "label_column": req["label_column"],
         "text_columns": list(req["text_columns"]),
+        # What the scored text was built from: a number is only comparable against
+        # another run that assembled its text the same way.
+        "text_column_weights": weights,
         "evaluated_at": datetime.now(UTC).isoformat(),
         "duration_seconds": round(time.time() - started, 1),
         **result,

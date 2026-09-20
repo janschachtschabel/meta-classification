@@ -27,8 +27,8 @@ _DATASET_NAME = (
 _LABEL_COLUMN = "Column holding each row's labels, several per cell separated by `label_separator`."
 _CSV_SEPARATOR = "The CSV's field delimiter: exactly one character."
 _LABEL_SEPARATOR = (
-    "Separator between the labels in one `label_column` cell, matched literally. Labels are "
-    "trimmed; empty ones are dropped."
+    "Separator between the labels in one `label_column` cell, matched literally, at least one "
+    "character. Labels are trimmed; empty ones are dropped."
 )
 _LABEL_FILTER = (
     "Keep only labels containing this substring (case-sensitive), e.g. a vocabulary's URI "
@@ -225,7 +225,7 @@ class TrainRequest(BaseModel):
     # engine) — a crafted one can backtrack catastrophically (ReDoS), and in
     # /train it would hang the training thread outside any stop checkpoint.
     csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
-    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
+    label_separator: str = Field(",", min_length=1, description=_LABEL_SEPARATOR)
     info: ModelInfo | None = Field(
         None,
         description=(
@@ -428,7 +428,7 @@ class EvaluateRequest(BaseModel):
     )
     # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
     csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
-    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
+    label_separator: str = Field(",", min_length=1, description=_LABEL_SEPARATOR)
     label_filter: OptionalFilter = Field(None, description=_LABEL_FILTER)
     # The model was fit on text assembled a particular way; scoring it on text
     # assembled differently measures a distribution it was not tuned on.
@@ -436,10 +436,12 @@ class EvaluateRequest(BaseModel):
         None,
         description=(
             "How often each text column is repeated in the evaluation text, as in `/train` "
-            '(e.g. `{"properties.cclom:title": 2}`; unlisted columns once). null (default) '
-            "repeats nothing: it does NOT read the model's own weights, so send its "
-            "`metadata.text_column_weights` (`GET /models/{name}`) to score it on text built the "
-            "way it was trained. Values below 1 count as 1; keys not in `text_columns` are ignored."
+            '(e.g. `{"properties.cclom:title": 2}`; unlisted columns once). Omitted or null '
+            "(default) takes the model's own weights (`metadata.text_column_weights` in "
+            "`GET /models/{name}`), narrowed to `text_columns`, so it is scored on text built "
+            "the way it was trained; an explicit `{}` repeats nothing. Values below 1 count as "
+            "1; keys not in `text_columns` are ignored. The recorded evaluation says which "
+            "weights it used."
         ),
     )
 
@@ -453,7 +455,7 @@ class AnalyzeRequest(BaseModel):
     label_column: str = Field(..., description=_LABEL_COLUMN)
     # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
     csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
-    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
+    label_separator: str = Field(",", min_length=1, description=_LABEL_SEPARATOR)
     label_filter: OptionalFilter = Field(None, description=_LABEL_FILTER)
 
 
@@ -468,7 +470,7 @@ class ValidateRequest(BaseModel):
     label_column: str = Field(..., description=_LABEL_COLUMN)
     # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
     csv_separator: str = Field(";", min_length=1, max_length=1, description=_CSV_SEPARATOR)
-    label_separator: str = Field(",", description=_LABEL_SEPARATOR)
+    label_separator: str = Field(",", min_length=1, description=_LABEL_SEPARATOR)
 
 
 class ExportRequest(BaseModel):

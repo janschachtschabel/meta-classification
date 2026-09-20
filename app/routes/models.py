@@ -262,6 +262,11 @@ async def evaluate_model(
     answer where it can be found again — appended to the bundle's `evaluations`, never
     over the training metrics, which describe the run that produced the model.
 
+    The scored text is assembled the way the model was trained: without
+    `text_column_weights` the run takes the bundle's own weights, narrowed to
+    `text_columns`, and the recorded result says which ones it used. An explicit `{}`
+    scores every column once.
+
     The model's own label space decides what can be scored: labels the model never
     learned are reported (`unknown_labels`), and rows carrying only such labels are
     excluded and counted (`rows_without_a_known_label`) rather than scored as failures

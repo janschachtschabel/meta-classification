@@ -2,6 +2,25 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — two defects the API-docs review turned up (2026-09-20)
+
+### Fixed
+
+- **An evaluation scored the model on text it was never trained on.** `POST
+  /models/{name}/evaluate` read `text_column_weights` from the request only, and null
+  meant "no weighting" — while the admin UI sends no weights at all. A model trained
+  with the recommended title+keywords at 2× was therefore measured on text assembled
+  differently from everything it ever saw, and the number was not comparable to its own
+  training metrics. The run now takes the bundle's own weights when the request names
+  none, narrowed to `text_columns` as a training request narrows them, and the recorded
+  evaluation says which weights it used (`text_column_weights`). An explicit `{}` still
+  means every column once.
+- **An empty `label_separator` was accepted and then crashed.** `"a,b".split("")` raises
+  `ValueError` deep inside the loader — a 500 on `/datasets/analyze` and
+  `/datasets/{name}/validate`, and on `/train` a job that died long after the request
+  was accepted. The four request models that take one now require at least one
+  character, so the boundary answers 422.
+
 ## [Unreleased] — AI rows train, real rows measure (2026-09-19)
 
 data-prep marks the rows an LLM wrote or touched. api_v3 read none of those marks, so a

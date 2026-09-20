@@ -1439,3 +1439,22 @@ def test_train_request_thin_label_threshold_validation_and_plumbing():
     body = TrainRequest(**{**TRAIN_BODY, "thin_label_threshold": "global"})
     req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
     assert req["thin_label_threshold"] == "global"
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/train", {"dataset_name": "d.csv", "model_name": "m", "text_columns": ["title"],
+                "label_column": "labels", "label_separator": ""}),
+    ("/datasets/analyze", {"dataset_name": "d.csv", "text_columns": ["title"],
+                           "label_column": "labels", "label_separator": ""}),
+    ("/datasets/d.csv/validate", {"text_columns": ["title"], "label_column": "labels",
+                                  "label_separator": ""}),
+    ("/models/m/evaluate", {"dataset_name": "d.csv", "text_columns": ["title"],
+                            "label_column": "labels", "label_separator": ""}),
+])
+def test_an_empty_label_separator_is_refused_not_crashed_on(path, body):
+    """`"a,b".split("")` raises deep inside the loader: a 500, or a training job that
+    dies long after the request was accepted. One character is the minimum that can
+    separate two labels."""
+    response = client.post(path, json=body, headers=ADMIN)
+
+    assert response.status_code == 422, response.text

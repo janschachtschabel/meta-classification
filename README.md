@@ -440,7 +440,10 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
   is not something a run can learn from (`APIV3_FEEDBACK_FILE`).
 - **Evaluate a model on a dataset:** `POST /models/{name}/evaluate` — the only honest
   way to say "model B beats model A" is the same rows. Rows data-prep marks as written
-  or touched by an LLM are skipped and counted (`ai_marked_rows_skipped`). Runs as a background job on the
+  or touched by an LLM are skipped and counted (`ai_marked_rows_skipped`). The text is
+  assembled the way the model was trained: `text_column_weights` defaults to the
+  bundle's own weights (send `{}` for none), and the recorded result says which it used.
+  Runs as a background job on the
   same worker (so it queues behind a training), appends the result to the bundle's
   `evaluations` and never touches the training metrics. Truth is scored in the **model's
   own label space**: labels it never learned are listed in `unknown_labels`, rows

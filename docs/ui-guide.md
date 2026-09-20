@@ -151,6 +151,9 @@ zwei Wörter. Die Label-Tabelle steht trotzdem zur Verfügung.
 Im Modell-Detail steht **Bewerten gegen…**: Datensatz und Spalten wählen, starten. Der Lauf
 geht als Hintergrundjob an den Server — hinter ein laufendes Training, sichtbar auf dem
 Reiter „Training“. Das Ergebnis landet **neben** den Trainingsmetriken im Bundle, nie darüber.
+Der Text wird dabei so zusammengesetzt, wie das Modell trainiert wurde: Hat das Training
+etwa den Titel doppelt gewichtet, zählt er auch hier doppelt. Sonst würde das Modell auf
+anders gebautem Text geprüft, und die Zahl wäre mit seinen eigenen nicht vergleichbar.
 
 In der Tabelle darüber steht dann pro Lauf: Datensatz, gewertete Zeilen, **Getroffene Labels**,
 F1 macro und micro.

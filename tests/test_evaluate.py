@@ -132,25 +132,30 @@ class _RecordingModel(_StubModel):
 
 
 class _Registry:
-    def __init__(self, model):
+    def __init__(self, model, metadata=None):
         self.model, self.records = model, []
+        self.metadata = metadata or {}
 
     def get(self, name):
         return self.model
+
+    def info(self, name):
+        """What the bundle records about the run that produced the model."""
+        return {"name": name, "metadata": self.metadata}
 
     def append_evaluation(self, name, record):
         self.records.append(record)
 
 
-def _evaluate_csv(tmp_path, lines):
+def _evaluate_csv(tmp_path, lines, *, text_columns=("title",), metadata=None, **request):
     from app.settings import Settings
 
     (tmp_path / "eval.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
     model = _RecordingModel(["a", "b"])
-    registry = _Registry(model)
+    registry = _Registry(model, metadata)
     evaluate.run_evaluation(
-        {"model_name": "m", "dataset_name": "eval.csv", "text_columns": ["title"],
-         "label_column": "labels"},
+        {"model_name": "m", "dataset_name": "eval.csv", "text_columns": list(text_columns),
+         "label_column": "labels", **request},
         Settings(data_dir=tmp_path, models_dir=tmp_path / "models", auth_enabled=False),
         registry, on_progress=lambda **_: None, should_stop=lambda: False,
     )
@@ -181,3 +186,42 @@ def test_a_dataset_of_ai_rows_only_cannot_be_evaluated_and_says_why(tmp_path):
 
     with pytest.raises(TrainingInputError, match="AI-marked"):
         _evaluate_csv(tmp_path, ["title;labels;generated_for", "Erzeugter Text eins;a;a"])
+
+
+def test_the_text_is_assembled_the_way_the_model_was_trained(tmp_path):
+    """A model fit on title-twice-plus-keywords, scored on title-once, is measured on a
+    distribution it was never tuned on -- and the UI sends no weights at all."""
+    model, registry = _evaluate_csv(
+        tmp_path,
+        ["title;keywords;labels", "Bruchrechnung;Mathe Zahlen;a"],
+        text_columns=("title", "keywords"),
+        metadata={"text_columns": ["title", "keywords"], "text_column_weights": {"title": 2}},
+    )
+
+    assert model.scored == ["Bruchrechnung Bruchrechnung Mathe Zahlen"]
+    assert registry.records[0]["text_column_weights"] == {"title": 2}
+
+
+def test_a_weight_for_a_column_this_run_does_not_read_is_left_out(tmp_path):
+    """The bundle may name more columns than the request reads; the weights narrow to
+    the columns actually assembled, as a training request narrows them."""
+    _, registry = _evaluate_csv(
+        tmp_path,
+        ["title;labels", "Bruchrechnung;a"],
+        metadata={"text_column_weights": {"title": 2, "description": 3}},
+    )
+
+    assert registry.records[0]["text_column_weights"] == {"title": 2}
+
+
+def test_asking_for_no_weighting_is_still_possible(tmp_path):
+    """An explicit empty mapping means what it says: every column once."""
+    model, registry = _evaluate_csv(
+        tmp_path,
+        ["title;labels", "Bruchrechnung;a"],
+        metadata={"text_column_weights": {"title": 2}},
+        text_column_weights={},
+    )
+
+    assert model.scored == ["Bruchrechnung"]
+    assert registry.records[0]["text_column_weights"] == {}
