@@ -7,6 +7,7 @@ run can read back.
 
 import csv
 import io
+import json
 
 import pytest
 
@@ -177,26 +178,43 @@ def _exported(**kwargs) -> list[str]:
     return [row["text"] for row in csv.DictReader(io.StringIO(document), delimiter=";")]
 
 
-def test_the_export_pages_by_position_because_the_clock_is_too_coarse(store):
-    """`offset` + `limit` are the cursor; `recorded_at` could not be one.
-
-    Five appends in a row share a single microsecond value on this platform, so a stamp
-    cursor would either skip every correction recorded in the boundary instant or hand it
-    out twice — and a duplicated row in training data is not a harmless kind of wrong.
-    The file is append-only and never rewritten, which is exactly what makes a position
-    stable.
-    """
+def test_the_export_pages_by_position(store):
+    """`offset` + `limit` are the cursor, and paging covers each correction exactly once."""
     for index in range(5):
         feedback.append(_correction(f"text {index}", ["uri:hist"]))
 
-    stamps = {entry["recorded_at"] for entry in feedback.read_all()}
-    assert len(stamps) < 5, "the premise: the clock does not separate these writes"
-
     assert _exported(limit=2) == ["text 0", "text 1"]
     assert _exported(offset=3) == ["text 3", "text 4"]
-    # Paging covers every correction exactly once, which is the property that matters.
     assert _exported(offset=0, limit=2) + _exported(offset=2, limit=2) + _exported(offset=4) == [
         f"text {index}" for index in range(5)]
+
+
+def test_paging_survives_corrections_that_share_a_timestamp(store):
+    """Why the cursor is a position and not the `recorded_at` stamp.
+
+    Corrections can share a stamp — the clock is coarser than the writes on some
+    platforms, and two appends can land in one microsecond on any of them. A stamp cursor
+    then has no good move: `> stamp` skips every correction recorded in that instant,
+    `>= stamp` hands them out again, and a duplicated row in training data is not a
+    harmless kind of wrong.
+
+    Written straight into the store rather than through `append`, so the collision is the
+    test's premise instead of a property of whatever machine runs it — the earlier version
+    of this test asserted that five appends collide, which is true on Windows and false on
+    the Linux runner.
+    """
+    shared = "2026-09-20T12:00:00+00:00"
+    store.write_text(
+        "".join(json.dumps({"text": f"text {i}", "corrected": ["uri:hist"],
+                            "recorded_at": shared}) + "\n" for i in range(3)),
+        encoding="utf-8")
+
+    assert {entry["recorded_at"] for entry in feedback.read_all()} == {shared}, "one instant"
+    assert _exported() == ["text 0", "text 1", "text 2"]
+    # Each page is disjoint and complete, which no stamp cursor could manage here.
+    assert _exported(limit=1) == ["text 0"]
+    assert _exported(offset=1, limit=1) == ["text 1"]
+    assert _exported(offset=2) == ["text 2"]
 
 
 def test_paging_addresses_exported_rows_not_recorded_ones(store):
