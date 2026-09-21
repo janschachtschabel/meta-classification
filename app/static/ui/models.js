@@ -55,7 +55,8 @@ async function editModelInfo(name) {
         <button type="button" class="ghost small" data-close>${t("common.close")}</button>
       </form>
     </div>`;
-  box.querySelector("[data-close]").addEventListener("click", () => { box.innerHTML = ""; });
+  const close = closer(() => { box.innerHTML = ""; });
+  box.querySelector("[data-close]").addEventListener("click", close);
   box.querySelector("#info-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const errEl = box.querySelector("#info-error");
@@ -70,7 +71,7 @@ async function editModelInfo(name) {
     try {
       await Api.put(`/models/${encodeURIComponent(name)}/info`, body);
       toast(t("models.info.saved"));
-      box.innerHTML = "";
+      close();   // the Save button is inside what this empties; `close` knows where to go
     } catch (err) { showError(errEl, err); }
   });
   box.querySelector("#info-author").focus();

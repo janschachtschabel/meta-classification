@@ -34,6 +34,24 @@ function showError(el, err) {
   el.hidden = false;
 }
 
+/* Closing an inline panel by emptying the container its close button lives in destroys
+   the focused element, and focus falls to <body> — a keyboard user is then back at the
+   top of the document and tabs through the whole shell to reach the row they were on.
+   The <dialog> panels get this for free; these have to do it themselves.
+
+   The opener is whatever had focus when the panel was built, which for a keyboard user is
+   the button they activated. (A mouse user on Safari leaves `activeElement` at <body>,
+   where restoring is a no-op — no worse than before, and they were not the ones stranded.)
+   Called once per panel and shared by every way of closing it, so a save-and-close returns
+   to the same place the close button does rather than to the destroyed Save button. */
+function closer(close) {
+  const opener = document.activeElement;
+  return () => {
+    close();
+    if (opener && opener.isConnected && opener !== document.body) opener.focus();
+  };
+}
+
 /* ---------- login / shell ---------- */
 
 async function boot() {
@@ -108,19 +126,32 @@ function showApp(keyless) {
 
 const loaders = { query: loadQueryTab, training: loadTrainingTab, models: loadModels, datasets: loadDatasets };
 
-function switchTab(name, { focus = false } = {}) {
+function switchTab(name) {
   document.querySelectorAll(".tab").forEach((b) => {
     const selected = b.dataset.tab === name;
     b.setAttribute("aria-selected", selected ? "true" : "false");
-    b.tabIndex = selected ? 0 : -1;  // roving tabindex: only the active tab is in the Tab order
-    if (selected && focus) b.focus();
+    b.tabIndex = selected ? 0 : -1;  // roving tabindex: one tab is in the Tab order
   });
   document.querySelectorAll(".tab-panel").forEach((p) => { p.hidden = p.id !== `tab-${name}`; });
   loaders[name]();
 }
 
-// WAI-ARIA tabs keyboard model: Left/Right cycle, Home/End jump. Order comes
-// from the DOM so it can never drift from the markup.
+/* Moves focus along the bar WITHOUT selecting: the tabindex travels with focus, so the
+   Tab key still leaves the tablist from wherever the user is. */
+function focusTab(button) {
+  document.querySelectorAll(".tab").forEach((b) => { b.tabIndex = b === button ? 0 : -1; });
+  button.focus();
+}
+
+/* WAI-ARIA tabs keyboard model: Left/Right cycle, Home/End jump. Order comes from the DOM
+   so it can never drift from the markup.
+
+   MANUAL activation — the arrows move focus and Enter or Space selects (a <button> turns
+   those into the click each tab already listens for). The APG recommends automatic
+   activation only where showing a panel is cheap, and this is the other case: switchTab
+   runs the tab's loader, so one Arrow-Right fired `GET /models` plus a request per model,
+   and arrowing to Training added `GET /datasets`, which reads every CSV in full. Holding
+   the key down walked the bar and did all of it per step. */
 function onTablistKeydown(ev) {
   const moves = { ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last" };
   if (!(ev.key in moves)) return;
@@ -131,7 +162,7 @@ function onTablistKeydown(ev) {
   const next = move === "first" ? 0
     : move === "last" ? tabs.length - 1
     : (cur + move + tabs.length) % tabs.length;
-  switchTab(tabs[next].dataset.tab, { focus: true });
+  focusTab(tabs[next]);
 }
 
 // Last: every tab's loader has to be defined before the shell asks for one.

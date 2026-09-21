@@ -24,7 +24,7 @@ async function openCorrection(modelName, predicted, card, button) {
   const box = card.querySelector(".correction");
   box.querySelector("[data-send]").addEventListener("click", () =>
     sendCorrection(modelName, predicted, box));
-  box.querySelector("[data-cancel]").addEventListener("click", () => box.remove());
+  box.querySelector("[data-cancel]").addEventListener("click", closer(() => box.remove()));
   box.querySelector("select").focus();
 }
 

@@ -8,6 +8,22 @@ Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-a
 
 ### Fixed
 
+- **Closing an inline panel stranded the keyboard at the top of the page.** The model-info
+  form, the share panel and the correction box each bound their close button *inside* the
+  container they then emptied, so the focused element was destroyed and focus fell to
+  `<body>` — to get back to the row they were working on, a keyboard user tabbed through
+  the whole shell. The `<dialog>` panels had always restored focus; these now do too,
+  returning to the button that opened them. Model-info's save-and-close returns there as
+  well, rather than to the Save button it just destroyed.
+- **Arrow-keying the tab bar reloaded the app once per keypress.** Selecting a tab runs its
+  loader, and the arrow handler selected: one Arrow-Right fired `GET /models` plus a
+  request per model, and arrowing onto Training added `GET /datasets`, which reads every
+  CSV in full — so holding the key down walked the bar and did all of it at every step.
+  The APG recommends that automatic activation only where showing a panel is cheap, and
+  this is the other case, so the arrows now move focus and Enter or Space selects.
+  **Measured after the change: five keypresses (three arrows, Home, End) issue zero
+  requests**, and activating issues two.
+
 - **A profile with site data blocked got a blank white page.** Reading `sessionStorage`
   *throws* there rather than returning null, and `Api.getKey()` is the first thing the boot
   sequence does — so the throw escaped a `boot()` that had no `.catch`, both views stayed

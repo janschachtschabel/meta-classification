@@ -159,3 +159,63 @@ def test_the_boot_sequence_cannot_end_in_a_blank_page():
     app = (UI / "app.js").read_text(encoding="utf-8")
 
     assert "boot().catch(" in app, "boot() is invoked without a catch"
+
+
+# The handler is whatever stands between the comma and the end of the statement, which may
+# wrap over lines — so this reads statements, not lines.
+_CLOSE_HANDLER = re.compile(
+    r'\[data-(?:close|cancel)\]"\)\.addEventListener\(\s*"click"\s*,(?P<handler>.*?)\);',
+    re.DOTALL)
+
+
+def test_closing_a_panel_puts_focus_somewhere_a_person_can_use():
+    """Emptying the container the close button lives in destroys the focused element.
+
+    Focus then falls to `<body>`, and a keyboard user is back at the top of the document:
+    to return to the row they were working on they tab through the whole shell. The
+    `<dialog>` panels get this right for free — `close()` restores focus to whatever
+    opened them — and the three inline panels (model info, share link, correction) did
+    not, because nothing was written down about where focus should land.
+
+    Two acceptable answers, then: hand it to `<dialog>`, or go through `closer()`, which
+    remembers what had focus when the panel was built. A handler passed by name counts
+    when that name is bound from `closer()` — a panel with more than one way to close it
+    shares the one closer, so save-and-close returns where the close button does rather
+    than to the Save button it just destroyed.
+    """
+    offenders = []
+    for module in sorted(UI.glob("*.js")):
+        source = module.read_text(encoding="utf-8")
+        from_closer = set(re.findall(r"\b(?:const|let)\s+(\w+)\s*=\s*closer\(", source))
+        for match in _CLOSE_HANDLER.finditer(source):
+            handler = match.group("handler").strip()
+            if "dialog.close()" in handler or "closer(" in handler or handler in from_closer:
+                continue
+            line = source.count("\n", 0, match.start()) + 1
+            offenders.append(f"{module.name}:{line}: {handler}")
+
+    assert offenders == [], ("a panel closes without saying where focus goes:\n"
+                             + "\n".join(offenders))
+
+
+def test_arrowing_along_the_tab_bar_moves_focus_and_loads_nothing():
+    """Manual activation, because activating a tab here is expensive.
+
+    The arrow handler called `switchTab`, which calls the tab's loader: one Arrow-Right
+    and `loadModels` issues `GET /models` plus one `GET /models/{name}` per model;
+    `loadTrainingTab` adds `GET /datasets`, which the route documents as reading every CSV
+    in full. Holding the key down walked the whole bar, firing all of it per step. The APG
+    recommends automatic activation only when showing a panel is cheap, and this is the
+    other case — so arrows move focus, and Enter or Space (which a <button> turns into the
+    click the tab already listens for) selects.
+    """
+    app = (UI / "app.js").read_text(encoding="utf-8")
+    start = app.index("function onTablistKeydown")
+    handler = app[start:app.index("\n}\n", start)]
+
+    assert "switchTab(" not in handler, "an arrow key still activates the tab it lands on"
+    assert "focusTab(" in handler, "the arrow keys have to move focus somehow"
+    # Manual activation is only an improvement while Enter and Space still work, which
+    # they do through the click listener every tab already carries.
+    assert re.search(r'\.tab"\)\.forEach\(\(\w+\) => \w+\.addEventListener\("click"', app), \
+        "the tabs lost their click listener, so Enter and Space no longer select"

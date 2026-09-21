@@ -28,7 +28,8 @@ async function shareResource(kind, name, boxSel) {
       await navigator.clipboard.writeText(ev.target.dataset.copy);
       toast(t("share.copied"));
     });
-    box.querySelector("[data-close]").addEventListener("click", () => { box.innerHTML = ""; });
+    box.querySelector("[data-close]").addEventListener("click",
+                                                       closer(() => { box.innerHTML = ""; }));
     renderShareLinks(kind, `#${kind}-links`);   // the new link joins the overview
   } catch (err) { toast(err.message); }
 }
