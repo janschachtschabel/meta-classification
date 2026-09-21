@@ -12,14 +12,20 @@
   /* light theme — all pairings meet WCAG AA on their backgrounds */
   --bg: #f4f6f8;
   --surface: #ffffff;
-  --text: #1a2330;          /* 13.9:1 on surface */
-  --muted: #5a6675;         /* 5.6:1 on surface */
-  --border: #c3ccd6;        /* >3:1 vs surface for field borders */
-  --accent: #0f5cad;        /* 6.0:1 on surface — buttons/links */
-  --accent-text: #ffffff;   /* 6.0:1 on accent */
-  --danger: #b3261e;        /* 6.6:1 on surface */
-  --danger-text: #ffffff;   /* 6.6:1 on danger */
-  --ok: #1e6b3a;            /* 5.9:1 on surface */
+  --text: #1a2330;          /* 15.8:1 on surface */
+  --muted: #5a6675;         /* 5.8:1 on surface */
+  /* Two lines, because one number cannot serve both jobs. The hairline separates
+     things (cards, table rows, section rules) and may be quiet; the outline of a CONTROL
+     is what SC 1.4.11 asks 3:1 for, and a quiet one leaves a low-vision user unable to
+     see where a field begins. This token claimed ">3:1 vs surface" and was 1.6:1.
+     tests/test_ui_contrast.py recomputes every ratio stated here. */
+  --border: #c3ccd6;        /* hairline: 1.6:1 on surface — separators only */
+  --border-ui: #6b7684;     /* controls: 4.6:1 on surface, 4.3:1 on bg */
+  --accent: #0f5cad;        /* 6.7:1 on surface — buttons/links */
+  --accent-text: #ffffff;   /* 6.7:1 on accent */
+  --danger: #b3261e;        /* 6.5:1 on surface */
+  --danger-text: #ffffff;   /* 6.5:1 on danger */
+  --ok: #1e6b3a;            /* 6.5:1 on surface */
   --warn: #8a5300;          /* 6.3:1 on surface */
   --focus: #0f5cad;
   --bar-bg: #dde3ea;
@@ -28,13 +34,14 @@
   :root {
     --bg: #12161c;
     --surface: #1c232d;
-    --text: #e8edf3;        /* 13.0:1 on surface */
-    --muted: #9fabb9;       /* 5.6:1 on surface */
-    --border: #46525f;
-    --accent: #7db3e8;      /* 6.5:1 on surface */
-    --accent-text: #0f1720; /* 7.4:1 on accent */
+    --text: #e8edf3;        /* 13.4:1 on surface */
+    --muted: #9fabb9;       /* 6.8:1 on surface */
+    --border: #46525f;      /* hairline: 2.0:1 on surface — separators only */
+    --border-ui: #78838f;   /* controls: 4.1:1 on surface, 4.7:1 on bg */
+    --accent: #7db3e8;      /* 7.1:1 on surface */
+    --accent-text: #0f1720; /* 8.2:1 on accent */
     --danger: #f2887f;
-    --danger-text: #2b1210; /* 8.5:1 on danger — white was ~2.4:1 in dark mode */
+    --danger-text: #2b1210; /* 7.2:1 on danger — white was ~2.4:1 in dark mode */
     --ok: #7fce9c;
     --warn: #e8b566;
     --focus: #7db3e8;
@@ -108,7 +115,7 @@ input, select, textarea, button {
    label to the far side of the row. */
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea {
   width: 100%; padding: var(--s-2) var(--s-3);
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); border: 1px solid var(--border-ui); border-radius: var(--radius);
 }
 fieldset { border: 1px solid var(--border); border-radius: var(--radius); margin: var(--s-3) 0; }
 legend { font-weight: 600; padding: 0 var(--s-2); }
@@ -117,7 +124,8 @@ legend { font-weight: 600; padding: 0 var(--s-2); }
 .pillbox {
   display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center;
   padding: var(--s-2); margin: var(--s-2);
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  /* Reads as one text field — same fill as a real input — so it is outlined like one. */
+  background: var(--bg); border: 1px solid var(--border-ui); border-radius: var(--radius);
 }
 .pillbox input {
   flex: 1 1 220px; min-width: 140px;
@@ -152,7 +160,7 @@ button {
 }
 button[disabled] { opacity: 0.55; cursor: progress; }
 button.ghost, button.tab {
-  background: transparent; color: var(--text); border: 1px solid var(--border);
+  background: transparent; color: var(--text); border: 1px solid var(--border-ui);
   font-weight: 500; margin-top: 0;
 }
 button.small { min-height: 32px; padding: var(--s-1) var(--s-3); margin: 0; }

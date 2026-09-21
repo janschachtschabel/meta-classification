@@ -2,6 +2,27 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — the admin UI's quality floor (2026-09-21)
+
+Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md).
+
+### Fixed
+
+- **Every form field was outlined at 1.6:1, under a comment claiming ">3:1".** `--border`
+  drew the boundary of every input, select and textarea as well as every card edge and
+  table rule, at **1.62:1 on the card and 1.50:1 on the field's own fill** — SC 1.4.11
+  requires **3:1** for the visual boundary of a control, and dark mode failed too (1.98:1 /
+  2.27:1). One value cannot serve both jobs, so there are now two: `--border` stays the
+  quiet hairline for separators, and the new `--border-ui` outlines controls at **4.6:1 /
+  4.3:1** light and **4.1:1 / 4.7:1** dark (verified in the browser, not only computed).
+  In a BITV 2.0 / EN 301 549 context this was a conformance blocker.
+- **Twelve colour comments stated ratios their colours do not produce.** The audit reported
+  `--border` as the only wrong one; re-deriving all of them found eleven more. Most
+  understated and were therefore harmless (`--text` claimed 13.9:1 and is 15.8:1), but dark
+  `--danger-text` claimed 8.5:1 and is 7.2:1. A number in a comment is a claim nobody
+  re-checks, which is exactly how `--border` survived: `tests/test_ui_contrast.py` now
+  recomputes every stated ratio from the two colours it names and fails on any that drifts.
+
 ## [Unreleased] — the numbers a run reports (2026-09-21)
 
 Findings CORR-2 to CORR-4 of
