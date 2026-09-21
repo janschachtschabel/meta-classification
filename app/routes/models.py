@@ -90,6 +90,11 @@ async def model_info(model_name: ModelName, _: str = Depends(require_role("reado
     `metadata.evaluation`), per-label F1 and support, the text columns and weights the
     model expects, `info`, and `evaluations` (results of `POST /models/{name}/evaluate`).
 
+    The macro averages and `per_label_f1` cover the labels those rows carry a positive
+    for; `metrics.labels_not_scored` names the rest. Such a label scores F1 0.0 under
+    every model, so averaging it in would measure the split. `f1_micro`, `n_labels` and
+    the labels-per-row averages still cover the whole label space.
+
     A model trained on a dataset carrying data-prep's marks also has
     `metadata.synthetic_data`: the run's `mode` (`synthetic_rows`); how many rows an LLM
     wrote (`generated_rows`), showed as examples (`example_rows`) or completed
@@ -117,10 +122,11 @@ async def model_labels(model_name: ModelName, _: str = Depends(require_role("rea
     which is what decides whether one answer deserves a second look. `support` makes
     a score readable — 0.13 on 25 rows is a different statement from 0.13 on 5,000.
     `threshold` is `null` for binary/multiclass, where serving decides by argmax and
-    reads no threshold. `f1` is `null` for a label no real row could validate (listed in
-    `synthetic_data.labels_not_validated`, see `GET /models/{name}`) and, like `support`,
-    for bundles trained before it was recorded. Those labels come last: unknown is not
-    the same as weak. **Auth:** readonly.
+    reads no threshold. `f1` is `null` for a label the evaluated rows could not score —
+    they carry no positive for it (`metrics.labels_not_scored`) or no REAL row does
+    (`synthetic_data.labels_not_validated`), both in `GET /models/{name}` — and, like
+    `support`, for bundles trained before it was recorded. Those labels come last:
+    unknown is not the same as weak. **Auth:** readonly.
     """
     safe_name(model_name, "model name")
     try:

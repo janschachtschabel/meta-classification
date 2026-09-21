@@ -51,18 +51,31 @@ def compute_metrics(
     How strongly depends on the TARGET (a subject vocab behaves differently from a
     curriculum vocab on the same rows), so every bundle carries its own pair.
 
-    ``scored`` (bool per class) limits the macro averages and ``per_label_f1`` to the
-    classes a REAL row can validate: a class whose rows an LLM wrote has nothing to be
-    scored on here, and its F1 would read 0 whatever the model does. Micro F1 keeps every
-    class — asserting such a label for a real row is still a wrong answer. ``None``
-    scores every class.
+    The macro averages and ``per_label_f1`` cover the classes THESE ROWS can put a
+    question to — the ones carrying at least one positive here. A class with none scores
+    F1 0.0 under every threshold and every model, so averaging it in measures the split
+    rather than the model: a flawless prediction over three classes, one of them absent
+    from the split, read 0.667. ``labels_not_scored`` names what was left out, so the
+    narrowing is visible in the bundle instead of being inferred from a short
+    ``per_label_f1``. Micro F1 keeps every class — asserting an absent label is still a
+    wrong answer — as do ``n_labels`` and the two labels-per-row averages.
+
+    ``scored`` (bool per class) narrows it further, to the classes a REAL row can
+    validate: a class whose rows an LLM wrote has nothing to be scored on here even if
+    its generated rows are in the split. ``None`` accepts every class the rows allow.
+
+    If NO class has a positive — nothing to measure at all — every class is scored
+    instead, because ``average="macro"`` over an empty label list is nan, and nan reaches
+    ``metrics.json`` as the token `NaN` that no strict JSON parser reads back.
     """
     single = is_single_label(task_type)
     preds = (
         argmax_onehot(proba) if single
         else apply_thresholds(proba, classes, global_threshold, per_label)
     )
-    columns = None if scored is None else np.flatnonzero(scored)
+    present = y_true.sum(axis=0) > 0
+    keep = present if scored is None else (present & scored)
+    columns = np.flatnonzero(keep) if keep.any() else None
     names = classes if columns is None else [classes[i] for i in columns]
     per_label_f1 = f1_score(y_true, preds, average=None, zero_division=0, labels=columns)
 
@@ -79,4 +92,6 @@ def compute_metrics(
         "predicted_labels_per_row": round(float(preds.sum(axis=1).mean()), 3),
         "true_labels_per_row": round(float(y_true.sum(axis=1).mean()), 3),
         "per_label_f1": {uri: float(score) for uri, score in zip(names, per_label_f1, strict=True)},
+        "labels_not_scored": ([] if columns is None else
+                              [uri for uri, ok in zip(classes, keep, strict=True) if not ok]),
     }

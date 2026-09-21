@@ -63,8 +63,9 @@ class _PredictOptions(BaseModel):
             "Attach `label_f1` (this label's F1 from the training evaluation) to every prediction. "
             "Confidence says how sure the model is HERE, `label_f1` how much that is worth: a 0.95 "
             "on a label that only scores 0.60 overall is worth a human look. Left out (not null) "
-            "where the bundle has no F1 for the label: one no real row could validate "
-            "(`synthetic_data.labels_not_validated` in `GET /models/{name}`), or any label of a "
+            "where the bundle has no F1 for the label: one the evaluated rows carry no positive "
+            "for (`metrics.labels_not_scored`), one no real row could validate "
+            "(`synthetic_data.labels_not_validated`), or any label of a "
             "bundle trained before per-label F1 was recorded."
         ),
     )

@@ -448,10 +448,11 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
   `evaluations` and never touches the training metrics. Truth is scored in the **model's
   own label space**: labels it never learned are listed in `unknown_labels`, rows
   carrying only such labels are excluded and counted, and `labels_covered` says how much
-  of the label space the data exercises — `f1_macro` averages over *all* the model's
-  classes, so a dataset touching 4 of 59 drags it down for reasons unrelated to quality
-  (both models on the same dataset carry the same bias, which is what keeps the
-  comparison valid).
+  of the label space the data exercises. `f1_macro` averages over the classes the data
+  carries a positive for, with the rest named in `metrics.labels_not_scored`: a class no
+  row exercises scores F1 0.0 under every model, so counting it would measure the probe
+  rather than the model (a real 8-row probe read macro 0.068 beside micro 0.941 that
+  way). `f1_micro` and `n_labels` still cover the whole label space.
 - **Training queue:** `POST /train` while a run is going **queues** it (202, with its
   `queue_position`) instead of refusing — the server runs it when the current one
   finishes, so "train five label fields" needs no browser tab kept open. Bounded to 10

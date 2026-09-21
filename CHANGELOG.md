@@ -10,6 +10,21 @@ model from these; they got numbers that described it inaccurately.
 
 ### Fixed
 
+- **Macro F1 counted labels the evaluated rows cannot score as 0.0.** A label with no
+  positive row in the split scores 0.0 under every threshold and every model, so averaging
+  it in measured the split, not the model: a *perfect* prediction over three labels, one of
+  them absent, read **0.667**. Against another dataset it was worse — a real 59-label model
+  scored on an 8-row probe reported **macro 0.068 beside micro 0.941**. The narrowing
+  already existed but was applied only to datasets carrying data-prep's mark columns, so
+  the identical CSV reported a *higher* macro with marks than without — the
+  non-comparability that narrowing exists to prevent. `compute_metrics` now narrows
+  unconditionally and intersects the provenance mask with it, and names what it left out in
+  the new `metrics.labels_not_scored`. `f1_micro`, `n_labels` and the labels-per-row
+  averages still cover the whole label space, and a split carrying no label at all scores
+  every label rather than returning the `NaN` that would break `metrics.json`. **Existing
+  bundles keep their recorded numbers; a retrain on the same data may report a higher macro
+  than the bundle beside it.**
+
 - **The train/val/test split only honoured its default shares.** The random splitter chained
   two proportional `train_test_split` calls, so the second share was a share of the rest and
   the two roundings compounded. Measured on 100 rows: `0.1/0.2` produced **69/10/21** and

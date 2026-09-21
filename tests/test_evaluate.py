@@ -92,20 +92,22 @@ def test_nothing_to_score_is_said_plainly():
 
 def test_how_much_of_the_label_space_the_data_covers_is_reported():
     """Found on a real 59-label model scored against an 8-row probe: f1_macro 0.068
-    beside f1_micro 0.941. Both are correct — macro averages over ALL the model's
-    classes, and 55 of them had no examples, so they score zero. Without the coverage
-    beside it that headline reads as "this model is terrible" instead of "this dataset
-    exercises four of its labels".
+    beside f1_micro 0.941. The 0.068 was never a fact about the model — 55 of its classes
+    had no example in the probe, and such a class scores 0.0 under every threshold and
+    every prediction. The macro now covers the classes the data actually asks about, and
+    `labels_covered` beside `labels_not_scored` says how narrow the question was.
+
+    Until CORR-2 this test asserted `f1_macro < f1_micro` — that the uncovered labels drag
+    the macro down. That drag was the defect, so the assertion went with it.
     """
     model = _StubModel(["a", "b", "c"], [[0.9, 0.1, 0.1], [0.1, 0.9, 0.1]])
 
     result = evaluate.evaluate_model(model, ["x", "y"], [["a"], ["b"]])
 
     assert result["labels_covered"] == 2
-    assert result["metrics"]["n_labels"] == 3, "still scored over the full label space"
-    assert result["metrics"]["f1_macro"] < result["metrics"]["f1_micro"], (
-        "the uncovered label drags macro down — which is exactly what needs explaining"
-    )
+    assert result["metrics"]["n_labels"] == 3, "the label space is still three wide"
+    assert result["metrics"]["labels_not_scored"] == ["c"]
+    assert result["metrics"]["f1_macro"] == result["metrics"]["f1_micro"] == 1.0
 
 
 def test_the_decision_rule_is_the_one_serving_applies():
