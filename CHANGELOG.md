@@ -2,6 +2,24 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — the numbers a run reports (2026-09-21)
+
+Findings CORR-2 to CORR-4 of
+[`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md). Nobody got a worse
+model from these; they got numbers that described it inaccurately.
+
+### Fixed
+
+- **The train/val/test split only honoured its default shares.** The random splitter chained
+  two proportional `train_test_split` calls, so the second share was a share of the rest and
+  the two roundings compounded. Measured on 100 rows: `0.1/0.2` produced **69/10/21** and
+  `0.25/0.05` produced **70/24/6** — a test split a fifth larger than the one the bundle then
+  reported as `n_test`, on the very rows the headline F1 is computed over. The three sizes are
+  now counts derived from `n` once, each within a row of its share and summing to `n` exactly.
+  **The default `0.15/0.15` keeps the exact rows it selected before** — sklearn derives the
+  same integers from those floats — so every recorded `scripts/benchmark_*.py` number stays
+  comparable. The stratified splitter was already correct and is untouched.
+
 ## [Unreleased] — the audit's blockers (2026-09-20)
 
 Findings SEC-1, SEC-4 and OPS-1 of

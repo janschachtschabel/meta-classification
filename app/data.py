@@ -223,8 +223,17 @@ def three_way_split(
         train, val, test = stratify.stratified_partition(
             y, [1.0 - val_size - test_size, val_size, test_size], seed=seed)
         return train, val, test
+    # The two parts are sized as COUNTS, derived from n once. Given a share instead,
+    # sklearn rounds each call up on its own — and the second call's share is a share OF
+    # THE REST, so the two roundings compound: 0.1/0.2 over 100 rows came out 69/10/21 and
+    # 0.25/0.05 came out 70/24/6, i.e. a test split a fifth larger than the one the bundle
+    # goes on to report as `n_test`. Rounding once against n keeps every part within a row
+    # of its share, and the remainder makes train, so the three still sum to n. Where the
+    # chained form already landed on these numbers — 0.15/0.15, the default every
+    # `scripts/benchmark_*.py` measures with — sklearn derives the same integers from the
+    # floats, so those splits keep the exact rows they had and stay comparable.
     indices = np.arange(n)
-    train_idx, rest_idx = train_test_split(indices, test_size=val_size + test_size, random_state=seed)
-    rel_test = test_size / (val_size + test_size)
-    val_idx, test_idx = train_test_split(rest_idx, test_size=rel_test, random_state=seed)
+    n_val, n_test = round(n * val_size), round(n * test_size)
+    train_idx, rest_idx = train_test_split(indices, test_size=n_val + n_test, random_state=seed)
+    val_idx, test_idx = train_test_split(rest_idx, test_size=n_test, random_state=seed)
     return train_idx, val_idx, test_idx

@@ -404,6 +404,38 @@ def test_three_way_split_is_disjoint_and_complete():
     assert set(val).isdisjoint(test)
 
 
+@pytest.mark.parametrize(("val_size", "test_size", "sizes"), [
+    (0.15, 0.15, (70, 15, 15)),
+    (0.10, 0.20, (70, 10, 20)),
+    (0.20, 0.10, (70, 20, 10)),
+    (0.25, 0.05, (70, 25, 5)),
+])
+def test_the_split_sizes_are_the_shares_that_were_asked_for(val_size, test_size, sizes):
+    """Every share, not just the default one.
+
+    The sizes land in the bundle as `n_train`/`n_val`/`n_test`, so a reader takes them for
+    the configuration that produced them. Chaining two proportional splits does not deliver
+    that: the second share is a share OF A SHARE, and each call rounds its own way, so the
+    error compounds in whichever direction the arithmetic happens to fall.
+    """
+    parts = data.three_way_split(100, val_size=val_size, test_size=test_size, seed=42)
+    assert tuple(len(part) for part in parts) == sizes
+
+
+def test_the_default_shares_keep_the_split_they_always_had():
+    """Fixing the sizes must not reshuffle the split that was already correct.
+
+    Every `scripts/benchmark_*.py` in this repo splits 0.15/0.15, and their recorded numbers
+    are only comparable with future runs while those runs see the same rows. The default
+    shares were never affected by the drift, so the rows they select must not move either —
+    which rules out "recompute the whole partition from one permutation" as the fix.
+    """
+    train, val, test = data.three_way_split(40, val_size=0.15, test_size=0.15, seed=42)
+    assert sorted(val.tolist()) == [4, 9, 16, 26, 27, 37]
+    assert sorted(test.tolist()) == [6, 12, 15, 19, 25, 39]
+    assert len(train) == 28
+
+
 def _targets(n: int) -> np.ndarray:
     y = (np.random.default_rng(0).random((n, 3)) < 0.4).astype(np.int8)
     y[y.sum(axis=1) == 0, 0] = 1
