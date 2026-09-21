@@ -7,6 +7,7 @@ arithmetic. How much memory a training run saves is benchmark evidence
 (scripts/benchmark_training_memory.py), not a unit test.
 """
 
+import logging
 import time
 
 import numpy as np
@@ -180,3 +181,43 @@ def test_thread_budget_summarizes_what_the_fits_got(monkeypatch):
     budget.for_matrix(_row_matrix(MiB // 8))  # 5 MiB headroom -> 1 (2.5 MiB per fit)
     assert budget.summary() == {"requested": 9, "min": 1, "max": 4}
     assert ThreadBudget(requested=9, budget_bytes=None).summary() is None
+
+
+def test_an_unreadable_rss_is_unknown_and_not_a_measurement_of_zero(monkeypatch, caplog):
+    """macOS gives no current RSS — its stdlib knows only the lifetime peak — and every
+    other platform can fail to read one.
+
+    `held_bytes` answered 0 there, and 0 is a NUMBER: `threads_within` read it as "nothing
+    is held yet" and granted the maximum thread count, and the cgroup gate read it as
+    "this process holds nothing" and passed a run it exists to refuse. Both in the
+    optimistic direction, on the one platform where the budget cannot see anything, and
+    without a line anywhere saying so.
+    """
+    monkeypatch.setattr(memory, "rss_bytes", lambda pid=None: 0)
+    monkeypatch.setattr(memory, "_blind_reading_reported", False)
+
+    with caplog.at_level(logging.WARNING, logger="app.memory"):
+        assert memory.held_bytes() is None
+        assert memory.held_bytes() is None
+
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1, "said once, not once per fit"
+    assert "memory" in warnings[0].getMessage().lower()
+
+
+def test_a_readable_rss_still_answers_a_number(monkeypatch):
+    monkeypatch.setattr(memory, "rss_bytes", lambda pid=None: 7 * MiB)
+
+    assert memory.held_bytes() == 7 * MiB
+
+
+def test_a_blind_budget_sizes_its_threads_from_the_budget_alone(monkeypatch):
+    """Refusing every fit would be worse than the defect: a platform without a reading is
+    a platform where nothing can be trained. The budget is still applied — it just cannot
+    subtract what is already held, which is the floor, and the warning above says so."""
+    monkeypatch.setattr(memory, "rss_bytes", lambda pid=None: 0)
+    monkeypatch.setattr(memory, "_blind_reading_reported", False)
+    budget = ThreadBudget(requested=8, budget_bytes=100 * MiB)
+
+    # 100 MB / (2.5 x 10 MB) = 4 fits, counting nothing as held.
+    assert budget.for_matrix(np.zeros(10 * MiB // 8)) == 4

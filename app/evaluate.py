@@ -58,14 +58,15 @@ def _refuse_if_the_evaluation_cannot_fit(rows: int, labels: int) -> None:
     an operator granted a TRAINING run, and spending it on an evaluation would refuse
     evaluations the machine can easily hold. Outside a container there is no limit and
     nothing is refused. Counted against what is already held, which is the number the
-    OOM killer compares too — and that reading is optimistic where it cannot be taken
-    (``memory.held_bytes`` answers 0 rather than "unknown"), so this gate is a floor.
+    OOM killer compares too — and where that reading cannot be taken at all
+    (``memory.held_bytes`` answers ``None``, having said so once) this gate falls back to
+    a floor of zero rather than refusing everything.
     """
     limit = memory_limit_bytes()
     if limit is None:
         return
     needed = _evaluation_bytes(rows, labels)
-    held = held_bytes()
+    held = held_bytes() or 0  # no reading = a floor of zero; see memory.held_bytes
     if held + needed <= limit:
         return
     raise TrainingInputError(

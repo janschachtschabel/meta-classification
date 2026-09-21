@@ -46,8 +46,10 @@ def _with_memory(on_progress: Callable[..., None], sampler: PeakSampler) -> Call
     def report(**fields: object) -> None:
         peak_mb = sampler.peak_bytes // MiB or None
         if "phase" in fields:
+            held = held_bytes()
             logger.info("phase=%s rss=%s MB peak=%s MB", fields["phase"],
-                        f"{held_bytes() // MiB:,}", f"{peak_mb or 0:,}")
+                        "unknown" if held is None else f"{held // MiB:,}",
+                        f"{peak_mb or 0:,}")
         on_progress(**{**fields, "peak_rss_mb": peak_mb})
 
     return report

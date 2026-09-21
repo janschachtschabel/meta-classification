@@ -10,6 +10,19 @@ model from these; they got numbers that described it inaccurately.
 
 ### Fixed
 
+- **An unreadable memory reading meant "nothing is held".** `rss_bytes` answers `0`
+  where the platform gives no current RSS — macOS always, since its stdlib knows only the
+  lifetime peak — and `held_bytes` passed that straight on as a number. The thread budget
+  read it as "nothing held yet" and granted the maximum count; the container gate read it
+  as "this process holds nothing" and passed a run it exists to refuse. Both in the
+  optimistic direction, on the one platform where nothing can be seen at all, and with no
+  line anywhere saying so. `held_bytes` now returns `None` for "no reading" and warns once
+  per process. The callers that still have to decide something treat it as a floor of
+  zero **deliberately** — refusing every fit would make such a platform one where nothing
+  can be trained — so the arithmetic is unchanged; what changes is that the budget now
+  says when it is flying blind, and the training log prints `rss=unknown` instead of a
+  fabricated `0`.
+
 - **`POST /models/{name}/evaluate` scored a whole dataset in one unbounded call.**
   `predict_proba` vectorizes everything it is handed into ONE feature matrix, so a
   300,000-row evaluation built that dataset's entire sparse matrix inside the **serving**

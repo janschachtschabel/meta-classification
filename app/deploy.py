@@ -247,7 +247,9 @@ def refuse_if_the_run_cannot_fit(
     # Already held: this is the training process with its matrix and targets built, and
     # the API process when it shares the budget. The head and the fit's copies come on
     # top of that, so the sum is what the kernel would be asked for.
-    held = held_bytes()
+    # None where the platform gives no reading: a floor of zero, which only ever makes
+    # this gate more permissive, and `memory.held_bytes` logs that it is flying blind.
+    held = held_bytes() or 0
     if held + head + copies <= limit:
         return
     raise TrainingInputError(

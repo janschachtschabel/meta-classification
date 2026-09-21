@@ -151,9 +151,34 @@ def share_budget_with(pid: int) -> None:
     _budget_shared_with.append(pid)
 
 
-def held_bytes() -> int:
-    """What this process holds, plus what the processes sharing its budget hold."""
-    return rss_bytes() + sum(rss_bytes(pid) for pid in _budget_shared_with)
+# Said once per process, not once per fit: every fit would ask again and the answer
+# never changes within a run.
+_blind_reading_reported = False
+
+
+def held_bytes() -> int | None:
+    """What this process holds, plus what the processes sharing its budget hold — or
+    ``None`` where the platform gives no reading.
+
+    ``None`` is not zero, and the distinction is the whole point. ``rss_bytes`` answers 0
+    for "no reading" because a per-pid reporting caller has nothing better to show, but a
+    BUDGET reading it as a number reads it as "nothing is held yet": the thread count then
+    comes out at the maximum and the cgroup gate passes a run it exists to refuse — both
+    in the optimistic direction, on the one platform (macOS) where nothing can be seen at
+    all. Callers that must still decide something treat ``None`` as a floor of zero
+    deliberately, and the warning below is the line that says the budget is flying blind.
+    """
+    own = rss_bytes()
+    if own == 0:
+        global _blind_reading_reported
+        if not _blind_reading_reported:
+            _blind_reading_reported = True
+            logger.warning(
+                "No process memory reading on this platform: the training memory budget "
+                "and the container gate cannot subtract what is already held, and are "
+                "therefore a floor rather than a measurement.")
+        return None
+    return own + sum(rss_bytes(pid) for pid in _budget_shared_with)
 
 
 def threads_within(requested: int, budget_bytes: int | None, *, held_bytes: int,
@@ -197,7 +222,9 @@ class PeakSampler:
 
     def __init__(self, interval: float = 0.5) -> None:
         self._interval = interval
-        self._peak = held_bytes()
+        # A peak of 0 where nothing can be read, so what this reports is never a reading
+        # that is not one; ``held_bytes`` warns about that once.
+        self._peak = held_bytes() or 0
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -221,7 +248,8 @@ class PeakSampler:
         # never be undercut by a later answer: a reported peak only grows.
         reading = held_bytes()
         with self._lock:
-            self._peak = max(self._peak, reading)
+            if reading is not None:
+                self._peak = max(self._peak, reading)
             return self._peak
 
     @property
@@ -259,13 +287,17 @@ class ThreadBudget:
         threads = self.requested
         if self.budget_bytes is not None:
             held, size = held_bytes(), matrix_bytes(matrix)
-            threads = threads_within(self.requested, self.budget_bytes, held_bytes=held,
-                                     matrix_bytes=size)
+            # An unreadable reading is a floor of zero, not a refusal: a platform without
+            # one is otherwise a platform where nothing can be trained. `held_bytes` has
+            # already said so once.
+            threads = threads_within(self.requested, self.budget_bytes,
+                                     held_bytes=held or 0, matrix_bytes=size)
             if threads < self.requested and (not self.chosen or self.chosen[-1] != threads):
                 logger.info(
                     "Memory budget: head fits use %d of %d threads (budget %d MB, "
-                    "held %d MB, matrix %d MB)", threads, self.requested,
-                    self.budget_bytes // MiB, held // MiB, size // MiB,
+                    "held %s MB, matrix %d MB)", threads, self.requested,
+                    self.budget_bytes // MiB,
+                    "unknown" if held is None else f"{held // MiB:,}", size // MiB,
                 )
         self.chosen.append(threads)
         if self.on_choice is not None:
