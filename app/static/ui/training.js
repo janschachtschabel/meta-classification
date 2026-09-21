@@ -182,7 +182,10 @@ async function runPreflight() {
   const textColumns = textColPicker.values();
   const labelFields = labelPicker.values();
   if (!dataset || !textColumns.length || !labelFields.length) {
+    // role="alert" announces it; the summary element stays out of the way so the two
+    // do not say the same thing twice.
     box.innerHTML = `<p class="error" role="alert">${t("train.error.preflightInputs")}</p>`;
+    $("#train-preflight-announce").textContent = "";
     return;
   }
   button.disabled = true;
@@ -196,6 +199,11 @@ async function runPreflight() {
       label_filter: $("#train-filter").value.trim() || null,
     });
     box.innerHTML = preflightSummary(body, labelFields) + analysisHtml(body);
+    // The first paragraph is the headline — rows, labels and what the run will cost.
+    // Read out of the rendered block rather than built a second time, so what is
+    // announced is what is shown. The tables below it are for reading, not hearing.
+    $("#train-preflight-announce").textContent =
+      (box.querySelector("p")?.textContent || "").replace(/\s+/g, " ").trim();
     box.querySelector("[data-use-threshold]")?.addEventListener("click", (ev) => {
       $("#train-minsamples").value = ev.target.dataset.useThreshold;
       ev.target.closest("p").textContent =
@@ -203,6 +211,7 @@ async function runPreflight() {
     });
   } catch (err) {
     box.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`;
+    $("#train-preflight-announce").textContent = "";
   } finally {
     button.disabled = false;
     button.textContent = t("train.preflight.button");   // see explain.js: not a copy

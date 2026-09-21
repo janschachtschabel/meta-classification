@@ -237,7 +237,9 @@ function curlFor(name) {
 
 async function showModelDetail(name) {
   const dialog = $("#model-detail");
-  dialog.innerHTML = `<div class="detail" tabindex="-1"><p class="muted">${t("common.loading")}</p></div>`;
+  dialog.innerHTML = `<div class="detail" tabindex="-1">
+    <h2 id="model-detail-title">${esc(name)}</h2>
+    <p class="muted">${t("common.loading")}</p></div>`;
   dialog.showModal();
   const frame = dialog.querySelector(".detail");
   frame.focus();
@@ -249,7 +251,8 @@ async function showModelDetail(name) {
       Api.get(`/models/${encodeURIComponent(name)}/labels`),
     ]);
   } catch (err) {
-    frame.innerHTML = `<p class="error">${esc(err.message)}</p>
+    frame.innerHTML = `<h2 id="model-detail-title">${esc(name)}</h2>
+      <p class="error">${esc(err.message)}</p>
       <button type="button" class="ghost" data-close>${t("common.close")}</button>`;
     frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
     return;

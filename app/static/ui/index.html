@@ -170,7 +170,7 @@
                      data-i18n-placeholder="train.pills.emptyHint">
               <datalist id="labelcol-options"></datalist>
             </div>
-            <p id="train-names-preview" class="muted" aria-live="polite"></p>
+            <p id="train-names-preview" class="muted"></p>
           </fieldset>
           <div class="row">
             <div>
@@ -220,7 +220,8 @@
           </div>
           <button type="button" class="small ghost" id="train-preflight" data-i18n="train.preflight.button"></button>
           <p class="muted" data-i18n="train.preflight.help"></p>
-          <div id="train-preflight-out" aria-live="polite"></div>
+          <p id="train-preflight-announce" class="visually-hidden" aria-live="polite"></p>
+          <div id="train-preflight-out"></div>
           <details>
             <summary data-i18n-html="train.caps.summary"></summary>
             <p class="muted" id="train-caps-help" data-i18n-html="train.caps.help"></p>
@@ -262,9 +263,9 @@
           <button type="submit" id="import-btn" data-i18n="models.import.submit"></button>
         </form>
         <details class="help" data-i18n-html="models.help"></details>
-        <div id="models-share" aria-live="polite"></div>
+        <div id="models-share"></div>
         <div id="models-links"></div>
-        <div id="models-list" aria-live="polite"><p class="muted" data-i18n="common.loading"></p></div>
+        <div id="models-list"><p class="muted" data-i18n="common.loading"></p></div>
       </section>
 
       <!-- ---- Datasets ---- -->
@@ -278,9 +279,9 @@
           <button type="submit" id="upload-btn" data-i18n="datasets.upload.submit"></button>
         </form>
         <details class="help" data-i18n-html="datasets.help"></details>
-        <div id="datasets-share" aria-live="polite"></div>
+        <div id="datasets-share"></div>
         <div id="datasets-links"></div>
-        <div id="datasets-list" aria-live="polite"><p class="muted" data-i18n="common.loading"></p></div>
+        <div id="datasets-list"><p class="muted" data-i18n="common.loading"></p></div>
       </section>
     </main>
   </div>

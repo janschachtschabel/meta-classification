@@ -8,6 +8,23 @@ Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-a
 
 ### Fixed
 
+- **Six regions announced themselves that had no business announcing.** `aria-live` sat on
+  the model table, the dataset table, both share panels, the pre-flight output and the
+  model-name preview — so switching to the Models tab re-announced every cell of every row,
+  and typing a 20-character model name queued 20 announcements that each interrupted the
+  last (that element is also the label-field input's `aria-describedby` target, i.e. it was
+  saying the same thing twice in two competing ways). The training card carries a comment
+  refusing exactly this; the rest of the file had drifted from it. Live regions are now the
+  five short status messages that earn one, and the pre-flight announces its **headline
+  sentence** — "30 rows, 3 labels. On auto that is under a minute." — instead of its 1,220
+  characters of tables.
+- **Both detail dialogs were unnamed while loading and after a failure.** `aria-labelledby`
+  pointed at a heading only the success branch ever rendered, so a dialog whose request
+  failed stayed nameless for its whole life — announced as an unnamed dialog, with no way
+  to tell which model it was about. The name is known before the request is made, so it is
+  now there from the first frame. Verified in the browser against a model that does not
+  exist.
+
 - **Every form field was outlined at 1.6:1, under a comment claiming ">3:1".** `--border`
   drew the boundary of every input, select and textarea as well as every card edge and
   table rule, at **1.62:1 on the card and 1.50:1 on the field's own fill** — SC 1.4.11

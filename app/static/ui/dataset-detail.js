@@ -116,7 +116,9 @@ async function runAnalysis(frame) {
 
 async function showDatasetDetail(name) {
   const dialog = $("#dataset-detail");
-  dialog.innerHTML = `<div class="detail" tabindex="-1"><p class="muted">${t("common.loading")}</p></div>`;
+  dialog.innerHTML = `<div class="detail" tabindex="-1">
+    <h2 id="dataset-detail-title">${esc(name)}</h2>
+    <p class="muted">${t("common.loading")}</p></div>`;
   dialog.showModal();
   const frame = dialog.querySelector(".detail");
   frame.focus();
@@ -125,7 +127,8 @@ async function showDatasetDetail(name) {
   try {
     info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
   } catch (err) {
-    frame.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>
+    frame.innerHTML = `<h2 id="dataset-detail-title">${esc(name)}</h2>
+      <p class="error" role="alert">${esc(err.message)}</p>
       <button type="button" class="ghost" data-close>${t("common.close")}</button>`;
     frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
     return;
