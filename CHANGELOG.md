@@ -10,6 +10,22 @@ model from these; they got numbers that described it inaccurately.
 
 ### Fixed
 
+- **The threshold search scanned the whole matrix once per cut.** Nineteen cuts, each
+  building a full `(rows x labels)` decision matrix and handing it to scikit-learn, which
+  derived counts back out of it — then nineteen more single-column passes per label. With
+  `select_c_on_tuned_thresholds` (the default) that whole search runs once per C
+  candidate. The counts are all the answer needs and they come out of one pass:
+  `searchsorted` bins each probability by how many cuts it clears, and a reverse-cumulated
+  `bincount` gives asserted rows and hits for every cut at once. Measured in this venv:
+  **4.5 s → 0.03 s** at 25,000×48, **33.8 s → 0.33 s** at 156,373×60 (the README's anchor
+  shape), and **~140 s → 1.0 s** at 100,000×300 — 100–140× on every shape tried, and it
+  now grows with the rows rather than with rows × labels × cuts. **The cuts themselves are
+  unchanged**, byte for byte against the old search across five seeds, sparse and dense
+  label rates, the degenerate all-zero and all-one targets, and both `shrink_k` and
+  `thin_label_threshold` in play. End-to-end run times fall by whatever share of them this
+  search was; the README's recorded per-run figures are older measurements and were left
+  as they stand rather than adjusted by arithmetic.
+
 - **The feasibility gate was blind to the largest thing a k-fold run holds.**
   `cross_val_evaluate` allocates one full `(validating rows x labels)` float32 buffer per
   C candidate before the first fit and keeps them all until the winner is picked —

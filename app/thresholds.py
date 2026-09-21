@@ -26,12 +26,53 @@ from sklearn.metrics import f1_score
 # resolution buys the noise in the tuning split. The in-sample number is the check on
 # the sweep itself: a search over every cut cannot lose to a search over 19 of them on
 # the rows both saw, so if it had not won there the comparison would have been void.
-# `scripts/benchmark_threshold_grid.py` re-runs it, on any seed or target.
+# `scripts/benchmark_threshold_grid.py` re-runs it, on any seed or target. That was a
+# measurement about QUALITY and it still stands: `_cut_scores` below sweeps these same 19
+# cuts, it just counts them in one pass instead of scoring each one separately.
 _DEFAULT_GRID = np.round(np.arange(0.05, 0.96, 0.05), 2)
 
 
 def macro_f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(f1_score(y_true, y_pred, average="macro", zero_division=0))
+
+
+def _cut_scores(
+    y: np.ndarray, proba: np.ndarray, grid: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """F1 of every (label, cut) pair as an ``(n_labels, len(grid))`` table, and each
+    label's positives. ``grid`` must ascend.
+
+    Counting instead of comparing. The search used to build a full ``(n, n_labels)``
+    decision matrix per cut and hand it to sklearn, which derived counts from it — 19
+    times for the global sweep and 19 more per label, i.e. a Python call and a full
+    column pass per label per cut. Measured at 156,373 x 60 that is 33.8 s, and with
+    ``select_c_on_tuned_thresholds`` (the default) the whole search runs once per C
+    candidate.
+
+    The counts are what the answer needs, and they come out of one pass: ``searchsorted``
+    bins each probability by how many cuts it clears, and a reverse-cumulated
+    ``bincount`` turns that into asserted rows and hits for all 19 cuts at once. F1 is
+    then ``2 TP / (asserted + positives)``, which is what sklearn computes for a binary
+    column — including the 0 it returns via ``zero_division`` when a label has neither.
+
+    One column at a time on purpose: bucketing the whole matrix in one call would
+    allocate an ``(n, n_labels)`` index array, 600 MB at 250,000 x 300 — the very
+    allocation ``apply_thresholds`` and ``data.prepare_targets`` go out of their way
+    to avoid.
+    """
+    size = len(grid)
+    positives = y.sum(axis=0).astype(np.float64)
+    scores = np.zeros((proba.shape[1], size), dtype=np.float64)
+    for col in range(proba.shape[1]):
+        # `bucket` counts the cuts a probability clears, so cut g asserts the row exactly
+        # when g < bucket; reverse-cumulating the bucket counts gives every cut's totals.
+        bucket = np.searchsorted(grid, proba[:, col], side="right")
+        asserted = np.bincount(bucket, minlength=size + 1)[::-1].cumsum()[::-1][1:]
+        hits = np.bincount(bucket, weights=y[:, col],
+                           minlength=size + 1)[::-1].cumsum()[::-1][1:]
+        denominator = asserted + positives[col]
+        np.divide(2.0 * hits, denominator, out=scores[col], where=denominator > 0)
+    return scores, positives
 
 
 def tune_threshold_columns(
@@ -64,37 +105,34 @@ def tune_threshold_columns(
     has a handful of real positives, and a run can decide its own cut would rest on too
     few (``provenance.RowProvenance.keep_global``). ``None`` keeps every own cut.
     """
-    grid = _DEFAULT_GRID if grid is None else grid
+    grid = _DEFAULT_GRID if grid is None else np.sort(np.asarray(grid, dtype=float))
+    if grid.size == 0:
+        # No cut to beat it, so the global threshold keeps the value it starts at — which
+        # is what the scan below produced for an empty grid before it was a scan.
+        return 0.5, np.full(proba.shape[1], 0.5)
 
-    best_global, best_global_f1 = 0.5, -1.0
-    for threshold in grid:
-        score = macro_f1(y_val, (proba >= threshold).astype(np.int8))
-        if score > best_global_f1:
-            best_global_f1, best_global = score, float(threshold)
+    cut_f1, positives = _cut_scores(y_val, proba, grid)
+    # A macro average IS the mean of the per-label F1 over every column, so the global cut
+    # falls out of the same table as the per-label ones. It used to be 19 more full passes
+    # over the matrix, each building a decision matrix sklearn then re-derived counts from.
+    # `argmax` takes the first maximum, i.e. the LOWEST cut that reaches it — the tie-break
+    # the ascending scan with its strict `>` had.
+    best_global = float(grid[int(np.argmax(cut_f1.mean(axis=0)))])
 
     columns = np.full(proba.shape[1], best_global, dtype=float)
     if per_label:
-        for col in range(proba.shape[1]):
-            truth = y_val[:, col]
-            n_pos = int(truth.sum())
-            if keep_global is not None and keep_global[col]:
-                continue
-            if n_pos == 0:
-                # No positives to tune on: every threshold scores f1=0, and the
-                # ">" update would hand the label the grid MINIMUM (0.05) —
-                # near-zero threshold, fires on everything. Keep the global. Under
-                # ``shrink_k`` this is the same rule at weight 0, not a second case.
-                continue
-            scores = proba[:, col]
-            best_t, best_f1 = best_global, -1.0
-            for threshold in grid:
-                score = f1_score(truth, (scores >= threshold).astype(np.int8), zero_division=0)
-                if score > best_f1:
-                    best_f1, best_t = score, float(threshold)
-            if shrink_k is not None:
-                trust = n_pos / (n_pos + shrink_k)
-                best_t = trust * best_t + (1 - trust) * best_global
-            columns[col] = best_t
+        own = grid[np.argmax(cut_f1, axis=1)]
+        if shrink_k is not None:
+            trust = positives / (positives + shrink_k)
+            own = trust * own + (1 - trust) * best_global
+        # No positives to tune on: every threshold scores f1=0, and the argmax would hand
+        # the label the grid MINIMUM (0.05) — a near-zero threshold that fires on
+        # everything. Keep the global. Under ``shrink_k`` this is the same rule at weight
+        # 0, not a second case. A column the caller pinned keeps the global cut too.
+        chosen = positives > 0
+        if keep_global is not None:
+            chosen &= ~np.asarray(keep_global, dtype=bool)
+        columns[chosen] = own[chosen]
 
     return best_global, columns
 

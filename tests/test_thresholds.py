@@ -1,5 +1,7 @@
 """Tests for where the decision cuts sit and what they do to probabilities."""
 
+import time
+
 import numpy as np
 import pytest
 
@@ -167,3 +169,106 @@ def test_a_column_told_to_keep_the_global_cut_keeps_it_despite_its_positives():
     assert own[0] != global_t, "test setup: column 0 tunes a cut of its own"
     assert kept[0] == global_t
     assert kept[1] == own[1]
+
+
+def _naive_search(y, proba, grid):
+    """The search written out the slow, obvious way: every cut scored with sklearn.
+
+    This is the reference the vectorised sweep has to reproduce exactly — including how
+    it breaks ties (ascending grid, strict `>`, so the LOWEST cut reaching the maximum
+    wins) and how it treats a label with no positives (keep the global cut; every
+    threshold scores 0 there, and the `>` rule would otherwise hand it the grid minimum).
+    """
+    from sklearn.metrics import f1_score
+
+    best_global, best_global_f1 = 0.5, -1.0
+    for threshold in grid:
+        score = f1_score(y, (proba >= threshold).astype(np.int8),
+                         average="macro", zero_division=0)
+        if score > best_global_f1:
+            best_global_f1, best_global = score, float(threshold)
+
+    columns = np.full(proba.shape[1], best_global, dtype=float)
+    for col in range(proba.shape[1]):
+        truth = y[:, col]
+        if int(truth.sum()) == 0:
+            continue
+        best_t, best_f1 = best_global, -1.0
+        for threshold in grid:
+            score = f1_score(truth, (proba[:, col] >= threshold).astype(np.int8),
+                             zero_division=0)
+            if score > best_f1:
+                best_f1, best_t = score, float(threshold)
+        columns[col] = best_t
+    return best_global, columns
+
+
+def _case(seed, rows=400, labels=12, rate=0.15):
+    rng = np.random.default_rng(seed)
+    y = (rng.random((rows, labels)) < rate).astype(np.int8)
+    # Signal plus noise, so the argmax cut differs per label instead of landing on one
+    # value for all of them — a sweep that got the columns wrong would still pass then.
+    proba = np.clip(rng.random((rows, labels)) * 0.7 + y * rng.random((rows, labels)) * 0.6,
+                    0, 1).astype(np.float32)
+    return y, proba
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_the_sweep_picks_the_cuts_the_slow_search_picks(seed):
+    """A refactor for speed must not move a single threshold: the cuts decide what a
+    model asserts, and a bundle trained before it has to keep behaving like one trained
+    after."""
+    y, proba = _case(seed)
+
+    got_global, got_columns = thresholds.tune_threshold_columns(y, proba, per_label=True)
+    want_global, want_columns = _naive_search(y, proba, thresholds._DEFAULT_GRID)
+
+    assert got_global == pytest.approx(want_global)
+    assert got_columns == pytest.approx(want_columns)
+
+
+@pytest.mark.parametrize("y_builder", [
+    pytest.param(lambda shape: np.zeros(shape, np.int8), id="no-positives-anywhere"),
+    pytest.param(lambda shape: np.ones(shape, np.int8), id="positives-everywhere"),
+])
+def test_the_sweep_matches_the_slow_search_on_the_degenerate_targets(y_builder):
+    """Empty and full columns are where a counts-based formula divides by zero and a
+    loop over sklearn calls simply returns 0.0."""
+    y = y_builder((60, 4))
+    proba = np.linspace(0, 1, 240, dtype=np.float32).reshape(60, 4)
+
+    got_global, got_columns = thresholds.tune_threshold_columns(y, proba, per_label=True)
+    want_global, want_columns = _naive_search(y, proba, thresholds._DEFAULT_GRID)
+
+    assert got_global == pytest.approx(want_global)
+    assert got_columns == pytest.approx(want_columns)
+
+
+def test_a_probability_exactly_on_a_cut_is_asserted():
+    """`>=`, not `>`, all the way through — `apply_thresholds` serves it that way, so a
+    sweep that counted `> t` would tune against a rule serving does not apply."""
+    y = np.array([[1], [0]], dtype=np.int8)
+    proba = np.array([[0.60], [0.55]], dtype=np.float32)
+
+    # At 0.60 the first row is asserted and the second is not: a perfect split.
+    assert thresholds.tune_threshold_columns(y, proba, per_label=True)[1][0] == 0.60
+
+
+def test_the_search_does_not_scan_the_matrix_once_per_cut():
+    """19 cuts x (a macro F1 over the whole matrix + one f1_score per label) is a Python
+    call per label per cut over a full column each time. Measured before this test
+    existed: 4.5 s at 25,000 x 48 and 33.8 s at 156,373 x 60 — and with
+    `select_c_on_tuned_thresholds` (the default) that whole search runs once per C
+    candidate, i.e. ~100 s of a 40-minute run at the README's anchor shape.
+
+    The sweep counts instead of comparing: one `searchsorted` per column bins its
+    probabilities into the 19 cuts, and two `bincount`s give true and predicted positives
+    for every cut at once. The budget is generous — the point is the shape of the curve,
+    not the hardware."""
+    y, proba = _case(7, rows=25_000, labels=48, rate=0.04)
+
+    start = time.perf_counter()
+    thresholds.tune_threshold_columns(y, proba, per_label=True)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.5, f"the 25,000 x 48 sweep took {elapsed:.2f} s"
