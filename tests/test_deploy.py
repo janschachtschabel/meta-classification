@@ -239,6 +239,49 @@ def test_a_run_is_refused_when_the_head_fits_but_the_run_does_not():
     assert "min_samples_per_label" in message
 
 
+def test_a_cross_validation_run_is_weighed_with_the_buffers_it_holds():
+    """The term that grows fastest was the one term the gate did not count.
+
+    `cross_val_evaluate` allocates one full (validating rows x labels) float32 array PER C
+    CANDIDATE up front and holds them all until the winner is picked. At 250 000 rows x
+    300 labels x 3 candidates that is 858 MB — twelve times the targets, which the gate
+    does weigh. A CV run there passed the gate and was then OOM-killed, reaching the
+    operator as `exit code -9`: the failure this gate exists to replace with a sentence.
+    """
+    shape = dict(n_labels=300, targets_bytes=250_000 * 300,
+                 matrix=_Matrix(250_000, 200_000, 700 * MiB), budget_bytes=3_000 * MiB)
+    deploy.refuse_if_the_run_cannot_fit(**shape)  # the same run without the buffers fits
+
+    with pytest.raises(TrainingInputError) as excinfo:
+        deploy.refuse_if_the_run_cannot_fit(**shape, oof_bytes=250_000 * 300 * 4 * 3)
+
+    message = str(excinfo.value)
+    assert "858 MB of out-of-fold probabilities" in message, "name the term that tipped it"
+    assert "cv_folds" in message, "and the lever that removes it"
+
+
+@pytest.mark.parametrize(("cv_folds", "expected"), [(3, 8 * 2 * 4 * 2), (0, 0)])
+def test_the_gate_learns_the_buffer_size_from_the_run_that_will_allocate_it(
+        monkeypatch, cv_folds, expected):
+    """A gate that counts a term nobody hands it is still blind, so this checks the wiring
+    rather than the arithmetic: eight rows, two labels, a two-value C grid. The holdout
+    path allocates no out-of-fold buffers at all and must be weighed without them."""
+    seen = []
+    monkeypatch.setattr(deploy, "refuse_if_the_run_cannot_fit",
+                        lambda **kwargs: seen.append(kwargs))
+
+    y = np.array([[1, 0], [0, 1]] * 4, dtype=np.int8)
+    prep = replace(_prepared(y), texts=np.array(
+        [f"bruchrechnung zahlen teilen aufgabe {i // 2}" if i % 2 == 0
+         else f"wiener kongress geschichte quelle {i // 2}" for i in range(8)]))
+    deploy.fit_evaluate_deploy(
+        prep, Settings(), Profile("t", c_grid=[2.0, 1.0]), cv_folds=cv_folds,
+        on_progress=lambda **kwargs: None, should_stop=lambda: False)
+
+    assert seen, "the gate runs before every fit"
+    assert {call["oof_bytes"] for call in seen} == {expected}
+
+
 def test_a_run_that_fits_at_one_thread_is_not_refused():
     """The same shape one step smaller: 1 523 labels are 1 162 MB of coefficients, the
     targets 322 MB, the matrix and one fit's copies 2 450 MB — 3 934 MB against 6 000. The

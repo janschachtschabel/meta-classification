@@ -10,6 +10,15 @@ model from these; they got numbers that described it inaccurately.
 
 ### Fixed
 
+- **The feasibility gate was blind to the largest thing a k-fold run holds.**
+  `cross_val_evaluate` allocates one full `(validating rows x labels)` float32 buffer per
+  C candidate before the first fit and keeps them all until the winner is picked —
+  **858 MB** at 250,000 rows x 300 labels x 3 candidates, against 72 MB of targets the
+  gate did weigh. Such a run passed the gate and was then OOM-killed, reaching the
+  operator as `exit code -9`: exactly the failure the gate exists to replace with a
+  sentence. The buffers are now part of what a run is weighed against, and the refusal
+  names them and the two levers that remove them.
+
 - **A run could report an F1 over a single row without saying so.** The fallback that
   makes AI-marked rows validate fires only when the validation or test part comes out
   *empty*, so one real row in each was accepted as a holdout split — an F1 over one row,

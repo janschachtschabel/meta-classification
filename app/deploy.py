@@ -174,14 +174,18 @@ def select_on_split(
 
 
 def refuse_if_the_run_cannot_fit(
-    *, n_labels: int, targets_bytes: int, matrix: Any, budget_bytes: int | None
+    *, n_labels: int, targets_bytes: int, matrix: Any, budget_bytes: int | None,
+    oof_bytes: int = 0,
 ) -> None:
     """Stop a run that cannot fit its budget even one fit at a time.
 
     Three things are held together once fitting starts, and the run needs all of them:
     the head (``labels x features`` float32 coefficients — nothing releases it, it IS
     the model), the dense targets (``rows x labels``), and the input matrix plus the
-    solver's copies of it. Judged at ONE thread and ONE head — the floor, below which
+    solver's copies of it. ``oof_bytes`` adds a fourth for the k-fold path: the
+    out-of-fold probability buffers ``cross_val_evaluate`` allocates per C candidate
+    before its first fit and holds until the winner is picked. Judged at ONE thread and
+    ONE head — the floor, below which
     nothing can be traded away: above it the thread budget is doing its job, and this
     gate would be taking runs that work. So it is deliberately optimistic in one place:
     ``select_c`` keeps the best candidate's head while fitting the next one, so the
@@ -191,7 +195,10 @@ def refuse_if_the_run_cannot_fit(
 
     Weighing the head alone was not enough — at 200 000 features a 6 000 MB budget is
     only exceeded past ~7 500 labels, while a run of 4 000 labels over 250 000 rows is
-    already impossible once its targets and matrix are counted. Left to run, such a job
+    already impossible once its targets and matrix are counted. Nor was leaving the
+    buffers out: at 250 000 rows x 300 labels x 3 candidates they are 858 MB against
+    72 MB of targets, i.e. the largest term in the wide-label regime this gate exists
+    for. Left to run, such a job
     is killed mid-fit and reaches the operator as `exit code -9` with a peak from
     whenever the last progress update landed.
 
@@ -214,13 +221,18 @@ def refuse_if_the_run_cannot_fit(
     copies = int(FIT_COPIES_PER_THREAD * held_matrix)
     # The matrix itself plus what one fit copies of it: the run holds both at once.
     fit = held_matrix + copies
-    needed = head + targets_bytes + fit
+    needed = head + targets_bytes + fit + oof_bytes
     detail = (f"{n_labels:,} labels x {n_features:,} features need {head // MiB:,} MB of "
               f"coefficients, {targets_bytes // MiB:,} MB of targets and {fit // MiB:,} MB "
               f"for the matrix and one fit's copies of it")
     levers = ("Raise min_samples_per_label to train fewer labels (the usual cause is a "
               "free-text label column), lower max_word_features / max_char_features, or "
               "give the container more memory")
+    if oof_bytes:
+        detail += (f", plus {oof_bytes // MiB:,} MB of out-of-fold probabilities held for "
+                   f"every C candidate at once")
+        levers += (", and a k-fold run can shorten its C grid or take the holdout path "
+                   "(cv_folds: 0), which keeps no such buffers")
 
     if budget_bytes is not None and needed > budget_bytes:
         raise TrainingInputError(
@@ -288,6 +300,13 @@ def fit_evaluate_deploy(
     # ...and the memory budget caps them again, per fit: every concurrent fit holds
     # ~2.5x its matrix, so a thread count that suits the CPU can outgrow the RAM.
     budget_bytes = settings.effective_train_memory_bytes()
+    validate = prep.provenance.validate if prep.provenance else None
+    # k-fold allocates one full (validating rows x labels) float32 buffer PER C CANDIDATE
+    # before the first fit and holds them all until the winner is picked. Independent of k,
+    # and the term that grows fastest: 858 MB at 250k rows x 300 labels x 3 candidates,
+    # against 72 MB of targets. The holdout path allocates none.
+    oof_rows = len(y_all) if validate is None else int(validate.sum())
+    oof_bytes = oof_rows * y_all.shape[1] * 4 * len(profile.c_grid) if cv_folds >= 2 else 0
     thread_budget = ThreadBudget(
         requested=n_jobs, budget_bytes=budget_bytes,
         on_choice=lambda threads: on_progress(head_fit_threads=threads, threads_requested=n_jobs),
@@ -296,7 +315,7 @@ def fit_evaluate_deploy(
         # the vocabulary actually reached and the targets it actually built.
         before_fit=lambda matrix: refuse_if_the_run_cannot_fit(
             n_labels=y_all.shape[1], targets_bytes=y_all.nbytes, matrix=matrix,
-            budget_bytes=budget_bytes),
+            budget_bytes=budget_bytes, oof_bytes=oof_bytes),
     )
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):
@@ -311,7 +330,6 @@ def fit_evaluate_deploy(
                 on_progress(phase="features", progress=40,
                             message="Vectorizing once for all folds (shared matrix)...")
                 shared_matrix = new_vectorizer().fit_transform(texts.tolist())
-            validate = prep.provenance.validate if prep.provenance else None
             rows = "all rows train + validate" if validate is None else "all rows train, real rows validate"
             on_progress(phase="cross-validating", progress=45,
                         message=f"{cv_folds}-fold cross-validation ({rows})...")
