@@ -23,16 +23,62 @@ import numpy as np
 from .bundle_meta import as_mapping
 from .dataset_load import load_dataset
 from .errors import TrainingInputError
+from .memory import MiB, held_bytes, memory_limit_bytes
 from .metrics import compute_metrics
+from .predict_csv import CHUNK_ROWS
 from .registry import Registry
 from .settings import Settings
+
+# CHUNK_ROWS is borrowed rather than redefined: how many rows the model may vectorize at
+# once is the same decision here as in `predict_csv`, which does the identical "score a
+# whole CSV" work, and two copies of it would drift apart without anything noticing.
 
 # What a row's truth is scored against. Reported in full when short, because the point
 # is to see WHICH vocabulary the dataset speaks; a long list means the wrong dataset.
 _MAX_REPORTED_UNKNOWN = 25
 
 
-def evaluate_model(model, texts: list[str], label_lists: list[list[str]]) -> dict:
+def _evaluation_bytes(rows: int, labels: int) -> int:
+    """What an evaluation holds at once beyond the model: the truth matrix (int8), the
+    probabilities (float64, as ``predict_proba`` returns them) and the decision matrix
+    ``compute_metrics`` derives from them (int8)."""
+    return rows * labels * (1 + 8 + 1)
+
+
+def _refuse_if_the_evaluation_cannot_fit(rows: int, labels: int) -> None:
+    """Stop an evaluation whose arrays cannot fit the container, before it allocates one.
+
+    This job runs in the API process — ``run_evaluation`` is submitted without
+    ``run_in_child``, unlike a training run, which takes the child precisely so an OOM
+    kill ends the run and not the server. Here the kill takes the server with it, and
+    every model it was serving. 300,000 rows against a 300-label model is ~858 MB of
+    truth, probabilities and decisions before a single chunk has been vectorized.
+
+    Only the container's LIMIT is weighed, not the training budget: that budget is what
+    an operator granted a TRAINING run, and spending it on an evaluation would refuse
+    evaluations the machine can easily hold. Outside a container there is no limit and
+    nothing is refused. Counted against what is already held, which is the number the
+    OOM killer compares too — and that reading is optimistic where it cannot be taken
+    (``memory.held_bytes`` answers 0 rather than "unknown"), so this gate is a floor.
+    """
+    limit = memory_limit_bytes()
+    if limit is None:
+        return
+    needed = _evaluation_bytes(rows, labels)
+    held = held_bytes()
+    if held + needed <= limit:
+        return
+    raise TrainingInputError(
+        f"This evaluation cannot fit the memory the container has: {rows:,} rows x "
+        f"{labels:,} labels need {needed // MiB:,} MB of truth, probabilities and "
+        f"decisions on top of the {held // MiB:,} MB already held — more than the "
+        f"container's limit of {limit // MiB:,} MB, which the kernel enforces by killing "
+        f"the process. Evaluate on fewer rows, or give the container more memory."
+    )
+
+
+def evaluate_model(model, texts: list[str], label_lists: list[list[str]], *,
+                   chunk_rows: int = CHUNK_ROWS) -> dict:
     """Score ``model`` on labelled rows, in the model's own label space.
 
     Truth is binarized over ``model.classes``, never over the dataset's own label set:
@@ -45,12 +91,17 @@ def evaluate_model(model, texts: list[str], label_lists: list[list[str]]) -> dic
     when nothing comparable is left — an F1 of 0.0 would read as "terrible here" rather
     than "these two do not meet".
 
-    ``labels_covered`` says how much of the label space the data exercises, because
-    ``f1_macro`` is an average over ALL the model's classes: a dataset touching four of
-    fifty-nine drags it down for a reason that has nothing to do with model quality.
-    Two models scored on the SAME dataset carry the same bias, which is what keeps a
-    comparison between them valid.
+    ``labels_covered`` says how much of the label space the data exercises. The macro
+    averages cover the classes the data carries a positive for — a class with none scores
+    F1 0.0 under every model, so counting it would measure the probe — and
+    ``metrics.labels_not_scored`` names the rest.
+
+    Scored ``chunk_rows`` at a time: ``predict_proba`` vectorizes everything it is handed
+    in ONE feature matrix, so an unchunked call builds the whole dataset's sparse matrix
+    inside the serving process. The arrays that outlive a chunk are weighed first
+    (:func:`_refuse_if_the_evaluation_cannot_fit`).
     """
+    _refuse_if_the_evaluation_cannot_fit(len(texts), len(model.classes))
     column_of = {uri: index for index, uri in enumerate(model.classes)}
     unknown: set[str] = set()
     keep: list[int] = []
@@ -68,21 +119,25 @@ def evaluate_model(model, texts: list[str], label_lists: list[list[str]]) -> dic
         "rows_without_a_known_label": len(texts) - len(keep),
         "unknown_labels": sorted(unknown)[:_MAX_REPORTED_UNKNOWN],
         "n_unknown_labels": len(unknown),
-        # How many of the model's own labels this dataset actually exercises. Measured
-        # on a real 59-label model against an 8-row probe: f1_macro 0.068 beside
-        # f1_micro 0.941 — both correct, because macro averages over ALL classes and 55
-        # of them had no examples. Without this number beside it, that headline reads as
-        # "the model is terrible" rather than "this data covers four of its labels".
+        # How many of the model's own labels this dataset actually exercises. Measured on
+        # a real 59-label model against an 8-row probe: f1_macro 0.068 beside f1_micro
+        # 0.941, because macro then averaged over ALL classes and 55 of them had no
+        # examples. `compute_metrics` no longer counts those (CORR-2); this says how
+        # narrow a question the remaining number answers.
         "labels_covered": int((truth.sum(axis=0) > 0).sum()),
         "metrics": None,
     }
     if not keep:
         return result
 
-    scored_texts = [texts[row] for row in keep]
-    proba = model.predict_proba(scored_texts)
+    # Written into one array rather than collected and concatenated: the pieces plus the
+    # joined copy would be two of the largest thing here at once.
+    proba = np.empty((len(keep), len(model.classes)), dtype=np.float64)
+    for start in range(0, len(keep), chunk_rows):
+        block = keep[start:start + chunk_rows]
+        proba[start:start + len(block)] = model.predict_proba([texts[row] for row in block])
     result["metrics"] = compute_metrics(
-        truth[keep], np.asarray(proba)[: len(keep)], model.classes,
+        truth[keep], proba, model.classes,
         model.global_threshold, model.per_label_thresholds, model.task_type,
     )
     return result

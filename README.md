@@ -452,7 +452,10 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
   carries a positive for, with the rest named in `metrics.labels_not_scored`: a class no
   row exercises scores F1 0.0 under every model, so counting it would measure the probe
   rather than the model (a real 8-row probe read macro 0.068 beside micro 0.941 that
-  way). `f1_micro` and `n_labels` still cover the whole label space.
+  way). `f1_micro` and `n_labels` still cover the whole label space. Rows are scored 500
+  at a time — the model builds one feature matrix per call, and this job runs in the API
+  process — and an evaluation whose arrays would not fit the container's memory limit is
+  refused with a message naming the shape, instead of taking the server down with it.
 - **Training queue:** `POST /train` while a run is going **queues** it (202, with its
   `queue_position`) instead of refusing — the server runs it when the current one
   finishes, so "train five label fields" needs no browser tab kept open. Bounded to 10

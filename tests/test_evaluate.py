@@ -9,8 +9,10 @@ label space, not scikit-learn's arithmetic.
 """
 
 import numpy as np
+import pytest
 
 from app import evaluate
+from app.errors import TrainingInputError
 
 
 class _StubModel:
@@ -23,9 +25,15 @@ class _StubModel:
         self.per_label_thresholds = {}
         self.uri_to_label = {uri: uri.upper() for uri in classes}
         self._rows = np.array(rows, dtype=float)
+        self._served = 0
+        self.batches: list[int] = []
 
     def predict_proba(self, texts):
-        return self._rows[: len(texts)]
+        # Served in call order, so a chunked caller gets each chunk's own rows and a
+        # single-call caller is unaffected. `batches` is what the chunking tests read.
+        self.batches.append(len(texts))
+        start, self._served = self._served, self._served + len(texts)
+        return self._rows[start:start + len(texts)]
 
 
 def test_a_perfect_answer_scores_one():
@@ -227,3 +235,70 @@ def test_asking_for_no_weighting_is_still_possible(tmp_path):
 
     assert model.scored == ["Bruchrechnung"]
     assert registry.records[0]["text_column_weights"] == {}
+
+
+def _spread(rows: int, labels: int = 3):
+    """A model and a dataset big enough to need more than one chunk."""
+    rng = np.random.default_rng(5)
+    proba = rng.random((rows, labels))
+    truth = [[f"l{int(np.argmax(proba[row]))}"] for row in range(rows)]
+    model = _StubModel([f"l{i}" for i in range(labels)], proba)
+    return model, [f"text {row}" for row in range(rows)], truth
+
+
+def test_the_model_is_never_asked_to_vectorize_the_whole_dataset_at_once():
+    """`predict_proba` builds ONE feature matrix for everything it is handed, and this
+    runs in the serving process — the same "score a whole CSV" work `predict_csv` already
+    chunks at 500 rows, which `evaluate` did in a single call. A 300,000-row dataset
+    against a 200,000-term vocabulary is a sparse matrix nothing bounded and no budget saw.
+    """
+    model, texts, truth = _spread(1_200)
+
+    evaluate.evaluate_model(model, texts, truth)
+
+    assert max(model.batches) <= evaluate.CHUNK_ROWS
+    assert sum(model.batches) == 1_200, "and every row is still scored exactly once"
+
+
+def test_chunking_does_not_change_the_numbers():
+    """Whatever the chunk size, the evaluation is the same evaluation."""
+    whole = evaluate.evaluate_model(*_spread(300), chunk_rows=10_000)
+    pieces = evaluate.evaluate_model(*_spread(300), chunk_rows=7)
+
+    assert whole == pieces
+
+
+def test_an_evaluation_too_large_for_the_process_is_refused(monkeypatch):
+    """Refused with a sentence, rather than attempted and OOM-killed.
+
+    The job runs in the API process — `run_evaluation` is submitted without
+    `run_in_child`, unlike a training run — so the kill takes the server with it, and
+    every other model it was serving. 300,000 rows x 300 labels is ~858 MB of truth,
+    probabilities and decisions before a single chunk is vectorized.
+    """
+    monkeypatch.setattr(evaluate, "memory_limit_bytes", lambda: 2_048 * 1024 * 1024)
+    monkeypatch.setattr(evaluate, "held_bytes", lambda: 1_700 * 1024 * 1024)
+    model, texts, truth = _spread(4, labels=3)
+
+    def _never(*args, **kwargs):
+        raise AssertionError("a chunk was scored although the run should have been refused")
+
+    monkeypatch.setattr(model, "predict_proba", _never)
+    monkeypatch.setattr(evaluate, "_evaluation_bytes", lambda rows, labels: 600 * 1024 * 1024)
+
+    with pytest.raises(TrainingInputError) as excinfo:
+        evaluate.evaluate_model(model, texts, truth)
+
+    message = str(excinfo.value)
+    assert "2,048 MB" in message, "name the limit that would kill it"
+    assert "rows" in message, "and the lever the caller has"
+
+
+def test_an_evaluation_that_fits_is_not_refused(monkeypatch):
+    """And outside a container, where no limit is declared, nothing is refused at all."""
+    monkeypatch.setattr(evaluate, "memory_limit_bytes", lambda: 2_048 * 1024 * 1024)
+    monkeypatch.setattr(evaluate, "held_bytes", lambda: 200 * 1024 * 1024)
+    assert evaluate.evaluate_model(*_spread(40))["n_rows"] == 40
+
+    monkeypatch.setattr(evaluate, "memory_limit_bytes", lambda: None)
+    assert evaluate.evaluate_model(*_spread(40))["n_rows"] == 40

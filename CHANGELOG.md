@@ -10,6 +10,19 @@ model from these; they got numbers that described it inaccurately.
 
 ### Fixed
 
+- **`POST /models/{name}/evaluate` scored a whole dataset in one unbounded call.**
+  `predict_proba` vectorizes everything it is handed into ONE feature matrix, so a
+  300,000-row evaluation built that dataset's entire sparse matrix inside the **serving**
+  process — the job is submitted without `run_in_child`, unlike a training run, which
+  takes the child precisely so an OOM kill ends the run and not the server. The identical
+  "score a whole CSV" work in `predict_csv` has been chunked at 500 rows all along;
+  `evaluate` had neither that nor a budget. It now scores in chunks of the same size
+  (borrowing the same constant, so the two cannot drift), writes into one preallocated
+  array rather than concatenating pieces, and weighs what outlives a chunk — truth,
+  probabilities and decisions, ~858 MB at 300,000 rows x 300 labels — against the
+  container's limit before allocating any of it. Over that, the run is refused with a
+  message naming the shape. Outside a container nothing is refused.
+
 - **The threshold search scanned the whole matrix once per cut.** Nineteen cuts, each
   building a full `(rows x labels)` decision matrix and handing it to scikit-learn, which
   derived counts back out of it — then nineteen more single-column passes per label. With
