@@ -6,9 +6,29 @@
 const Api = (() => {
   const KEY = "apiv3-key";
 
-  const getKey = () => sessionStorage.getItem(KEY) || "";
-  const setKey = (k) => sessionStorage.setItem(KEY, k);
-  const clearKey = () => sessionStorage.removeItem(KEY);
+  /* Site data can be blocked outright — private windows, locked-down profiles — and
+     there READING sessionStorage throws rather than returning null. `Api.getKey()` is the
+     first thing boot() does, so an unguarded read left both views hidden: a blank page.
+     i18n.js guards localStorage for the same reason.
+
+     The key is held in memory as well, and that is not belt-and-braces: a guard that only
+     swallowed the write would leave `getKey()` answering "" on such a profile, so a
+     correct key would be typed, stored nowhere, and rejected as 401 on the very next
+     request. In memory the session works normally; only a reload asks for the key again,
+     which is what sessionStorage was buying anyway. */
+  let held = "";
+  const getKey = () => {
+    if (held) return held;
+    try { return sessionStorage.getItem(KEY) || ""; } catch { return ""; }
+  };
+  const setKey = (k) => {
+    held = k;
+    try { sessionStorage.setItem(KEY, k); } catch { /* this tab only, then */ }
+  };
+  const clearKey = () => {
+    held = "";
+    try { sessionStorage.removeItem(KEY); } catch { /* nothing was stored */ }
+  };
 
   class ApiError extends Error {
     constructor(status, detail) {

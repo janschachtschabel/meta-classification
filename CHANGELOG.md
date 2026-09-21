@@ -8,6 +8,22 @@ Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-a
 
 ### Fixed
 
+- **A profile with site data blocked got a blank white page.** Reading `sessionStorage`
+  *throws* there rather than returning null, and `Api.getKey()` is the first thing the boot
+  sequence does — so the throw escaped a `boot()` that had no `.catch`, both views stayed
+  hidden, and there was nothing on screen to act on. `i18n.js` had guarded the identical
+  `localStorage` calls from the start. The key is now held in memory as well, which is not
+  belt-and-braces: guarding only the write would leave `getKey()` answering `""`, so a
+  correct key would be typed, stored nowhere and rejected as 401 on the next request. The
+  session now works normally; only a reload asks again. `boot()` also has a `.catch` that
+  falls back to the sign-in screen and shows what happened.
+- **Any backend hiccup silently logged the operator out.** The boot check discarded the
+  stored key on *every* failure — a 500, a timeout, a dropped connection — not only on a
+  rejection. The operator retypes the same key, it works, and nothing ever points at the
+  real cause. Only 401 and 403 discard it now; anything else keeps it and shows the app,
+  whose own views report the failure where it happened. Verified against stubbed 500, 504
+  and 401 responses.
+
 - **Six regions announced themselves that had no business announcing.** `aria-live` sat on
   the model table, the dataset table, both share panels, the pre-flight output and the
   model-name preview — so switching to the Models tab re-announced every cell of every row,

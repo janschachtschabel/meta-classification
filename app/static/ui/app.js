@@ -54,7 +54,19 @@ async function boot() {
   $("#import-form").addEventListener("submit", onImportModel);
 
   if (Api.getKey()) {
-    try { await Api.get("/models"); showApp(false); return; } catch { Api.clearKey(); }
+    try {
+      await Api.get("/models");
+      showApp(false);
+      return;
+    } catch (err) {
+      // Only an answer that REJECTS the key discards it. A 500, a timeout or a dropped
+      // connection says nothing about whether the key is good, and throwing it away on
+      // one logged the operator out on any backend hiccup: they retype the same key, it
+      // works, and nothing ever points at the real cause. Keeping it shows the app, whose
+      // own views then report the failure in the place it happened.
+      if (err.status === 401 || err.status === 403) Api.clearKey();
+      else { showApp(false); return; }
+    }
   }
   // Mirror the server's auth setting (like /docs): with APIV3_AUTH_ENABLED=false
   // everything works without a key, so the UI must not force a sign-in either.
@@ -123,4 +135,10 @@ function onTablistKeydown(ev) {
 }
 
 // Last: every tab's loader has to be defined before the shell asks for one.
-boot();
+// Both views start hidden and boot() decides which to show, so anything escaping it left
+// a blank white page with nothing to act on. Whatever went wrong, the sign-in screen is a
+// state a person can do something from, and the message says what happened.
+boot().catch((err) => {
+  showLogin();
+  showError($("#login-error"), err);
+});

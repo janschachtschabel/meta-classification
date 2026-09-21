@@ -127,3 +127,35 @@ def test_the_preview_of_the_planned_model_names_updates_without_announcing():
     names are there when a user asks for them, and silent while a name is being typed."""
     assert re.search(r'id="train-names-preview"[^>]*aria-live', INDEX) is None
     assert 'aria-describedby="train-names-preview"' in INDEX
+
+
+def test_web_storage_is_never_touched_outside_a_guard():
+    """Site data can be blocked outright — private windows, locked-down profiles — and
+    then READING `sessionStorage` throws rather than returning null.
+
+    `Api.getKey()` was the first thing `boot()` did, so on such a profile the throw
+    escaped a `boot()` that had no `.catch`, both views stayed `hidden`, and the operator
+    got a blank white page with nothing on it to act on. `i18n.js` had guarded the
+    identical `localStorage` calls from the start, with a comment explaining this exact
+    hazard; `api.js` had not.
+
+    One line per access is this file's style, so "the line that touches storage also opens
+    a try" is the whole rule.
+    """
+    unguarded = []
+    for module in sorted(UI.glob("*.js")):
+        for number, line in enumerate(module.read_text(encoding="utf-8").splitlines(), 1):
+            touches = "sessionStorage." in line or "localStorage." in line
+            if touches and "try {" not in line:
+                unguarded.append(f"{module.name}:{number}: {line.strip()}")
+
+    assert not unguarded, "web storage touched outside a try/catch:\n" + "\n".join(unguarded)
+
+
+def test_the_boot_sequence_cannot_end_in_a_blank_page():
+    """Both views start `hidden` and `boot()` decides which one to show, so anything that
+    escapes it leaves the page empty. The sign-in screen is the one state a person can act
+    from, whatever went wrong."""
+    app = (UI / "app.js").read_text(encoding="utf-8")
+
+    assert "boot().catch(" in app, "boot() is invoked without a catch"
