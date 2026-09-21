@@ -45,6 +45,17 @@ THIN_MODES = ("own", "global")
 
 _BITS = ((GENERATED_FOR, GENERATED), (EXAMPLE_FOR, EXAMPLE), (ENRICHED_FIELDS, ENRICHED))
 
+# Below this many rows under the metrics, a run says so. The fallback below only fires on
+# an EMPTY validation or test part, so one real row in each was accepted as a holdout
+# split -- an F1 over a single row, thresholds tuned on another single row, and nothing
+# anywhere saying the number is a coin flip. The bound is a judgement, and this is the
+# reasoning: one row out of n moves a label's F1 by at least 1/n, so under ten rows a
+# single one is worth more than 0.1 -- coarser than the differences this project compares
+# runs at (README: +0.0145 for a field weighting, -0.0052 for halved feature caps).
+# Flagged rather than refused: too few real rows is still better than measuring on text
+# the model was trained on, which is what the fallback has to do when there are none.
+_MIN_SCORED_ROWS = 10
+
 
 def _marked(column: pd.Series) -> np.ndarray:
     # Blank, whitespace and a missing cell are no mark: an export may write spaces, and a
@@ -77,7 +88,9 @@ class RowProvenance:
     ``validate`` holds the rows the metrics may be computed on and ``scored`` the
     classes a real row can validate; ``None`` means all of them. ``fallback`` says why
     the metrics include AI-marked rows after all — too few real rows to validate on —
-    and is ``None`` whenever they do not. ``thin`` (per class) marks the labels with
+    and is ``None`` whenever they do not; it answers WHICH rows were measured, while
+    ``summary``'s ``too_few_rows`` answers HOW MANY, and a small dataset can need both.
+    ``thin`` (per class) marks the labels with
     fewer real rows than the training minimum, and ``thin_mode`` is the run's choice of
     their cut.
     """
@@ -104,7 +117,12 @@ class RowProvenance:
 
     def summary(self, classes: list[str], *, scored_rows: int) -> dict:
         """The ``synthetic_data`` block a bundle stores: what was trained on, and what
-        the reported numbers were computed on."""
+        the reported numbers were computed on.
+
+        ``scored_rows`` is the count those numbers rest on — the test split for a holdout
+        run, the real rows for k-fold — and ``too_few_rows`` is the reason string set when
+        it is below :data:`_MIN_SCORED_ROWS`, ``None`` otherwise.
+        """
 
         def count(bit: int) -> int:
             return int(np.count_nonzero(self.marks & bit))
@@ -124,6 +142,12 @@ class RowProvenance:
             "scored_rows": scored_rows,
             "labels_not_validated": unvalidated,
             "fallback": self.fallback,
+            "too_few_rows": (
+                None if scored_rows >= _MIN_SCORED_ROWS else
+                f"the metrics rest on {scored_rows} row{'' if scored_rows == 1 else 's'}, "
+                f"fewer than the {_MIN_SCORED_ROWS} a number comparable with another run "
+                f"needs"
+            ),
             "thin_labels": thin,
             "thin_label_threshold": self.thin_mode,
         }

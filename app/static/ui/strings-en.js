@@ -313,6 +313,7 @@ const STRINGS_EN = {
   "modelDetail.aiData.trainOnly": {"one": "{count} AI-marked row trained, never validated", "other": "{count} AI-marked rows trained, never validated"},
   "modelDetail.aiData.fallback": "Too few real rows to validate on: these metrics include AI-marked rows and say little about real data. Check the model with “Evaluate on…” against a real dataset.",
   "modelDetail.aiData.notValidated": {"one": "One label has no real row to validate on; its F1 shows as “–” in the table and does not count towards the macro average.", "other": "{count} labels have no real row to validate on; their F1 shows as “–” in the table and does not count towards the macro average."},
+  "modelDetail.aiData.tooFewRows": {"one": "These metrics rest on a single row — an F1 over one row is 0 or 1, and nothing in between. Treat them as a smoke test, not a measurement.", "other": "These metrics rest on {count} rows, too few to compare with another run. Treat them as a smoke test, not a measurement."},
   "modelDetail.aiData.train": {"one": "{count} AI-marked row trained, never validated (generated: {generated} · examples: {examples} · completed: {enriched})", "other": "{count} AI-marked rows trained, never validated (generated: {generated} · examples: {examples} · completed: {enriched})"},
   "modelDetail.aiData.validated": {"one": "{count} AI-marked row trained and — for lack of real rows — validated too", "other": "{count} AI-marked rows trained and — for lack of real rows — validated too"},
   "modelDetail.row.aiData": "AI data",

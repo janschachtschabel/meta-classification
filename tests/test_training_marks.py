@@ -74,7 +74,33 @@ def test_the_bundle_says_what_was_trained_on_and_what_was_scored(tmp_path, cv_fo
     assert block["validated_on"] == "real_rows"
     assert block["labels_not_validated"] == ["C"]
     assert block["scored_rows"] == (25 if cv_folds else meta["n_test"])
+    # A fixture this small IS a run whose numbers do not compare: 25 real rows out of
+    # fold, or a 6-row test split. The k-fold arm clears the bar, the holdout arm does not.
+    assert (block["too_few_rows"] is None) is bool(cv_folds)
     assert "AI-marked" in meta["evaluation"]
+
+
+def test_a_bundle_whose_metrics_rest_on_a_few_rows_says_so(tmp_path):
+    """End to end: the shortage has to survive prepare -> provenance -> the bundle.
+
+    Eight real rows behind forty an LLM wrote. Validation and test are drawn from the
+    eight, so two rows carry the metrics and two tune the thresholds — which the old code
+    accepted as a real holdout split, reported as `validated_on: real_rows`, and said
+    nothing further about. The fallback never fired because neither part was empty.
+    """
+    rows = [f"Bruchrechnung Aufgabe {i};brüche zahlen {i};A;;;" for i in range(4)]
+    rows += [f"Wiener Kongress Quelle {i};geschichte europa {i};B;;;" for i in range(4)]
+    rows += [f"Erzeugt {lab} Text {i};stichwort {lab} {i};{lab};{lab};;"
+             for lab in ("A", "B") for i in range(20)]
+
+    _, registry = _train(tmp_path, [HEADER, *rows], name="fewreal", cv_folds=0)
+
+    block = registry.info("fewreal")["metadata"]["synthetic_data"]
+    assert block["validated_on"] == "real_rows", "the real rows stay the ones measured on"
+    assert block["fallback"] is None, "not converted into the all-rows fallback"
+    assert block["scored_rows"] == 2
+    assert block["too_few_rows"] == ("the metrics rest on 2 rows, fewer than the 10 a "
+                                     "number comparable with another run needs")
 
 
 def test_leaving_the_generated_rows_out_is_recorded_too(tmp_path):

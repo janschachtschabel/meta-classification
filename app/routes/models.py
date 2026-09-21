@@ -102,7 +102,8 @@ async def model_info(model_name: ModelName, _: str = Depends(require_role("reado
     would have kept them (`excluded_generated_rows`)
     and how many trained without validating (`train_only_rows`); what the metrics were
     computed on (`validated_on`: `real_rows`, or `all_rows` with the reason in
-    `fallback`; `scored_rows`); the labels no real row could score (`labels_not_validated`
+    `fallback`; `scored_rows`, and `too_few_rows` when that count is too small for the
+    numbers to compare with another run); the labels no real row could score (`labels_not_validated`
     — they have no F1); and the thin labels with the cut chosen for them (`thin_labels`,
     `thin_label_threshold`). **Auth:** readonly.
     """

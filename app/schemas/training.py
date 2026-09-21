@@ -152,7 +152,8 @@ class TrainRequest(BaseModel):
             "(`example_for`) validate again. Rows whose fields an LLM completed "
             "(`enriched_fields`) train but never validate in either mode. Too few real rows "
             "to validate on, and the metrics include the marked rows after all "
-            "(`synthetic_data.fallback` says why). A dataset "
+            "(`synthetic_data.fallback` says why); enough to measure on but too few to "
+            "compare, and `synthetic_data.too_few_rows` says so. A dataset "
             "without these columns trains exactly as before. The bundle's `synthetic_data` "
             "block records what was done."
         ),

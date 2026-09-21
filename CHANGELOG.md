@@ -10,6 +10,17 @@ model from these; they got numbers that described it inaccurately.
 
 ### Fixed
 
+- **A run could report an F1 over a single row without saying so.** The fallback that
+  makes AI-marked rows validate fires only when the validation or test part comes out
+  *empty*, so one real row in each was accepted as a holdout split — an F1 over one row,
+  per-label thresholds tuned on another, `validated_on: real_rows`, and silence from the
+  `fallback` field, the UI warning and the model page alike. K-fold accepted three real
+  rows for three folds the same way. The bundle now carries
+  `synthetic_data.too_few_rows` whenever fewer than ten rows carry the metrics, and the
+  model page shows it beside the existing warning. **Not** converted into a fallback:
+  a handful of real rows is still a better thing to measure on than text the model was
+  trained on, so the run keeps its rows and states what they are worth.
+
 - **Macro F1 counted labels the evaluated rows cannot score as 0.0.** A label with no
   positive row in the split scores 0.0 under every threshold and every model, so averaging
   it in measured the split, not the model: a *perfect* prediction over three labels, one of

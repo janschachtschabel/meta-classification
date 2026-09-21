@@ -73,9 +73,46 @@ def test_the_summary_counts_each_kind_and_names_the_labels_no_real_row_validates
         "scored_rows": 2,
         "labels_not_validated": ["b"],
         "fallback": None,
+        "too_few_rows": "the metrics rest on 2 rows, fewer than the 10 a number "
+                        "comparable with another run needs",
         "thin_labels": [],
         "thin_label_threshold": "own",
     }
+
+
+def _marked(**fields) -> RowProvenance:
+    return RowProvenance(marks=np.array([GENERATED, 0], dtype=np.int8), mode="train",
+                         excluded_generated=0, **fields)
+
+
+def test_a_measurement_resting_on_a_handful_of_rows_says_so():
+    """The shortage that used to pass silently.
+
+    The fallback fires only when validation or test comes out EMPTY, so one real row in
+    each was accepted as a holdout split: an F1 over a single row, per-label thresholds
+    tuned on another single row, `validated_on: real_rows`, and not a word anywhere that
+    the number is a coin flip. Those rows are still the honest ones to measure on — this
+    says what the measurement is worth.
+    """
+    assert _marked().summary(["a"], scored_rows=1)["too_few_rows"] == (
+        "the metrics rest on 1 row, fewer than the 10 a number comparable with another "
+        "run needs")
+
+
+def test_enough_rows_carry_no_warning():
+    """The flag has to stay rare enough to mean something: a normal run never sets it."""
+    assert _marked().summary(["a"], scored_rows=10)["too_few_rows"] is None
+    assert _marked().summary(["a"], scored_rows=30_000)["too_few_rows"] is None
+
+
+def test_the_shortage_is_reported_even_when_ai_rows_already_validate():
+    """Both can be true at once — too few rows AND the wrong rows — and a dataset small
+    enough to trigger the fallback is exactly where that happens. Reporting only the
+    fallback would understate it."""
+    summary = _marked(fallback="no real rows to validate on").summary(["a"], scored_rows=3)
+
+    assert summary["validated_on"] == "all_rows"
+    assert summary["too_few_rows"].startswith("the metrics rest on 3 rows")
 
 
 def test_a_fallback_says_the_metrics_include_ai_rows():

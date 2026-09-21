@@ -84,12 +84,23 @@ function scoredOn(meta) {
     : t("modelDetail.scoredOn.real", { count: s.scored_rows });
 }
 
-/* The two notices that must not hide in a table row: numbers that include AI-marked
-   rows, and labels no real row could score. Text with an icon, not colour alone. */
+/* The notices that must not hide in a table row: numbers that include AI-marked rows,
+   numbers resting on too few rows to compare, and labels no real row could score. Text
+   with an icon, not colour alone.
+
+   The two can both apply -- a dataset small enough to need the fallback is exactly where
+   too few rows also bites -- so they are collected rather than chosen between. */
 function aiWarning(meta) {
   const s = synthOf(meta);
-  return s && s.validated_on === "all_rows"
-    ? `<p class="error">${t("modelDetail.aiData.fallback")}</p>` : "";
+  if (!s) return "";
+  const notes = [];
+  if (s.validated_on === "all_rows") notes.push(t("modelDetail.aiData.fallback"));
+  /* `too_few_rows` carries the server's English reason; the reader needs the count,
+     which is already beside it, so the sentence is built and translated here. */
+  if (s.too_few_rows) {
+    notes.push(t("modelDetail.aiData.tooFewRows", { count: countOf(s.scored_rows) }));
+  }
+  return notes.map((note) => `<p class="error">${note}</p>`).join("");
 }
 
 /* Thin labels reached the training minimum only through AI-marked rows. Cut at their
