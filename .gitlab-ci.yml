@@ -65,7 +65,7 @@ ruff check:
 
 # -----------------------------------------------------------------------------
 # Helm chart lint — validates templates/values on every pipeline (the package/
-# push job below only runs on tags with a configured registry).
+# push job below runs on tags, and on main/develop, once HELM_REGISTRY is set).
 # -----------------------------------------------------------------------------
 helm lint:
   stage: lint

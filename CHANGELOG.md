@@ -2,6 +2,46 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — the 2026-09-27 audit's findings
+
+### Security
+
+- **`/metadata` no longer spends super-linear time on a long line.** `pysbd`'s German
+  abbreviation pass runs one whole-string `re.sub` per abbreviation candidate, so one call cost
+  candidates × length: 25k → 100k characters of prose on a single line took 0.23 s → 2.94 s,
+  and a request at the documented caps came to roughly five CPU-minutes in a single-worker
+  process — reachable with a readonly key. `split_sentences` now hands pysbd pieces of at most
+  4,000 characters, cut where a sentence ends; 100k characters take 0.60 s, and the time per
+  character stays flat. Lines under the bound — every real text; the parity fixture's longest
+  is 648 characters — split exactly as before. (S-2)
+- **Keyless mode serves this machine only.** With `APIV3_AUTH_ENABLED=false` every caller was
+  admin on every interface the process was reachable from, so one variable plus a
+  `-p 8000:8000` or the chart's ingress was an open admin API. It now serves loopback callers
+  and answers everyone else 403 — the rule data-prep already applied. (S-1)
+
+### Changed
+
+- **Keyless mode no longer works inside a container.** A request from the host reaches a
+  container from Docker's bridge gateway, not from loopback, so `docker compose up` with
+  `APIV3_AUTH_ENABLED=false` now answers 403. Set the two API keys there — which
+  `.env.example` now says, where it used to suggest the opposite.
+
+### Fixed
+
+- **The training child is measured by coverage.** `[run] patch = ["subprocess", "_exit"]`:
+  the child starts coverage and saves before the `os._exit` it ends with once its stdin
+  closes. `train_worker` read 76 % although 26 tests run its child; it reads 91 %. The
+  configuration's comment claimed `parallel = true` alone did this. (T-3)
+- **The child-kill test measures the property, not the machine.** It tells "the child ended
+  itself" from "the parent waited out the grace period" by the grace period rather than a fixed
+  8 seconds, which a loaded machine crossed in two of five full runs. (T-1)
+- **The memory feasibility check has a module of its own**, `feasibility`. It had grown to 85
+  lines against the 35 that `deploy`'s docstring gave as the reason to keep it there. Every
+  module past the ~300-line guide now states why, without a line count that goes stale. (M-2)
+- `/metadata`'s budget-cutting path is tested (T-2, `budget.py` 74 % → 100 %). `CLAUDE.md` no
+  longer claims a test enforces the line guide for every module (D-1) and names every module
+  (D-3); `.gitlab-ci.yml` says the chart is published from `main` and `develop` too (D-2).
+
 ## [4.0.0] — 2026-09-27
 
 ### Breaking
