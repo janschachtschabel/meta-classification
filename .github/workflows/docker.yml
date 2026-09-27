@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+# One run per ref. Without this, two quick pushes to main race and the mutable `main`
+# tag ends up pointing at whichever build finished last rather than at the newer
+# commit. Tag builds are never cancelled: a release must finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -32,6 +39,10 @@ jobs:
   test:
     name: Gate — ruff + mypy + pytest
     runs-on: ubuntu-latest
+    # A hang here is a deadlock, not slow work: the suite waits on thread
+    # rendezvous with generous timeouts of its own, so without this the job sits
+    # for GitHub's 360-minute default instead of failing.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -49,9 +60,29 @@ jobs:
       - name: Lint (ruff)
         run: python -m ruff check app tests scripts
       - name: Types (mypy)
-        run: python -m mypy app --config-file pyproject.toml
-      - name: Tests (pytest)
-        run: python -m pytest tests -q
+        # Same two scripts as ci.yml — see the comment there.
+        run: |
+          python -m mypy app --config-file pyproject.toml
+          python -m mypy scripts/patch_bundle_labels.py scripts/prune_bundle_labels.py \
+            --config-file pyproject.toml
+      - name: Tests (pytest, under coverage)
+        # Same command as ci.yml: the coverage floor in pyproject is part of the gate,
+        # and this workflow is the one that runs on tags.
+        run: |
+          python -m coverage run -m pytest tests -q
+          python -m coverage combine
+          python -m coverage report
+
+      - name: OpenAPI smoke
+        # The app must import cleanly and expose the core endpoints.
+        run: |
+          python - <<'PY'
+          from app.main import create_app
+          schema = create_app().openapi()
+          for path in ("/health", "/train", "/train/status", "/predict", "/models"):
+              assert path in schema["paths"], f"{path} missing from OpenAPI schema"
+          print(f"OK: {len(schema['paths'])} endpoints in schema")
+          PY
 
   # Supply-chain gate: no image ships a pinned package with a known
   # vulnerability — tag releases included. It scans requirements-hashes.lock,
@@ -60,6 +91,7 @@ jobs:
   audit:
     name: Gate — pip-audit of the image's tree
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -78,6 +110,7 @@ jobs:
   build:
     needs: [test, audit]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write

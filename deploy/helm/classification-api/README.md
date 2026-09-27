@@ -13,16 +13,34 @@ datasets, trained model bundles, share links, the corrections editors contribute
 ## Install
 
 ```bash
+# Recommended: the keys live in a Secret this chart does not own.
+kubectl create secret generic classify-api-keys \
+  --from-literal=APIV3_API_KEY_ADMIN=<strong-random-key> \
+  --from-literal=APIV3_API_KEY_READONLY=<strong-random-key>
+
 helm install classify deploy/helm/classification-api \
-  --set config.auth.adminKey=<strong-random-key> \
-  --set config.auth.readonlyKey=<strong-random-key> \
+  --set config.auth.existingSecret=classify-api-keys \
   --set ingress.hosts[0]=classify.example.de
 ```
 
-`config.auth.adminKey` and `config.auth.readonlyKey` are **required** while
-`config.auth.enabled=true` — rendering fails without them. They are stored in the
-chart-managed `Secret` and map to the app's `X-API-Key` roles (admin = train/manage,
-readonly = predict/status). Swagger UI: `https://<host>/docs`.
+`config.auth.existingSecret` names a `Secret` carrying `APIV3_API_KEY_ADMIN` and
+`APIV3_API_KEY_READONLY`. The chart then renders no `Secret` of its own, which is what
+sealed-secrets, External Secrets Operator and Vault need, and rotating a key becomes a
+pod restart instead of a chart upgrade.
+
+Without it, `config.auth.adminKey` and `config.auth.readonlyKey` are **required** while
+`config.auth.enabled=true` — rendering fails without them — and are stored in the
+chart-managed `Secret`. That path is fine for a throwaway cluster and poor beyond one: a
+key passed with `--set` ends up in shell history, in the log of whatever CI ran the
+command, and in any values file used to install. Either way the keys map to the app's
+`X-API-Key` roles (admin = train/manage, readonly = predict/status). Swagger UI:
+`https://<host>/docs`.
+
+> **TLS is not optional here.** Every authenticated call sends `X-API-Key` as a plain
+> header, so an ingress without TLS publishes the credential to anything on the network path.
+> With `ingress.enabled: true` the chart therefore refuses to render until either
+> `ingress.tls` is filled in or `ingress.allowInsecure: true` says TLS is terminated above
+> the ingress (a service mesh, a cloud load balancer) — something the chart cannot detect.
 
 ## Parameters
 
@@ -65,9 +83,11 @@ readonly = predict/status). Swagger UI: `https://<host>/docs`.
 
 | Name                                    | Description                                                              | Value         |
 | --------------------------------------- | ------------------------------------------------------------------------ | ------------- |
+| `ingress.allowInsecure`                 | Allow an ingress with no TLS (see below)                                  | `false`       |
 | `config.auth.enabled`                   | Enable API-key authentication                                            | `true`        |
-| `config.auth.adminKey`                  | Admin API key (**REQUIRED** when auth enabled, stored in Secret)          | `""`          |
-| `config.auth.readonlyKey`               | Readonly API key (**REQUIRED** when auth enabled, stored in Secret)       | `""`          |
+| `config.auth.existingSecret`            | Secret holding both keys; set this instead of the two below               | `""`          |
+| `config.auth.adminKey`                  | Admin API key (**REQUIRED** when auth enabled and no existingSecret)      | `""`          |
+| `config.auth.readonlyKey`               | Readonly API key (**REQUIRED** when auth enabled and no existingSecret)   | `""`          |
 | `config.app.corsOrigins`                | Comma-separated allowed browser origins (empty = none)                   | `""`          |
 | `config.app.logLevel`                   | Log level                                                                | `INFO`        |
 | `config.compute.nJobs`                  | CPU cores for training (`auto` = all the pod may use, `-2` leave one free) | `auto`      |

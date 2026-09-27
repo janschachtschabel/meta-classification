@@ -20,6 +20,21 @@ services:
     image: classification-api:local
     container_name: classification-api
     restart: unless-stopped
+    # APIV3_TRAIN_MEMORY_MB=auto below reads this limit; without it
+    # `memory_limit_bytes()` finds cgroup v2's "max" and the cap is simply off, so the
+    # compose quickstart had none of the OOM protection the comment described.
+    # Override for a bigger run:  APIV3_MEM_LIMIT=8g docker compose up -d
+    # Keep it at or below what the Docker VM actually grants — a limit larger than the
+    # available memory is worse than none, because the head-fit threads are then sized
+    # for memory that is not there.
+    mem_limit: ${APIV3_MEM_LIMIT:-4g}
+    logging:
+      # An INFO-level service with `restart: unless-stopped` writes for as long as it
+      # runs. The data volume is bounded on purpose; the logs beside it were not.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       # Bind to localhost only — nginx/caddy should sit in front.
       - "127.0.0.1:8000:8000"
@@ -37,8 +52,8 @@ services:
       # auto = every core the container grants, bounded by APIV3_CPU_MAX_PERCENT (60 % by
       # default) — that budget is what keeps the host responsive during training.
       APIV3_N_JOBS: ${APIV3_N_JOBS:-auto}
-      # auto = 85 % of the container's memory limit (deploy.resources / --memory): the
-      # head-fit threads are sized to it, so a big run slows down instead of being killed.
+      # auto = 85 % of the container's memory limit (`mem_limit` above): the head-fit
+      # threads are sized to it, so a big run slows down instead of being killed.
       APIV3_TRAIN_MEMORY_MB: ${APIV3_TRAIN_MEMORY_MB:-auto}
       # process = each training in a child process: its memory goes back to the OS when
       # it ends, and an OOM kill fails the job instead of restarting the container.
@@ -49,6 +64,8 @@ services:
       # their first /predict pays no cold load. The cache is sized to hold at
       # least this list, so several models stay warm side by side.
       APIV3_WARMUP_MODELS: ${APIV3_WARMUP_MODELS:-}
+      # Warm the /metadata generators too (~58 MB resident for wordfreq's German table).
+      APIV3_WARMUP_METADATA: ${APIV3_WARMUP_METADATA:-false}
       APIV3_MAX_MODELS_IN_MEMORY: ${APIV3_MAX_MODELS_IN_MEMORY:-2}
 
       # ---- Data (persistent volume) ----

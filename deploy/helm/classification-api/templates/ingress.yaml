@@ -1,4 +1,7 @@
 {{- if .Values.ingress.enabled }}
+{{- if and (not .Values.ingress.tls) (not .Values.ingress.allowInsecure) }}
+{{- fail (printf "ingress.enabled is true with no ingress.tls: every authenticated request sends X-API-Key as a header, so this would publish the credential in cleartext. Set ingress.tls, or ingress.allowInsecure=true if TLS is terminated above this ingress (mesh, cloud load balancer).") }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

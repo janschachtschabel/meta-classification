@@ -7,6 +7,9 @@ name: CI — Lint, Types & Tests
 on:
   push:
     branches: [main]
+    # Tags too. This workflow runs the coverage floor and the OpenAPI smoke, and a
+    # release should not be gated more weakly than a push.
+    tags: ['v*.*.*']
   pull_request:
     branches: [main]
   schedule:
@@ -19,6 +22,12 @@ on:
 permissions:
   contents: read
 
+# One run per ref. Two quick pushes otherwise run concurrently and the older one can
+# report last. Tag builds are never cancelled: a release must finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 env:
   # Node 24 as the Action runtime — Node 20 is removed from GitHub
   # runners from Q3 2026 on.
@@ -28,6 +37,10 @@ jobs:
   api:
     name: API — ruff + mypy + pytest + OpenAPI smoke
     runs-on: ubuntu-latest
+    # A hang here is a deadlock, not slow work: the suite waits on thread
+    # rendezvous with generous timeouts of its own, so without this the job sits
+    # for GitHub's 360-minute default instead of failing.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -50,7 +63,14 @@ jobs:
         run: python -m ruff check app tests scripts
 
       - name: Types (mypy)
-        run: python -m mypy app --config-file pyproject.toml
+        # `app` plus the two scripts that WRITE inside a model bundle: they edit the
+        # config.json the registry trusts, so they earn the same gate (audit T-5). The
+        # benchmark scripts stay out — they read and print, and 40 type errors' worth of
+        # cleanup there would buy nothing.
+        run: |
+          python -m mypy app --config-file pyproject.toml
+          python -m mypy scripts/patch_bundle_labels.py scripts/prune_bundle_labels.py \
+            --config-file pyproject.toml
 
       - name: Tests (pytest, under coverage)
         # The gate is the floor in pyproject (fail_under), not this command: a change
@@ -73,8 +93,11 @@ jobs:
           PY
 
   audit:
-    name: Dependencies — pip-audit
+    name: Dependencies — pip-audit + licences
     runs-on: ubuntu-latest
+    # 15 rather than 10: the licence step installs the resolved runtime tree
+    # (numpy/scipy/scikit-learn wheels) to read its metadata.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -108,3 +131,27 @@ jobs:
         # Runs even when the scan above failed, so both always report.
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off
+
+      - name: Licences of the resolved runtime tree
+        # The 40-package tree was all-permissive (MIT / BSD-3 / Apache-2.0 / PSF)
+        # against an MIT LICENSE when audited by hand — an assessment of one moment,
+        # not an invariant. A copyleft package arriving transitively in a routine bump
+        # is what this catches.
+        #
+        # pip-licenses reads *installed* metadata, so the tree has to be present; it is
+        # installed here rather than reusing the api job's venv because that one also
+        # holds the dev tools, which do not ship. requirements.lock (the 13 direct pins,
+        # resolved fresh) is the tree the next recompile gets.
+        #
+        # Runs last so a failure in the licence tooling cannot mask a CVE finding.
+        #
+        # A denylist, not `--allow-only`: two packages in the shipped tree carry MIT
+        # licence *text* and non-specific *metadata* — `locate` (via wordfreq) declares
+        # the classifier "License :: Other/Proprietary License" and `skops` only
+        # "License :: OSI Approved". Both LICENSE files were read and are MIT. An
+        # allow-list therefore fails on this tree today; verified, not assumed.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          pip install pip-licenses
+          pip install -r requirements.lock
+          python -m piplicenses --fail-on "GPL;AGPL;LGPL" --format markdown --order license

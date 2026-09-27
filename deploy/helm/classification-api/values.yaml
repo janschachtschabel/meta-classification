@@ -104,6 +104,13 @@ ingress:
   #    - classify.example.de
   tls: []
 
+  ## @param ingress.allowInsecure Render the ingress with no TLS block (the API key then travels in cleartext)
+  ## Every authenticated call sends `X-API-Key` as a header, so an ingress without TLS
+  ## publishes the credential to anything on the path. Set this only where TLS is terminated
+  ## ABOVE the ingress — a service mesh, a cloud load balancer — which the chart cannot see.
+  ## Otherwise fill in `tls` above; the release fails to render until one of the two is done.
+  allowInsecure: false
+
 ########################################################################################################################
 
 ## @section Application configuration (env prefix APIV3_, see .env.example / README)
@@ -112,9 +119,19 @@ config:
   auth:
     ## @param config.auth.enabled Enable API-key authentication (disable only for cluster-internal use)
     enabled: true
-    ## @param config.auth.adminKey Admin API key — train/manage endpoints (REQUIRED when auth is enabled; stored in the chart secret)
+    ## @param config.auth.existingSecret Name of a Secret holding APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY (set this instead of the two keys below)
+    ## When set, the chart renders no Secret of its own and the two values below are
+    ## ignored — the path for sealed-secrets, External Secrets Operator or Vault. The
+    ## Secret must already exist in the release namespace and carry exactly those two
+    ## keys, because the pod consumes it with `envFrom`. Rotating a key is then a
+    ## restart, not a chart upgrade.
+    existingSecret: ""
+    ## @param config.auth.adminKey Admin API key — train/manage endpoints (REQUIRED when auth is enabled and no existingSecret; stored in the chart secret)
+    ## Supplied as a Helm value, this key lands in the release Secret, in any values
+    ## file used to install, and — via `--set` — in shell history and CI logs. Prefer
+    ## existingSecret above for anything beyond a throwaway cluster.
     adminKey: ""
-    ## @param config.auth.readonlyKey Readonly API key — predict/status endpoints (REQUIRED when auth is enabled; stored in the chart secret)
+    ## @param config.auth.readonlyKey Readonly API key — predict/status endpoints (REQUIRED when auth is enabled and no existingSecret; stored in the chart secret)
     readonlyKey: ""
 
   app:
@@ -160,6 +177,11 @@ config:
     ## so their first /predict pays no cold skops load (e.g. "faecher_300k_auto,bildungsstufe"). Empty = off.
     ## Budget the RAM: a bundle's head is n_labels x n_features x 4 bytes (a 60-label model is ~48 MB).
     warmupModels: ""
+    ## @param config.limits.warmupMetadata Run the /metadata generators once on startup, so the first
+    ## request pays no cold load (measured 330-380 ms for it, 10 ms after). Off by default: wordfreq's
+    ## German frequency table is ~58 MB resident for the life of the process, which a pod that only
+    ## trains or classifies would be taking from the training memory budget.
+    warmupMetadata: false
     ## @param config.limits.rateLimitEnabled Enable the in-process rate limiter (keys on client IP — see README for proxy note)
     rateLimitEnabled: true
     ## @param config.limits.forwardedAllowIps Addresses whose X-Forwarded-For uvicorn may trust (e.g. the

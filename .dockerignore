@@ -3,6 +3,11 @@
 # are several hundred MB) or does not belong in an image.
 data/
 models/
+# Exported bundles staged for hand-off: 57 MB of a 64 MB context, uploaded to the
+# daemon on every build and reaching no layer. `.gitignore` already excluded it —
+# tests/test_deployment_config.py now keeps the two files from disagreeing again.
+fertige-modelle/
+cache/
 tests/
 deploy/
 .github/

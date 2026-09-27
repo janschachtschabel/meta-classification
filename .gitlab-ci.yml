@@ -49,6 +49,7 @@ variables:
 # -----------------------------------------------------------------------------
 ruff check:
   stage: lint
+  timeout: 10 minutes
   interruptible: true
   image:
     # Keep in sync with requirements-dev.txt (the version the code is developed against).
@@ -68,6 +69,7 @@ ruff check:
 # -----------------------------------------------------------------------------
 helm lint:
   stage: lint
+  timeout: 10 minutes
   interruptible: true
   image:
     # Pinned like every other image in this repo (digest-pinned base, SHA-pinned
@@ -83,6 +85,7 @@ helm lint:
 # -----------------------------------------------------------------------------
 mypy:
   stage: lint
+  timeout: 10 minutes
   interruptible: true
   image: python:3.11-slim-bookworm
   before_script:
@@ -100,6 +103,7 @@ mypy:
 # -----------------------------------------------------------------------------
 pytest:
   stage: test
+  timeout: 25 minutes
   interruptible: true
   image: python:3.11-slim-bookworm
   before_script:
@@ -128,6 +132,7 @@ pytest:
 # -----------------------------------------------------------------------------
 pip-audit:
   stage: test
+  timeout: 10 minutes
   interruptible: true
   image: python:3.11-slim-bookworm
   before_script:
@@ -143,6 +148,7 @@ pip-audit:
 # -----------------------------------------------------------------------------
 build and push (branches):
   stage: build
+  timeout: 30 minutes
   image: $DIND_IMAGE
   variables:
     DOCKER_HOST: "$DIND_HOST"
@@ -180,6 +186,7 @@ build and push (branches):
 # -----------------------------------------------------------------------------
 build and push (tags):
   stage: build
+  timeout: 30 minutes
   image: $DIND_IMAGE
   variables:
     DOCKER_HOST: "$DIND_HOST"
@@ -227,6 +234,7 @@ build and push (tags):
 
 build and push helm chart:
   extends: .helm_base
+  timeout: 15 minutes
   variables:
     CHART_VERSION: "0.0.0-$CI_COMMIT_REF_SLUG"
     APP_VERSION: "$CI_COMMIT_REF_SLUG"
