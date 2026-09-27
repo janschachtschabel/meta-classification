@@ -23,7 +23,7 @@ root when published standalone.
 - Bug fixes are test-first: failing test → fix → green. Never weaken a test to pass.
 - Security: no pickle (skops only); model/dataset import via file upload only (no URL fetch); user-supplied names go through `security.safe_name`; API keys compare in constant time.
 - Dependencies: 17 runtime deps, pinned in `requirements.lock`; no new dependency without written justification. (The three newest — `wordfreq`, `pysbd`, `snowballstemmer` — carry `app/metadata`; the justification, and the alternatives measured and rejected, are in `docs/plans/2026-09-26-descriptive-metadata.md`.)
-- Files stay under ~300 lines; split by responsibility, not by line count.
+- Files stay under ~300 lines; split by responsibility, not by line count. `tests/test_architecture.py` enforces that for `app/*.py`. The admin UI is not covered by that test and holds four deliberate exceptions: `strings-de.js` and `strings-en.js` (dictionaries — a split would cut one language in half), `query.js` (one tab whose three input modes share one form, one settings builder and one answer path) and `model-detail.js` (one view of one bundle). Anything else under `app/static/ui/` that passes 300 lines is a split, not a fifth exception.
 - Single-worker design: training job, model LRU cache, and rate limiter are process-local. Do not introduce multi-worker assumptions (also: Helm chart is fixed at 1 replica).
 
 ## Architecture
@@ -47,5 +47,5 @@ root when published standalone.
 
 ## Deployment
 - Docker: `Dockerfile` (non-root, healthcheck) · local: `docker compose up -d` (keys via `.env`).
-- Kubernetes: Helm chart in `deploy/helm/classification-api` (StatefulSet, 1 replica, `/data` PVC).
+- Kubernetes: Helm chart in `deploy/helm/classification-api` (StatefulSet, 1 replica, `/data` PVC). Changes to it are checked by RENDERING, in `tests/test_helm_chart.py`: `helm lint` reports both of the chart's guards — `required` for the API keys, `fail` for a TLS-less ingress — as `[INFO]` and exits **0**, so only `helm template` answers what a given set of values produces. The GitHub runner ships helm, so that suite is a real gate in CI; it skips where helm is absent and refuses to skip when `CI` is set. The suite also renders the chart README's own install commands, because the one it documented stopped rendering the day the TLS guard landed.
 - CI/CD: GitHub Actions (`.github/workflows/` — gates + GHCR image) · GitLab (`.gitlab-ci.yml` — lint/test/build/helm, credentials via CI variables only).
