@@ -2,7 +2,11 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased] — the 2026-09-27 audit's findings
+## [4.0.1] — 2026-09-27
+
+The findings of the audit of the same day (`docs/audits/2026-09-27-audit.md`): two security
+fixes, and the tests, structure and docs it found wanting. Nothing changes for a client of the
+API; keyless mode inside a container does — see *Changed*.
 
 ### Security
 

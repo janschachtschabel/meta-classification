@@ -59,7 +59,7 @@ The five path variables are what make the volume the source of truth; without th
 container would write inside its own filesystem and lose everything on the next `docker
 run`. `docker compose` sets them for you.
 
-**Tags:** `latest` is the newest release (currently the same image as `4.0.0`, `4.0`
+**Tags:** `latest` is the newest release (currently the same image as `4.0.1`, `4.0`
 and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
 production pin a version or a `sha-` tag rather than a moving one. The published
 images are built for **linux/amd64** only — on arm64 (Apple Silicon) build locally
