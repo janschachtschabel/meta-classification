@@ -77,6 +77,30 @@ function selectedModels() {
 
 const wantsMetadata = () => $("#query-metadata").checked;
 
+/* What a submit is asking for: a classification, descriptive metadata, or both.
+
+   A value rather than two early returns inside the submit handler, because the
+   model-free case had no way in: /metadata reads no model — as the option's own hint
+   says — so asking for it alone is legitimate, and it used to be refused. The csv
+   exception is not arbitrary either. /predict/csv streams its answer straight through,
+   so the option is hidden in that mode, and a box ticked before the switch stays
+   ticked — honouring it there would start a CSV run with no model to run it. */
+function queryPlan(models, metadata, mode) {
+  const described = metadata && mode !== "csv";
+  if (!models.length && !described) {
+    // Not one message for both: in csv mode the metadata option is hidden, so naming
+    // it would send the reader looking for a control that is not on screen.
+    return { error: mode === "csv" ? "query.error.noModel" : "query.error.nothingRequested" };
+  }
+  return {
+    classify: models.length > 0,
+    metadata: described,
+    // Carried here because #query-status is the page's ONLY live region: announcing a
+    // classification while nothing is classified is what a screen reader would hear.
+    progress: models.length ? "query.progressStart" : "query.progressDescribing",
+  };
+}
+
 /* Descriptive metadata for the same texts, from /metadata — a separate endpoint because it
    reads no model: the proposals come out of the text itself, so they are the same whichever
    model classified it, and asking for them per model would repeat identical work. */
@@ -184,10 +208,12 @@ async function predictOneText(models, body) {
   return r.results[0].predictions_by_model;
 }
 
-async function runSingle(models, out) {
+async function runSingle(models, plan, out) {
   const settings = querySettings();
   const body = { ...settings, texts: [$("#query-text").value] };
-  const byModel = await predictOneText(models, body);
+  // Nothing asked to classify: the metadata is the whole answer, and /predict/multi
+  // with an empty list would be a request for nothing.
+  const byModel = plan.classify ? await predictOneText(models, body) : {};
   // Ask the models that returned nothing what they almost said. Only when the caller
   // did not pin top_k (then every entry is already shown), and a failure here must not
   // cost the answer that did arrive.
@@ -204,7 +230,7 @@ async function runSingle(models, out) {
   // Requested before the answer is written so a failure here is a failure of the whole
   // submit: the user ticked a box, and silently leaving the card out would look like the
   // text simply yielded nothing.
-  const described = wantsMetadata() ? (await fetchMetadata([text]))[0] : null;
+  const described = plan.metadata ? (await fetchMetadata([text]))[0] : null;
   out.innerHTML = renderPredictions(byModel, nearest)
     + (described ? metadataCard(described) : "");
   applyBarWidths(out);
@@ -238,12 +264,17 @@ const rowsAreDescribed = (rows) => rows.some((r) => r.title !== undefined);
    parsing this download by position keeps working either way. Metadata belongs to the input
    row, so it repeats across that row's labels — normal for a flat export, and what lets the
    file be joined back onto the caller's own rows. */
-function bulkCsv(rows) {
+function bulkCsv(rows, classified = true) {
   const described = rowsAreDescribed(rows);
-  const head = "row,text,uri,label,confidence" + (described ? ",title,description,keywords" : "");
+  // The columns follow the table's. A file that keeps an empty label and a
+  // confidence of 0 for a run with no model states a measurement that was never
+  // taken — and 0 reads as "the model was unsure" to whatever opens the file next.
+  const head = "row,text" + (classified ? ",uri,label,confidence" : "")
+    + (described ? ",title,description,keywords" : "");
   return [head]
     .concat(rows.map((r) => {
-      const cells = [r.row, csvCell(r.text), csvCell(r.uri), csvCell(r.label), r.confidence];
+      const cells = [r.row, csvCell(r.text)];
+      if (classified) cells.push(csvCell(r.uri), csvCell(r.label), r.confidence);
       if (described) {
         cells.push(csvCell(r.title ?? ""), csvCell(r.description ?? ""),
                    // "; " as the API's own label lists are separated, so one cell stays one cell.
@@ -254,17 +285,22 @@ function bulkCsv(rows) {
     .join("\n");
 }
 
-function renderBulkTable(rows, texts, out) {
+function renderBulkTable(rows, texts, out, classified = true) {
   const shown = rows.slice(0, QUERY_TABLE_LIMIT);
-  const refused = new Set(rows.filter((r) => !r.uri).map((r) => r.row)).size;
+  // Nothing classified means nothing was refused: counting every row as "without a
+  // label" would report a question nobody asked as that many failures.
+  const refused = classified
+    ? new Set(rows.filter((r) => !r.uri).map((r) => r.row)).size : 0;
   // The title and the keywords are short enough to read in a cell; a 500-character
   // description is not, so it stays in the download and the note says so.
   const described = rowsAreDescribed(rows);
   // Composed from pluralised parts rather than one sentence carrying three counts:
   // "1 Text" and "2 Texte" differ, so each part has to pick its own form.
-  const counted = [t("query.bulk.texts", { count: texts.length }),
-                   t("query.bulk.labelsAssigned", { count: rows.filter((r) => r.uri).length })];
-  if (refused) counted.push(`<strong>${t("query.bulk.withoutLabel", { count: refused })}</strong>`);
+  const counted = [t("query.bulk.texts", { count: texts.length })];
+  if (classified) {
+    counted.push(t("query.bulk.labelsAssigned", { count: rows.filter((r) => r.uri).length }));
+    if (refused) counted.push(`<strong>${t("query.bulk.withoutLabel", { count: refused })}</strong>`);
+  }
   out.innerHTML = `<div class="card">
     <h3>${counted.join(" · ")}</h3>
     <p class="muted">${t("query.bulk.note")}${
@@ -273,27 +309,28 @@ function renderBulkTable(rows, texts, out) {
         : ""}${described ? ` ${t("query.bulk.descriptionInDownload")}` : ""}</p>
     <button type="button" class="small" id="bulk-download">${t("query.bulk.download")}</button>
     <div class="table-wrap" tabindex="0"><table>
-      <thead><tr><th class="num">${t("query.table.row")}</th><th>${t("query.table.text")}</th>
-        <th>${t("query.table.label")}</th>
-        <th class="num">${t("query.table.confidence")}</th>${described
+      <thead><tr><th class="num">${t("query.table.row")}</th><th>${t("query.table.text")}</th>${classified
+        ? `<th>${t("query.table.label")}</th>
+        <th class="num">${t("query.table.confidence")}</th>` : ""}${described
           ? `<th>${t("query.table.title")}</th><th>${t("query.table.keywords")}</th>` : ""}</tr></thead>
-      <tbody>${shown.map((r) => `<tr${r.uri ? "" : ' class="stale"'}>
-        <td class="num">${r.row}</td><td>${esc(r.text)}</td>
-        <td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}</td>
-        <td class="num">${r.uri ? fmtFixed(r.confidence, 3) : "–"}</td>${described
+      <tbody>${shown.map((r) => `<tr${classified && !r.uri ? ' class="stale"' : ""}>
+        <td class="num">${r.row}</td><td>${esc(r.text)}</td>${classified
+          ? `<td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}</td>
+        <td class="num">${r.uri ? fmtFixed(r.confidence, 3) : "–"}</td>` : ""}${described
           ? `<td>${esc(r.title ?? "")}</td><td>${esc((r.keywords ?? []).join(", "))}</td>` : ""
         }</tr>`).join("")}</tbody>
     </table></div></div>`;
   out.querySelector("#bulk-download").addEventListener("click", () => {
-    Api.saveBlob(new Blob([bulkCsv(rows)], { type: "text/csv" }), "predictions.csv");
+    Api.saveBlob(new Blob([bulkCsv(rows, classified)], { type: "text/csv" }), "predictions.csv");
   });
-  return t("query.bulk.done", {
-    texts: t("query.bulk.texts", { count: texts.length }),
-    refused: t("query.bulk.withoutLabel", { count: refused }),
-  });
+  const texted = t("query.bulk.texts", { count: texts.length });
+  return classified
+    ? t("query.bulk.done", { texts: texted,
+                             refused: t("query.bulk.withoutLabel", { count: refused }) })
+    : t("query.bulk.doneDescribed", { texts: texted });
 }
 
-async function runManyTexts(model, out) {
+async function runManyTexts(models, plan, out) {
   const texts = $("#query-lines").value.split("\n").map((line) => line.trim()).filter(Boolean);
   if (!texts.length) {
     out.innerHTML = `<p class="error" role="alert">${t("query.error.noTexts")}</p>`;
@@ -311,10 +348,14 @@ async function runManyTexts(model, out) {
     $("#query-status").textContent = t("query.progress", {
       done: Math.min(start + slice.length, texts.length), total: texts.length,
     });
-    const answer = await Api.post("/predict", { ...settings, model_name: model, texts: slice });
+    const answer = plan.classify
+      ? await Api.post("/predict", { ...settings, model_name: models[0], texts: slice })
+      // No model: one empty prediction per text, so the rows below still carry the
+      // text and whatever the metadata call returned for it.
+      : { results: slice.map(() => ({ predictions: [] })) };
     // Per batch, and only on request: /metadata caps a batch at 100 against /predict's 1000,
     // so a full slice is sent in several calls.
-    const described = wantsMetadata() ? await metadataForBatch(slice) : null;
+    const described = plan.metadata ? await metadataForBatch(slice) : null;
     answer.results.forEach((result, index) => {
       const row = start + index;
       const extra = described ? described[index] : {};
@@ -323,7 +364,7 @@ async function runManyTexts(model, out) {
       result.predictions.forEach((p) => rows.push({ ...base, ...p }));
     });
   }
-  return renderBulkTable(rows, texts, out);
+  return renderBulkTable(rows, texts, out, plan.classify);
 }
 
 /* ---------- a CSV file ---------- */
@@ -371,8 +412,9 @@ async function onQuery(ev) {
   ev.preventDefault();
   const btn = $("#query-btn"), out = $("#query-results"), mode = queryMode();
   const models = selectedModels();
-  if (!models.length) {
-    out.innerHTML = `<p class="error" role="alert">${t("query.error.noModel")}</p>`;
+  const plan = queryPlan(models, wantsMetadata(), mode);
+  if (plan.error) {
+    out.innerHTML = `<p class="error" role="alert">${t(plan.error)}</p>`;
     return;
   }
   if (mode !== "one" && models.length > 1) {
@@ -380,11 +422,11 @@ async function onQuery(ev) {
     return;
   }
   btn.disabled = true;
-  $("#query-status").textContent = t("query.progressStart");
+  $("#query-status").textContent = t(plan.progress);
   try {
     let done = "";
-    if (mode === "one") await runSingle(models, out);
-    else if (mode === "many") done = await runManyTexts(models[0], out);
+    if (mode === "one") await runSingle(models, plan, out);
+    else if (mode === "many") done = await runManyTexts(models, plan, out);
     else done = await runCsvFile(models[0], out);
     // The status region is the page's only live region, so it carries the outcome —
     // clearing it unconditionally would leave a screen reader with no completion at all.

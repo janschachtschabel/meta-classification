@@ -83,6 +83,130 @@ def test_the_nearest_misses_are_rendered_under_the_decline_note(tmp_path):
 
 
 @needs_node
+@pytest.mark.parametrize(
+    ("models", "metadata", "mode", "expected"),
+    [
+        # The ask: descriptive metadata on its own, with no model chosen at all. The progress
+        # key travels with the plan because the status region is the page's only live region:
+        # announcing "classifying" while nothing is classified misinforms a screen reader.
+        ("[]", "true", "one",
+         {"classify": False, "metadata": True, "progress": "query.progressDescribing"}),
+        ("[]", "true", "many",
+         {"classify": False, "metadata": True, "progress": "query.progressDescribing"}),
+        # …and everything in one submit, one model or several.
+        ('["faecher"]', "true", "one",
+         {"classify": True, "metadata": True, "progress": "query.progressStart"}),
+        ('["faecher", "stufe"]', "true", "one",
+         {"classify": True, "metadata": True, "progress": "query.progressStart"}),
+        ('["faecher"]', "false", "one",
+         {"classify": True, "metadata": False, "progress": "query.progressStart"}),
+    ],
+)
+def test_what_a_submit_asks_for(models, metadata, mode, expected, tmp_path):
+    """The decision `onQuery` acts on, as a value rather than a branch inside a submit
+    handler — which is the only way to reach the model-free case without a form."""
+    result = _render(f"JSON.stringify(queryPlan({models}, {metadata}, {mode!r}))", tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert json.loads(result["html"]) == expected
+
+
+@needs_node
+@pytest.mark.parametrize(
+    ("models", "metadata", "mode"),
+    [
+        ("[]", "false", "one"),    # nothing asked for at all
+        ("[]", "false", "many"),
+        # The metadata option is only HIDDEN in csv mode, so a box ticked before the
+        # switch stays ticked. Honouring it here would run /predict/csv with no model.
+        ("[]", "true", "csv"),
+    ],
+)
+def test_a_submit_that_asks_for_nothing_is_refused(models, metadata, mode, tmp_path):
+    result = _render(f"JSON.stringify(queryPlan({models}, {metadata}, {mode!r}))", tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert "error" in json.loads(result["html"])
+
+
+@needs_node
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("one", "query.error.nothingRequested"),
+        ("many", "query.error.nothingRequested"),
+        # In csv mode the metadata option is HIDDEN, so pointing at it would send the reader
+        # looking for a checkbox that is not on screen. There the only way out is a model.
+        ("csv", "query.error.noModel"),
+    ],
+)
+def test_the_refusal_only_offers_a_way_out_that_exists_in_that_mode(mode, expected, tmp_path):
+    result = _render(f"JSON.stringify(queryPlan([], false, {mode!r}))", tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert json.loads(result["html"])["error"] == expected
+
+
+@needs_node
+def test_the_download_drops_the_label_columns_when_nothing_was_classified(tmp_path):
+    """The table and the file have to agree about what a run produced. A `confidence` column
+    holding 0 for every row reads as "the model was unsure", not as "no model ran"."""
+    rows = ('[{ row: 0, text: "a", uri: "", label: "", confidence: 0, title: "T", '
+            'description: "D", keywords: ["k"] }]')
+    result = _render(f"bulkCsv({rows}, false)", tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert result["html"].split("\n")[0] == "row,text,title,description,keywords"
+
+
+@needs_node
+def test_the_download_keeps_the_label_columns_when_a_model_ran(tmp_path):
+    rows = '[{ row: 0, text: "a", uri: "u", label: "Physik", confidence: 0.9 }]'
+    result = _render(f"bulkCsv({rows}, true)", tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert result["html"].split("\n")[0] == "row,text,uri,label,confidence"
+
+
+@needs_node
+def test_the_bulk_table_drops_the_label_columns_when_nothing_was_classified(tmp_path):
+    """A metadata-only run over a list has no labels to show, and a table claiming "0 labels
+    assigned · 2 without label" would read as two failures rather than as a question never
+    asked. The title and keyword columns stay — they are the answer."""
+    rows = ('[{ row: 0, text: "a", uri: "", label: "", confidence: 0, title: "Erstes", '
+            'keywords: ["k1"] }, { row: 1, text: "b", uri: "", label: "", confidence: 0, '
+            'title: "Zweites", keywords: ["k2"] }]')
+    # The table goes into `out.innerHTML`; the return value is only the status line.
+    result = _render(
+        f'(() => {{ const out = _outStub();'
+        f' renderBulkTable({rows}, ["a", "b"], out, false); return out.innerHTML; }})()',
+        tmp_path,
+    )
+
+    assert result["ok"], result.get("error")
+    html = result["html"]
+    assert "query.table.title" in html and "query.table.keywords" in html
+    assert "query.table.label" not in html, "the label column survived a model-free run"
+    assert "query.table.confidence" not in html
+    assert "query.bulk.withoutLabel" not in html, "counted a missing label nobody asked for"
+
+
+@needs_node
+def test_the_bulk_table_still_shows_labels_when_a_model_ran(tmp_path):
+    """The other half of the same switch: with a model, nothing about the table changes."""
+    rows = '[{ row: 0, text: "a", uri: "u", label: "Physik", confidence: 0.9 }]'
+    result = _render(
+        f'(() => {{ const out = _outStub();'
+        f' renderBulkTable({rows}, ["a"], out, true); return out.innerHTML; }})()',
+        tmp_path,
+    )
+
+    assert result["ok"], result.get("error")
+    assert "query.table.label" in result["html"]
+    assert "Physik" in result["html"]
+
+
+@needs_node
 def test_the_metadata_card_renders_all_three_fields(tmp_path):
     """The option's whole output. Keywords are a list, so they have to survive as one —
     joining them into a sentence would lose the ranking the endpoint returns them in."""

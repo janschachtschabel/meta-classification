@@ -7,7 +7,9 @@ Status: implemented · 2026-09-26
 Give the API a way to propose a **title**, a **description** and **keywords** for a text, so
 that a classified item can be handed on as a complete metadata record rather than as labels
 alone. One extra endpoint, and a switch in the Query tab that asks for it alongside the
-classification.
+classification — or, since 2026-09-27, **instead of** one. The endpoint reads no model, so
+refusing a submit without one made the feature unreachable on an instance with nothing
+trained, which is every instance on its first day.
 
 ## Where it comes from
 

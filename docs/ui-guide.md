@@ -63,7 +63,15 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
 
 ## Ergebnisse lesen (Reiter „Abfrage“)
 
-Text eingeben, Modell(e) anhaken, **Klassifizieren**.
+Text eingeben, Modell(e) anhaken, **Klassifizieren**. Für die beschreibenden Metadaten
+(letzter Punkt) braucht es kein Modell.
+
+- **Beschreibende Metadaten (Haken unter den Modellen):** Zusätzlich zu den Labels schlägt
+  die App **Titel, Beschreibung und Keywords** für den Text vor. Dafür ist **kein Modell
+  nötig** — die Vorschläge entstehen aus dem Text selbst. Du kannst den Haken also auch
+  allein setzen, ohne ein Modell anzuhaken; dann kommt nur die Metadaten-Karte. Mit
+  angehakten Modellen kommt beides in einem Durchgang. Alle Wörter stammen aus dem Text —
+  erfunden wird nichts, geprüft werden sollten die Vorschläge trotzdem.
 
 - **Konfidenz (Balken + Zahl 0–1):** Wie sicher das Modell ist, dass das Label
   passt. Die Werte der Labels sind unabhängig voneinander — sie müssen sich
