@@ -76,10 +76,12 @@ def test_a_record_that_is_not_an_access_line_survives_the_filter():
 # --- SEC-10: the chart must not serve the key over plaintext --------------------------------
 
 
-def test_the_chart_refuses_a_plaintext_ingress_by_default():
-    """`ingress.enabled: true` with `tls: []` means a default `helm install` publishes an
-    endpoint that carries `X-API-Key` in cleartext. The chart may still do it — some clusters
-    terminate TLS at a mesh or a load balancer above the ingress — but not silently."""
+def test_the_insecure_ingress_path_is_opt_in():
+    """The value contract only: `allowInsecure` exists, defaults to False, and the template
+    names the guard. Whether a plaintext ingress is actually REFUSED is proven by rendering,
+    in `tests/test_helm_chart.py` — a substring is present either way, so this test would
+    hold with the condition inverted. It stays because it is the half that survives when
+    helm is not installed."""
     values = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
     template = (CHART / "templates" / "ingress.yaml").read_text(encoding="utf-8")
 
@@ -89,7 +91,7 @@ def test_the_chart_refuses_a_plaintext_ingress_by_default():
     )
     assert values["ingress"]["allowInsecure"] is False, "the insecure path must be opt-in"
     assert "fail" in template and "allowInsecure" in template, (
-        "the ingress template renders without TLS and without requiring the opt-in"
+        "the ingress template no longer mentions the guard at all"
     )
 
 

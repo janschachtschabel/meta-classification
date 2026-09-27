@@ -18,9 +18,12 @@ kubectl create secret generic classify-api-keys \
   --from-literal=APIV3_API_KEY_ADMIN=<strong-random-key> \
   --from-literal=APIV3_API_KEY_READONLY=<strong-random-key>
 
+# The tls values are not optional — see "TLS is not optional here" below.
 helm install classify deploy/helm/classification-api \
   --set config.auth.existingSecret=classify-api-keys \
-  --set ingress.hosts[0]=classify.example.de
+  --set ingress.hosts[0]=classify.example.de \
+  --set ingress.tls[0].hosts[0]=classify.example.de \
+  --set ingress.tls[0].secretName=classify-api-tls
 ```
 
 `config.auth.existingSecret` names a `Secret` carrying `APIV3_API_KEY_ADMIN` and

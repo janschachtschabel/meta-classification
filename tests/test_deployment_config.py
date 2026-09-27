@@ -160,9 +160,11 @@ def test_the_chart_accepts_an_externally_managed_secret():
     )
 
 
-def test_the_chart_does_not_template_a_key_it_was_not_given():
-    """With `existingSecret` set, the chart must neither require the plaintext values nor
-    render a Secret of its own — otherwise the external secret is decoration."""
+def test_both_secret_wiring_points_name_the_external_secret():
+    """A wiring floor, not the guarantee: both the Secret template and the StatefulSet read
+    `existingSecret` at all. That the chart then renders no Secret of its own and the pod
+    follows is proven by rendering, in `tests/test_helm_chart.py`. This half survives when
+    helm is not installed."""
     secret = (CHART / "templates" / "secret-env.yaml").read_text(encoding="utf-8")
     statefulset = (CHART / "templates" / "statefulset.yaml").read_text(encoding="utf-8")
 

@@ -57,3 +57,12 @@ Fully qualified container image reference.
 {{- $tag := default .Chart.AppVersion .Values.image.tag -}}
 {{- printf "%s:%s" $repo $tag -}}
 {{- end -}}
+
+{{/*
+The refusal an operator sees when an API key is missing. It has to carry the guidance
+itself: `required` aborts the render, and NOTES are printed only for a release that
+rendered — so a pointer placed there could never be read. Takes the value's name.
+*/}}
+{{- define "classification-api.keyRequired" -}}
+config.auth.{{ . }} is required when config.auth.enabled is true and config.auth.existingSecret is empty. Prefer config.auth.existingSecret=<a Secret you manage>: a key passed as a chart value lands in the release secret and in every values file used to install it, and with --set in your shell history and in the log of the CI job that ran it.
+{{- end -}}

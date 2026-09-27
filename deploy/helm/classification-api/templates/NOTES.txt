@@ -24,11 +24,4 @@ Auth: X-API-Key header (admin = train/manage, readonly = predict/status).
 Keys read from Secret "{{ .Values.config.auth.existingSecret }}" (not managed by this
 chart). It must carry APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY; the pod consumes
 it with envFrom, so rotating a key needs a pod restart, not a chart upgrade.
-{{- else if and .Values.config.auth.enabled (not .Values.config.auth.adminKey) }}
-
-WARNING: no API keys and no config.auth.existingSecret — the release will fail to
-render. Either point the chart at a Secret you manage:
-  --set config.auth.existingSecret=classify-api-keys
-or pass the keys as values. Prefer the first: a --set key lands in your shell history,
-in the CI log that ran it, and in the Helm release secret.
 {{- end }}
