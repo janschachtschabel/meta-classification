@@ -1,16 +1,18 @@
 """Authentication and input-safety helpers.
 
 - API-key auth with two roles (``admin`` / ``readonly``), compared in constant
-  time to avoid timing side channels.
+  time to avoid timing side channels. With auth disabled, a caller on THIS machine
+  is admin and every other caller is refused: keyless mode is local use.
 - ``safe_name`` rejects path-traversal in user-supplied model/dataset names.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import secrets
 from pathlib import Path
 
-from fastapi import Depends, HTTPException, Security, UploadFile
+from fastapi import Depends, HTTPException, Request, Security, UploadFile
 from fastapi.security import APIKeyHeader
 
 from .settings import Settings, get_settings
@@ -19,9 +21,11 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def _role_for_key(key: str | None, settings: Settings) -> str | None:
-    """Return the role for an API key, or ``None`` if invalid."""
-    if not settings.auth_enabled:
-        return "admin"  # Auth disabled -> full access (local use).
+    """Return the role for an API key, or ``None`` if invalid.
+
+    Only for auth ON. The keyless case is decided in ``require_role``, where the caller's
+    address is known — answering it here as well was a second, unguarded route to admin.
+    """
     # A non-ASCII key can never match an ASCII secret, and secrets.compare_digest
     # raises TypeError on non-ASCII str — treat it as invalid (401), not a 500.
     if not key or not key.isascii():
@@ -33,6 +37,30 @@ def _role_for_key(key: str | None, settings: Settings) -> str | None:
     return None
 
 
+def _is_loopback_client(request: Request) -> bool:
+    """True when the request peer is a loopback address (127.0.0.0/8 or ::1).
+
+    The rule data-prep already applies, so both apps mean the same by "local". A missing
+    client (an in-process ASGI call) counts as loopback; an unparseable host — a proxy's
+    hostname — counts as the network, because behind a proxy the operator must set a key.
+    uvicorn rewrites the peer from X-Forwarded-For only for FORWARDED_ALLOW_IPS, so a remote
+    caller cannot claim loopback unless that list trusts everyone (the chart warns: never "*").
+    """
+    client = request.client
+    if client is None:
+        return True
+    try:
+        return ipaddress.ip_address(client.host).is_loopback
+    except ValueError:
+        return False
+
+
+_KEYLESS_FROM_THE_NETWORK = (
+    "APIV3_AUTH_ENABLED is false, which serves only callers on this machine. To serve anyone "
+    "else, set APIV3_AUTH_ENABLED=true with APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY."
+)
+
+
 def require_role(required: str = "readonly"):
     """Build a FastAPI dependency enforcing a minimum role.
 
@@ -40,9 +68,18 @@ def require_role(required: str = "readonly"):
     """
 
     def dependency(
+        request: Request,
         key: str | None = Security(api_key_header),
         settings: Settings = Depends(get_settings),
     ) -> str:
+        if not settings.auth_enabled:
+            # Local use only, as the docs have always said. With no key there is nothing that
+            # tells the operator apart from anyone else who can reach the port, so one variable
+            # plus a `-p 8000:8000` or the chart's ingress was an open admin API (audit
+            # 2026-09-27, S-1).
+            if _is_loopback_client(request):
+                return "admin"
+            raise HTTPException(status_code=403, detail=_KEYLESS_FROM_THE_NETWORK)
         role = _role_for_key(key, settings)
         if role is None:
             raise HTTPException(

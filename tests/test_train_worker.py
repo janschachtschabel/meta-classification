@@ -357,13 +357,15 @@ def test_the_train_route_runs_a_training_in_a_child_process(tmp_path, monkeypatc
     from app.settings import get_settings
 
     monkeypatch.setenv("APIV3_AUTH_ENABLED", "false")
+    # Keyless serves loopback callers only (audit 2026-09-27, S-1); TestClient's default peer
+    # is the unparseable host "testclient", so a keyless test states the address it models.
     monkeypatch.setenv("APIV3_DATA_DIR", str(FIXTURES))
     monkeypatch.setenv("APIV3_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("APIV3_TRAINING_ISOLATION", "process")
     get_settings.cache_clear()
     get_registry.cache_clear()
     try:
-        client = TestClient(create_app())
+        client = TestClient(create_app(), client=("127.0.0.1", 50000))
         # The route reads the real config.yaml: its label minimum (20) is more than the
         # fixture's 12 rows per label.
         body = {**_request(model_name="child_model"), "optimize_parameters": "fast",

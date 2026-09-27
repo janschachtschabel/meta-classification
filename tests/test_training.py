@@ -119,11 +119,13 @@ def test_warmup_preloads_configured_models(tmp_path, monkeypatch):
     monkeypatch.setenv("APIV3_DATA_DIR", str(FIXTURES))
     monkeypatch.setenv("APIV3_MODELS_DIR", str(settings.models_dir))
     monkeypatch.setenv("APIV3_AUTH_ENABLED", "false")
+    # Keyless serves loopback callers only (audit 2026-09-27, S-1); TestClient's default peer
+    # is the unparseable host "testclient", so a keyless test states the address it models.
     monkeypatch.setenv("APIV3_WARMUP_MODELS", "tiny_model, ghost")
     get_settings.cache_clear()
     get_registry.cache_clear()
     try:
-        with TestClient(create_app()) as client:  # __enter__ runs the lifespan (warmup)
+        with TestClient(create_app(), client=("127.0.0.1", 50000)) as client:  # __enter__ runs the lifespan (warmup)
             assert client.get("/health").status_code == 200  # 'ghost' did not crash startup
             reg = get_registry()
             assert reg.in_memory_count() == 1  # only the real model is resident
@@ -157,7 +159,7 @@ def test_warmup_skips_corrupt_bundle_without_failing_startup(tmp_path, monkeypat
     get_settings.cache_clear()
     get_registry.cache_clear()
     try:
-        with TestClient(create_app()) as client:  # lifespan runs the warmup
+        with TestClient(create_app(), client=("127.0.0.1", 50000)) as client:  # lifespan runs the warmup
             assert client.get("/health").status_code == 200
             assert get_registry().in_memory_count() == 0  # skipped, not cached
     finally:
@@ -198,7 +200,7 @@ def test_warmup_holds_every_listed_model_past_the_configured_cap(tmp_path, monke
     get_settings.cache_clear()
     get_registry.cache_clear()
     try:
-        with TestClient(create_app()) as client:
+        with TestClient(create_app(), client=("127.0.0.1", 50000)) as client:
             assert client.get("/health").status_code == 200
             assert get_registry().in_memory_count() == 3
     finally:

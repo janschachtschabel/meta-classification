@@ -137,7 +137,10 @@ Creating such links stays admin-only.
 
 **For purely local use** set `APIV3_AUTH_ENABLED=false`. The `X-API-Key` header then
 becomes optional and `/docs` and `/ui/` skip the sign-in — convenient on your own
-machine, and not something to expose to a network.
+machine, and the app holds you to the "own machine" part: it serves loopback callers
+only and answers everyone else 403. That includes Docker, where a request from the host
+reaches the container from the bridge gateway, not from loopback — so keyless mode does
+not work in a container; set the two keys there.
 
 ## The admin UI
 
