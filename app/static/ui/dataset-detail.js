@@ -70,14 +70,14 @@ function analysisHtml(body) {
     <h3>${t("datasetDetail.summary", { rows: body.total_samples, labels: body.unique_labels })}</h3>
     ${rare ? `<p class="error" role="alert">${t("datasetDetail.rareWarning", { count: rare })}</p>` : ""}
     <h4>${t("datasetDetail.thresholdHeading")}</h4>
-    <div class="table-wrap"><table>
+    <div class="table-wrap" tabindex="0"><table>
       <thead><tr><th class="num">${t("datasetDetail.table.minExamples")}</th>
         <th class="num">${t("datasetDetail.table.labelsKept")}</th><th></th></tr></thead>
       <tbody>${thresholdRows(body.label_threshold_analysis, recommended)}</tbody>
     </table></div>
     <p class="muted">${t("datasetDetail.thresholdNote")}</p>
     <h4>${t("datasetDetail.costHeading")}</h4>
-    <div class="table-wrap"><table>
+    <div class="table-wrap" tabindex="0"><table>
       <thead><tr><th>${t("datasetDetail.table.profile")}</th>
         <th class="num">${t("datasetDetail.table.estimate")}</th>
         <th class="num">${t("datasetDetail.table.threads")}</th></tr></thead>
@@ -145,7 +145,7 @@ async function showDatasetDetail(name) {
     </div>
     <p class="muted">${t("datasetDetail.subtitle", {
       columns: analyzeState.columns.length, rows: sample.length })}</p>
-    <div class="table-wrap"><table>
+    <div class="table-wrap" tabindex="0"><table>
       <thead><tr>${analyzeState.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
       <tbody>${sample.map((row) => `<tr>${analyzeState.columns.map(
         (c) => `<td>${esc(String(row[c] ?? "")).slice(0, 120)}</td>`).join("")}</tr>`).join("")}</tbody>

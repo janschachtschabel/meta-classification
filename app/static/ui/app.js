@@ -4,8 +4,7 @@
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// `esc` lives in escape.js — see the load-order reason there.
 
 /* Bars carry their fill in `data-width` and get it applied here, because the UI's
    CSP (`default-src 'self'`, no 'unsafe-inline') blocks a style ATTRIBUTE: a
@@ -20,13 +19,102 @@ function applyBarWidths(root) {
   });
 }
 
-let toastTimer;
-function toast(msg) {
-  const el = $("#toast");
-  el.textContent = msg;
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
+/* Two regions, not one, and the difference is not cosmetic.
+
+   `role="status"` is POLITE: a screen reader finishes what it is saying first and may drop
+   the message entirely. That is right for "model deleted" and wrong for the failure that
+   explains why nothing happened — and seven call sites were routing errors through it.
+
+   A message is appended rather than assigned, because assigning erased an unread message
+   when a second one arrived (two failed deletes in a row showed one). Every message carries
+   a dismiss button, and an error is not scheduled to disappear at all: a 4-second auto-hide
+   on text the user has to act on is a limit on reading it (SC 2.2.1), and a long German
+   error does not fit in four seconds. Confirmations still fade, but hovering or focusing
+   the stack holds them. */
+const TOAST_HIDE_MS = 6000;
+
+function pushToast(regionSel, msg, hideAfter) {
+  const region = $(regionSel);
+  const item = document.createElement("div");
+  item.className = "toast-item";
+  item.innerHTML = `<span>${esc(msg)}</span>` +
+    `<button type="button" class="toast-x" data-toast-dismiss ` +
+    `aria-label="${esc(t("common.dismiss"))}">&times;</button>`;
+  item.querySelector("[data-toast-dismiss]").addEventListener("click", () => item.remove());
+  region.appendChild(item);
+  if (hideAfter) {
+    // Cleared on hover/focus so the stack can be read at the reader's pace, and re-armed
+    // on leave — `:hover` alone would only stop the CSS, not the timer.
+    let timer = setTimeout(() => item.remove(), hideAfter);
+    const hold = () => clearTimeout(timer);
+    const resume = () => { timer = setTimeout(() => item.remove(), hideAfter); };
+    item.addEventListener("mouseenter", hold);
+    item.addEventListener("mouseleave", resume);
+    item.addEventListener("focusin", hold);
+    item.addEventListener("focusout", resume);
+  }
+  return item;
+}
+
+/* A confirmation: something asked for happened. Polite, and fades. */
+function toast(msg) { return pushToast("#toast", msg, TOAST_HIDE_MS); }
+
+/* A failure: assertive, and stays until dismissed. */
+function toastError(err) {
+  return pushToast("#toast-alert", (err && err.message) || String(err), 0);
+}
+
+/* Copy with a fallback, because `navigator.clipboard` is undefined outside a secure
+   context and this app documents that TLS terminates at a proxy — so over http:// all
+   three Copy buttons did nothing at all: no write, no toast, no error. The deprecated
+   `execCommand` still works there, and if even that fails the user is told rather than
+   left believing the copy succeeded. */
+async function copyText(text, confirmation) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      toast(confirmation);
+      return true;
+    }
+  } catch { /* denied, or no permission in this context — try the fallback */ }
+  const scratch = Object.assign(document.createElement("textarea"), {
+    value: text, readOnly: true,
+  });
+  // Off-screen rather than hidden: a display:none element cannot be selected.
+  scratch.className = "offscreen";
+  document.body.appendChild(scratch);
+  scratch.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch { copied = false; }
+  scratch.remove();
+  if (copied) toast(confirmation);
+  else toastError({ message: t("errors.clipboard") });
+  return copied;
+}
+
+/* Only the newest call's answer may land.
+
+   A `change` on a <select> fires per Arrow keypress, and the handlers behind these read a
+   whole CSV server-side. Without an ordering token a slow earlier response arrives after a
+   newer one and the column picker then offers columns the selected dataset does not have.
+   `train-status.js` guards its poll with an in-flight flag; this is the same idea for a
+   request whose ARGUMENT changes, where dropping the newer call would be the wrong choice.
+
+   Returns a wrapper that debounces (one read per settled selection, not per keypress) and
+   hands the work an `isCurrent()` predicate. The work awaits and reports its own failures —
+   which is why the token is a predicate rather than this helper awaiting the promise: the
+   error belongs in the caller's own error element, and swallowing it here to keep the
+   wrapper tidy would be the same silent failure FE-12 is about. */
+function latestOnly(work, waitMs = 150) {
+  let seq = 0;
+  let pending;
+  return (...args) => {
+    clearTimeout(pending);
+    pending = setTimeout(() => {
+      const mine = ++seq;
+      work(...args, () => mine === seq);
+    }, waitMs);
+  };
 }
 
 function showError(el, err) {
@@ -65,7 +153,9 @@ async function boot() {
     (radio) => radio.addEventListener("change", onQueryModeChange));
   $("#train-chip").addEventListener("click", () => switchTab("training"));
   $("#train-form").addEventListener("submit", onTrainStart);
-  $("#train-dataset").addEventListener("change", loadDatasetColumns);
+  // Debounced and latest-wins: see loadDatasetColumns in training.js for why, and
+  // latestOnly below for what it guarantees. Wrapped here, where every module has loaded.
+  $("#train-dataset").addEventListener("change", latestOnly(loadDatasetColumns));
   $("#train-preflight").addEventListener("click", runPreflight);
   $("#train-name").addEventListener("input", renderNamePreview);
   $("#upload-form").addEventListener("submit", onUpload);

@@ -8,6 +8,14 @@
 
 let pollTimer = null;
 let pollInFlight = false;
+let consecutiveFailures = 0;
+
+/* Keeping the last rendered state across a failed tick is right — a single dropped poll
+   should not blank a running job's card. Keeping it FOREVER was not: after the server
+   died the card went on reading "running · 40 % · ~12 min" indefinitely, and the one
+   number it showed was the last one that was ever true. Three misses is ~7.5 s, long
+   enough that a restart or a hiccup does not raise it. */
+const STALE_AFTER_FAILURES = 3;
 
 async function pollTick() {
   // setInterval does not await async ticks; one tick at a time keeps a slow response
@@ -16,8 +24,12 @@ async function pollTick() {
   pollInFlight = true;
   try {
     renderTrainStatus(await Api.get("/train/status"));
-  } catch { /* transient poll failure: keep the last rendered state */ }
-  finally { pollInFlight = false; }
+    consecutiveFailures = 0;
+    $("#train-stale").hidden = true;
+  } catch {
+    // The card keeps its last state; the note says that state is no longer being confirmed.
+    if (++consecutiveFailures >= STALE_AFTER_FAILURES) $("#train-stale").hidden = false;
+  } finally { pollInFlight = false; }
 }
 
 // Registered ONCE for the page lifetime (guarded by pollTimer): browsers
@@ -118,7 +130,7 @@ function renderTrainStatus(s) {
   if (stop) stop.addEventListener("click", async () => {
     // The server clears the queue as part of stopping; the next poll shows it gone.
     try { await Api.post("/train/stop"); toast(t("trainStatus.stopRequested")); }
-    catch (err) { toast(err.message); }
+    catch (err) { toastError(err); }
   });
 }
 

@@ -30,6 +30,9 @@ function onQueryModeChange() {
   // CSV answer has no column for them, and offering a control that does nothing is a
   // small lie the rest of this UI does not tell.
   $("#query-signals").hidden = mode === "csv";
+  // Same reason: /predict/csv streams its answer straight through, so this view never
+  // holds the rows that metadata would be attached to.
+  $("#query-metadata-option").hidden = mode === "csv";
   const button = $("#query-btn");
   // The key travels with the element, so switching language re-reads the label of the
   // mode that is actually selected rather than resetting it to the first one.
@@ -38,13 +41,21 @@ function onQueryModeChange() {
   $("#query-results").innerHTML = "";
 }
 
+/* Checkboxes, not `<select multiple size="4">`: picking a second model there needs
+   Ctrl-click, which is undiscoverable with a mouse and, in several browsers, not available
+   from the keyboard at all — so the app's one multi-value control was the one control a
+   keyboard user could not fully operate. Carried over from the September audit as F4. A
+   checkbox group needs no instructions and is a native part of the form. */
 async function loadQueryTab() {
-  const sel = $("#query-models");
+  const box = $("#query-models");
   try {
     const names = await Api.get("/models");
-    sel.innerHTML = names.map((n) => `<option>${esc(n)}</option>`).join("");
+    // The first is pre-checked, as the <select>'s first option was: the common case is one
+    // model, and an empty picker would make the primary screen look broken.
+    box.innerHTML = names.map((n, at) => `
+      <label class="check"><input type="checkbox" name="query-model" value="${esc(n)}"${
+        at === 0 ? " checked" : ""}> <span>${esc(n)}</span></label>`).join("");
     if (!names.length) $("#query-results").innerHTML = `<p class="muted">${t("query.noModels")}</p>`;
-    else sel.options[0].selected = true;
   } catch (err) { $("#query-results").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
 }
 
@@ -61,7 +72,60 @@ function querySettings() {
 }
 
 function selectedModels() {
-  return [...$("#query-models").selectedOptions].map((o) => o.value);
+  return [...document.querySelectorAll('input[name="query-model"]:checked')].map((b) => b.value);
+}
+
+const wantsMetadata = () => $("#query-metadata").checked;
+
+/* Descriptive metadata for the same texts, from /metadata — a separate endpoint because it
+   reads no model: the proposals come out of the text itself, so they are the same whichever
+   model classified it, and asking for them per model would repeat identical work. */
+async function fetchMetadata(texts) {
+  const answer = await Api.post("/metadata", { texts });
+  return answer.results;
+}
+
+// /metadata takes 100 texts where /predict takes 1000, because generating costs ~20 ms a text
+// against well under a millisecond for a classification. One prediction batch is therefore
+// several metadata calls; the rows come back in order, so they concatenate.
+const METADATA_BATCH = 100;
+
+async function metadataForBatch(texts) {
+  const described = [];
+  for (let start = 0; start < texts.length; start += METADATA_BATCH) {
+    const answers = await fetchMetadata(texts.slice(start, start + METADATA_BATCH));
+    // Only the three fields: `text` is the endpoint's truncated echo, and spreading it over
+    // a row would replace the full text the table and the download show.
+    answers.forEach(({ title, description, keywords }) =>
+      described.push({ title, description, keywords }));
+  }
+  return described;
+}
+
+/* ---------- descriptive metadata ---------- */
+
+function metadataField(key, value) {
+  // An empty field is the endpoint's honest answer for a thin text, and it has to read as
+  // one: a blank line here looks like the card failed to render.
+  const body = value
+    ? `<p>${esc(value)}</p>`
+    : `<p class="muted">${t("query.metadata.none")}</p>`;
+  return `<h4>${t(key)}</h4>${body}`;
+}
+
+function metadataCard(proposal) {
+  const keywords = proposal.keywords.length
+    ? `<p class="keywordlist">${proposal.keywords
+        .map((k) => `<span class="pill">${esc(k)}</span>`).join("")}</p>`
+    : `<p class="muted">${t("query.metadata.none")}</p>`;
+  return `
+    <div class="card">
+      <h3>${t("query.metadata.heading")}</h3>
+      <p class="muted">${t("query.metadata.note")}</p>
+      ${metadataField("query.metadata.title", proposal.title)}
+      ${metadataField("query.metadata.description", proposal.description)}
+      <h4>${t("query.metadata.keywords")}</h4>${keywords}
+    </div>`;
 }
 
 function queryErrorHtml(err) {
@@ -137,7 +201,12 @@ async function runSingle(models, out) {
     catch (err) { nearest = {}; console.warn("near-miss follow-up failed", err); }
   }
   const text = $("#query-text").value;
-  out.innerHTML = renderPredictions(byModel, nearest);
+  // Requested before the answer is written so a failure here is a failure of the whole
+  // submit: the user ticked a box, and silently leaving the card out would look like the
+  // text simply yielded nothing.
+  const described = wantsMetadata() ? (await fetchMetadata([text]))[0] : null;
+  out.innerHTML = renderPredictions(byModel, nearest)
+    + (described ? metadataCard(described) : "");
   applyBarWidths(out);
   // Only here: both act on ONE text — the endpoint explains one, and a correction
   // records one. The bulk modes have nothing to bind.
@@ -147,18 +216,50 @@ async function runSingle(models, out) {
 
 /* ---------- many texts ---------- */
 
-const csvCell = (value) => `"${String(value).replace(/"/g, '""')}"`;
+/* A cell whose text begins with =, +, - or @ is a live FORMULA when the download is
+   opened in Excel, Calc or Sheets — quoting does not help, because the parser consumes the
+   quotes and evaluates what is inside. Labels here are WLO URIs and text a caller supplied,
+   so this is untrusted content on its way into a spreadsheet. A leading tab is the
+   conventional neutraliser: it keeps the value readable, keeps it a string, and costs
+   nothing in the readers that never evaluated formulas anyway. */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+const csvCell = (value) => {
+  const text = String(value);
+  return `"${(FORMULA_LEAD.test(text) ? `\t${text}` : text).replace(/"/g, '""')}"`;
+};
 
+/* One source for "these rows carry metadata": the table and the download have to agree, and
+   two copies of the rule are two chances to drift into a table with columns the file lacks.
+   Keyed on `title` being present at all rather than truthy — the endpoint answers a thin text
+   with an empty title, and that is a result to show, not a reason to drop the columns. */
+const rowsAreDescribed = (rows) => rows.some((r) => r.title !== undefined);
+
+/* The metadata columns are APPENDED, and only when they were asked for: a consumer already
+   parsing this download by position keeps working either way. Metadata belongs to the input
+   row, so it repeats across that row's labels — normal for a flat export, and what lets the
+   file be joined back onto the caller's own rows. */
 function bulkCsv(rows) {
-  return ["row,text,uri,label,confidence"]
-    .concat(rows.map((r) => [r.row, csvCell(r.text), csvCell(r.uri), csvCell(r.label),
-                             r.confidence].join(",")))
+  const described = rowsAreDescribed(rows);
+  const head = "row,text,uri,label,confidence" + (described ? ",title,description,keywords" : "");
+  return [head]
+    .concat(rows.map((r) => {
+      const cells = [r.row, csvCell(r.text), csvCell(r.uri), csvCell(r.label), r.confidence];
+      if (described) {
+        cells.push(csvCell(r.title ?? ""), csvCell(r.description ?? ""),
+                   // "; " as the API's own label lists are separated, so one cell stays one cell.
+                   csvCell((r.keywords ?? []).join("; ")));
+      }
+      return cells.join(",");
+    }))
     .join("\n");
 }
 
 function renderBulkTable(rows, texts, out) {
   const shown = rows.slice(0, QUERY_TABLE_LIMIT);
   const refused = new Set(rows.filter((r) => !r.uri).map((r) => r.row)).size;
+  // The title and the keywords are short enough to read in a cell; a 500-character
+  // description is not, so it stays in the download and the note says so.
+  const described = rowsAreDescribed(rows);
   // Composed from pluralised parts rather than one sentence carrying three counts:
   // "1 Text" and "2 Texte" differ, so each part has to pick its own form.
   const counted = [t("query.bulk.texts", { count: texts.length }),
@@ -169,16 +270,19 @@ function renderBulkTable(rows, texts, out) {
     <p class="muted">${t("query.bulk.note")}${
       rows.length > shown.length
         ? ` ${t("query.bulk.truncated", { shown: shown.length, total: rows.length })}`
-        : ""}</p>
+        : ""}${described ? ` ${t("query.bulk.descriptionInDownload")}` : ""}</p>
     <button type="button" class="small" id="bulk-download">${t("query.bulk.download")}</button>
-    <div class="table-wrap"><table>
+    <div class="table-wrap" tabindex="0"><table>
       <thead><tr><th class="num">${t("query.table.row")}</th><th>${t("query.table.text")}</th>
         <th>${t("query.table.label")}</th>
-        <th class="num">${t("query.table.confidence")}</th></tr></thead>
+        <th class="num">${t("query.table.confidence")}</th>${described
+          ? `<th>${t("query.table.title")}</th><th>${t("query.table.keywords")}</th>` : ""}</tr></thead>
       <tbody>${shown.map((r) => `<tr${r.uri ? "" : ' class="stale"'}>
         <td class="num">${r.row}</td><td>${esc(r.text)}</td>
         <td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}</td>
-        <td class="num">${r.uri ? fmtFixed(r.confidence, 3) : "–"}</td></tr>`).join("")}</tbody>
+        <td class="num">${r.uri ? fmtFixed(r.confidence, 3) : "–"}</td>${described
+          ? `<td>${esc(r.title ?? "")}</td><td>${esc((r.keywords ?? []).join(", "))}</td>` : ""
+        }</tr>`).join("")}</tbody>
     </table></div></div>`;
   out.querySelector("#bulk-download").addEventListener("click", () => {
     Api.saveBlob(new Blob([bulkCsv(rows)], { type: "text/csv" }), "predictions.csv");
@@ -208,10 +312,15 @@ async function runManyTexts(model, out) {
       done: Math.min(start + slice.length, texts.length), total: texts.length,
     });
     const answer = await Api.post("/predict", { ...settings, model_name: model, texts: slice });
+    // Per batch, and only on request: /metadata caps a batch at 100 against /predict's 1000,
+    // so a full slice is sent in several calls.
+    const described = wantsMetadata() ? await metadataForBatch(slice) : null;
     answer.results.forEach((result, index) => {
       const row = start + index;
-      if (!result.predictions.length) rows.push({ row, text: slice[index], uri: "", label: "", confidence: 0 });
-      result.predictions.forEach((p) => rows.push({ row, text: slice[index], ...p }));
+      const extra = described ? described[index] : {};
+      const base = { row, text: slice[index], ...extra };
+      if (!result.predictions.length) rows.push({ ...base, uri: "", label: "", confidence: 0 });
+      result.predictions.forEach((p) => rows.push({ ...base, ...p }));
     });
   }
   return renderBulkTable(rows, texts, out);

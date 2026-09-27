@@ -31,11 +31,15 @@ const Api = (() => {
   };
 
   class ApiError extends Error {
-    constructor(status, detail) {
+    constructor(status, detail, cause) {
       // `detail` is the server's own wording and stays as it came: it names the
       // specific thing that was wrong, which a generic translated line cannot.
       super(detail || t("errors.requestFailed", { status }));
+      // status 0 = the request never reached a server, so there is no HTTP status to give.
       this.status = status;
+      // Kept for the console: the translated message is for the operator, the original
+      // TypeError is what a developer needs, and dropping it loses the only clue.
+      if (cause) this.cause = cause;
     }
   }
 
@@ -50,7 +54,16 @@ const Api = (() => {
     } else if (form !== undefined) {
       body = form; // browser sets the multipart boundary itself
     }
-    const res = await fetch(path, { method, headers, body });
+    let res;
+    try {
+      res = await fetch(path, { method, headers, body });
+    } catch (cause) {
+      // `fetch` rejects with `TypeError: Failed to fetch` on a dropped connection, a DNS
+      // failure or a CORS refusal — browser internals, in the BROWSER's language, which
+      // eight display sites were showing verbatim as if the API had said it. Translated
+      // here rather than at each of them: there is one transport, so there is one message.
+      throw new ApiError(0, t("errors.network"), cause);
+    }
     if (res.status === 401) {
       clearKey();
       window.dispatchEvent(new Event("apiv3-unauthorized"));

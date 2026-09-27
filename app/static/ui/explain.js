@@ -39,7 +39,7 @@ function allScoresTable(scores) {
     .sort((a, b) => b.confidence - a.confidence);
   return `<details class="help">
     <summary>${t("explain.allLabels", { count: rows.length })}</summary>
-    <div class="table-wrap"><table>
+    <div class="table-wrap" tabindex="0"><table>
       <thead><tr><th>${t("explain.table.label")}</th><th class="num">${t("explain.table.confidence")}</th>
         <th class="num">${t("explain.table.diff")}</th>
         <th class="num">${t("explain.table.f1")}</th></tr></thead>

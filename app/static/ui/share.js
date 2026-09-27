@@ -24,14 +24,12 @@ async function shareResource(kind, name, boxSel) {
       </div>`;
     // No inline handlers: the UI's CSP has no 'unsafe-inline' for scripts.
     box.querySelector("input[readonly]").addEventListener("focus", (ev) => ev.target.select());
-    box.querySelector("[data-copy]").addEventListener("click", async (ev) => {
-      await navigator.clipboard.writeText(ev.target.dataset.copy);
-      toast(t("share.copied"));
-    });
+    box.querySelector("[data-copy]").addEventListener("click",
+      (ev) => copyText(ev.target.dataset.copy, t("share.copied")));
     box.querySelector("[data-close]").addEventListener("click",
                                                        closer(() => { box.innerHTML = ""; }));
     renderShareLinks(kind, `#${kind}-links`);   // the new link joins the overview
-  } catch (err) { toast(err.message); }
+  } catch (err) { toastError(err); }
 }
 
 /* Active share links for one resource kind. A link is a bearer capability valid for
@@ -46,9 +44,17 @@ async function renderShareLinks(kind, boxSel) {
   const box = document.querySelector(boxSel);
   let links;
   try { links = (await Api.get("/share")).filter((l) => l.kind === SHARE_KIND[kind]); }
-  catch { box.innerHTML = ""; return; }   // readonly key: the listing is admin-only
+  catch (err) {
+    // A 403 is the expected answer for a readonly key — the listing is admin-only, and
+    // showing an error for a permission the user is not meant to have is noise. Anything
+    // else is a real failure, and blanking the box for it made outstanding links disappear
+    // from the overview while staying live and downloadable for up to a week.
+    box.innerHTML = "";
+    if (err.status !== 403) box.innerHTML = `<p class="error">${esc(t("share.listFailed"))}</p>`;
+    return;
+  }
   if (!links.length) { box.innerHTML = ""; return; }
-  box.innerHTML = `<div class="card table-wrap">
+  box.innerHTML = `<div class="card table-wrap" tabindex="0">
     <h3>${t("share.activeHeading")} <span class="muted">(${links.length})</span></h3>
     <p class="muted">${t("share.activeNote")}</p>
     <table><thead><tr><th>${kind === "models" ? t("share.table.model") : t("share.table.dataset")}</th>
@@ -61,16 +67,14 @@ async function renderShareLinks(kind, boxSel) {
         <button class="small" data-copylink="${esc(l.share_id)}">${t("share.copyLink")}</button>
         <button class="small danger" data-revoke="${esc(l.share_id)}">${t("share.revoke")}</button>
       </td></tr>`).join("") + `</tbody></table></div>`;
-  box.querySelectorAll("[data-copylink]").forEach((b) => b.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(`${location.origin}/share/${b.dataset.copylink}`);
-    toast(t("share.copied"));
-  }));
+  box.querySelectorAll("[data-copylink]").forEach((b) => b.addEventListener("click",
+    () => copyText(`${location.origin}/share/${b.dataset.copylink}`, t("share.copied"))));
   box.querySelectorAll("[data-revoke]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm(t("share.revokeConfirm"))) return;
     try {
       await Api.del(`/share/${encodeURIComponent(b.dataset.revoke)}`);
       toast(t("share.revoked"));
       renderShareLinks(kind, boxSel);
-    } catch (err) { toast(err.message); }
+    } catch (err) { toastError(err); }
   }));
 }

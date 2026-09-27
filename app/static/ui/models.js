@@ -32,7 +32,7 @@ async function editModelInfo(name) {
   const box = document.querySelector("#models-share");
   let model;
   try { model = await Api.get(`/models/${encodeURIComponent(name)}`); }
-  catch (err) { toast(err.message); return; }
+  catch (err) { toastError(err); return; }
   const info = (model.metadata && model.metadata.info) || {};
   const vocab = model.label_vocabulary;
   box.innerHTML = `
@@ -84,7 +84,7 @@ async function loadModels() {
     const names = await Api.get("/models");
     if (!names.length) { el.innerHTML = `<p class="muted">${t("models.empty")}</p>`; return; }
     const infos = await Promise.all(names.map((n) => Api.get(`/models/${encodeURIComponent(n)}`)));
-    el.innerHTML = `<div class="card table-wrap"><table>
+    el.innerHTML = `<div class="card table-wrap" tabindex="0"><table>
       <thead><tr><th>${t("models.table.name")}</th><th>${t("models.table.task")}</th>
       <th class="num">${t("models.table.labels")}</th><th class="num">${t("models.table.f1Macro")}</th>
       <th class="num">${t("models.table.f1Micro")}</th><th>${t("models.table.evaluation")}</th>
@@ -105,7 +105,7 @@ async function loadModels() {
         </td></tr>`).join("") + `</tbody></table></div>`;
     el.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () =>
       Api.download(`/models/${encodeURIComponent(b.dataset.export)}/export`, `${b.dataset.export}.zip`)
-        .catch((err) => toast(err.message))));
+        .catch((err) => toastError(err))));
     el.querySelectorAll("[data-detail]").forEach((b) => b.addEventListener("click", () =>
       showModelDetail(b.dataset.detail)));
     el.querySelectorAll("[data-info]").forEach((b) => b.addEventListener("click", () =>
@@ -115,7 +115,7 @@ async function loadModels() {
     el.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(t("models.deleteConfirm", { name: b.dataset.delete }))) return;
       try { await Api.del(`/models/${encodeURIComponent(b.dataset.delete)}`); toast(t("models.deleted")); loadModels(); }
-      catch (err) { toast(err.message); }
+      catch (err) { toastError(err); }
     }));
   } catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
   // In `finally`, not after the table: a link outlives the model it points at, so the

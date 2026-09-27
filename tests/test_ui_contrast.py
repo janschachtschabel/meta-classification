@@ -138,3 +138,54 @@ def test_every_control_boundary_is_drawn_with_the_control_token():
         block = CSS[at:CSS.index("}", at)]
         assert "var(--border-ui)" in block, (
             f"{selector!r} draws its boundary with something other than --border-ui")
+
+def _composite(foreground: str, background: str, alpha: float) -> str:
+    """The colour the compositor actually paints for `opacity: alpha` over `background`."""
+    front = [int(foreground.lstrip("#")[at:at + 2], 16) for at in (0, 2, 4)]
+    back = [int(background.lstrip("#")[at:at + 2], 16) for at in (0, 2, 4)]
+    return "#" + "".join(
+        f"{round(alpha * f + (1 - alpha) * b):02x}" for f, b in zip(front, back, strict=True)
+    )
+
+
+# Every `opacity` on a rule that contains text, and the token that text is drawn in.
+# `button[disabled]` is deliberately absent: WCAG exempts an inactive control, and the app
+# pairs the dimming with `cursor: progress` rather than relying on it to carry meaning.
+_DIMMED_TEXT = re.compile(r"(?m)^([^\n{]*)\{[^}]*opacity:\s*(0?\.[0-9]+)")
+
+
+def test_no_opacity_rule_dims_text_below_the_readable_ratio():
+    """`opacity` composites the whole subtree, so a rule aimed at a row's decoration dims
+    the badge inside it too. Measured, both rules that did this put their meaning-carrier
+    under 4.5:1 — `--warn` at 3.00:1 and `--muted` at 2.78:1 in the light theme — while the
+    comment beside one of them said the badge was what carried the meaning.
+
+    Any new dimming of text has to prove itself here or use a quieter token instead.
+    """
+    exempt = {"button[disabled]"}
+    offenders = []
+    for selector, alpha in _DIMMED_TEXT.findall(CSS):
+        if selector.strip() in exempt:
+            continue
+        for theme, tokens in _tokens().items():
+            # The worst case over every token text in such a row can be drawn in.
+            for name in ("text", "muted", "warn", "ok", "danger"):
+                dimmed = _composite(tokens[name], tokens["surface"], float(alpha))
+                ratio = contrast(dimmed, tokens["surface"])
+                if ratio < 4.5:
+                    offenders.append(
+                        f"{selector.strip()} (opacity {alpha}) makes --{name} "
+                        f"{ratio:.2f}:1 in the {theme} theme"
+                    )
+    assert not offenders, "opacity pushes text under 4.5:1:\n  " + "\n  ".join(offenders)
+
+
+def test_the_two_rules_that_replaced_their_opacity_still_use_a_token():
+    """The fix is a quieter COLOUR, not a smaller alpha. A future edit that reaches for
+    `opacity` again is caught by the rule above; this catches the other direction, a
+    hard-coded hex slipped in where the token was."""
+    for selector in ("tr.stale td", ".pred.below-t"):
+        at = CSS.index(selector + " {")
+        block = CSS[at:CSS.index("}", at)]
+        assert "var(--muted)" in block, f"{selector} no longer de-emphasises with a token"
+        assert "opacity" not in block, f"{selector} is dimming with opacity again"

@@ -26,7 +26,7 @@ function evaluationsSection(model) {
   if (!runs.length) return `<p class="muted">${t("evaluate.none")}</p>`;
   const uncovered = runs.filter((r) => r.rows_without_a_known_label > 0);
   const aiSkipped = runs.filter((r) => r.ai_marked_rows_skipped > 0);
-  return `<div class="table-wrap"><table>
+  return `<div class="table-wrap" tabindex="0"><table>
       <thead><tr><th>${t("evaluate.table.dataset")}</th><th class="num">${t("evaluate.table.rows")}</th>
         <th class="num">${t("evaluate.table.labelsHit")}</th>
         <th class="num">${t("evaluate.table.f1Macro")}</th>
@@ -70,14 +70,28 @@ async function openEvaluateForm(name, frame) {
     <p id="ev-message" role="alert"></p>
   </div>`);
   const box = frame.querySelector(".evaluate-form");
-  const loadColumns = async () => {
-    const info = await Api.get(`/datasets/${encodeURIComponent(box.querySelector("#ev-dataset").value)}`);
-    const options = (info.columns || []).map((c) => `<option>${esc(c)}</option>`).join("");
-    box.querySelector("#ev-text-cols").innerHTML = options;
-    box.querySelector("#ev-label-col").innerHTML = options;
+  const message = box.querySelector("#ev-message");
+  const applyColumns = async (isCurrent = () => true) => {
+    const chosen = box.querySelector("#ev-dataset").value;
+    try {
+      const info = await Api.get(`/datasets/${encodeURIComponent(chosen)}`);
+      if (!isCurrent()) return;   // a newer dataset was picked while this read was running
+      const options = (info.columns || []).map((c) => `<option>${esc(c)}</option>`).join("");
+      box.querySelector("#ev-text-cols").innerHTML = options;
+      box.querySelector("#ev-label-col").innerHTML = options;
+    } catch (err) {
+      if (!isCurrent()) return;
+      // The pickers keep the previous dataset's columns otherwise, which is the one state
+      // worse than empty: a selection that looks valid and is not.
+      box.querySelector("#ev-text-cols").innerHTML = "";
+      box.querySelector("#ev-label-col").innerHTML = "";
+      message.className = "error";
+      message.textContent = err.message;
+    }
   };
-  box.querySelector("#ev-dataset").addEventListener("change", loadColumns);
-  await loadColumns();
+  // Same reason as training.js: one full-CSV read per settled choice, newest answer wins.
+  box.querySelector("#ev-dataset").addEventListener("change", latestOnly(applyColumns));
+  await applyColumns();
   box.querySelector("#ev-start").addEventListener("click", () => startEvaluation(name, box));
 }
 

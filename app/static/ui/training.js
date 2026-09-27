@@ -67,7 +67,16 @@ const labelPicker = createPillPicker({
   onChange: () => renderNamePreview(),
 });
 
-async function loadDatasetColumns() {
+/* `change` fires per Arrow keypress on the <select>, and the route behind this reads the
+   whole CSV: unguarded, holding Down walked the list and issued one full read per step, and
+   a slow earlier answer could land after a newer one — leaving the pickers offering columns
+   the selected dataset does not have. `isCurrent()` is how this function declines to apply
+   a stale answer; `boot()` wraps it in `latestOnly` (app.js) where the listener is bound.
+
+   Declared as a function rather than `const … = latestOnly(…)` for a load-order reason:
+   this module runs before app.js, so calling one of its helpers out here is a
+   ReferenceError that aborts the whole file — the same trap escape.js explains. */
+async function loadDatasetColumns(isCurrent = () => true) {
   const name = $("#train-dataset").value;
   if (!name) {
     textColPicker.setOptions([]); labelPicker.setOptions([]); syncSyntheticChoice([]);
@@ -75,10 +84,11 @@ async function loadDatasetColumns() {
   }
   try {
     const info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
+    if (!isCurrent()) return;
     textColPicker.setOptions(info.columns);
     labelPicker.setOptions(info.columns);
     syncSyntheticChoice(info.columns);
-  } catch (err) { showError($("#train-error"), err); }
+  } catch (err) { if (isCurrent()) showError($("#train-error"), err); }
 }
 
 /* data-prep marks the rows an LLM wrote or touched. Only a dataset carrying such a
@@ -119,6 +129,13 @@ async function onTrainStart(ev) {
   ev.preventDefault();
   const errEl = $("#train-error"), btn = $("#train-btn");
   errEl.hidden = true;
+  // Checked first and by itself: with no dataset the column pickers are empty too, so the
+  // "no text column" message below would fire and name the wrong thing to fix. The form
+  // carries `novalidate`, so this is the only check there is.
+  if (!$("#train-dataset").value) {
+    showError(errEl, { message: t("train.error.noDataset") });
+    return;
+  }
   const textCols = textColPicker.values();
   if (!textCols.length) { showError(errEl, { message: t("common.error.noTextColumn") }); return; }
   const plan = plannedModels();

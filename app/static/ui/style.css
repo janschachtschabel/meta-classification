@@ -184,9 +184,12 @@ th { font-size: 0.85em; color: var(--muted); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; }
 
-/* A model that can no longer be loaded (pre-format-2 bundle). Dimming is the
-   decoration; the badge text next to the name carries the meaning. */
-tr.stale td { opacity: 0.65; }
+/* A model that can no longer be loaded (pre-format-2 bundle). The badge text next to
+   the name carries the meaning — and `opacity` composited the whole cell, the badge
+   included: measured 3.00:1 for --warn and 2.78:1 for --muted in light mode, against the
+   4.5:1 SC 1.4.3 asks. Quietening by TOKEN keeps the row recessive and every string in it
+   readable; tests/test_ui_contrast.py recomputes this. */
+tr.stale td { color: var(--muted); }
 .badge-stale {
   display: inline-block; margin-left: var(--s-2); padding: 1px var(--s-2);
   border: 1px solid var(--warn); border-radius: 999px;
@@ -198,8 +201,10 @@ tr.stale td { opacity: 0.65; }
 .pred .bar { flex: 1; height: 10px; background: var(--bar-bg); border-radius: 5px; overflow: hidden; }
 .pred .bar span { display: block; height: 100%; background: var(--accent); }
 .pred .val { flex: 0 0 9.5em; font-variant-numeric: tabular-nums; font-size: 0.9em; }
-/* ranking mode: forced entries below their tuned threshold (dim + text, not colour alone) */
-.pred.below-t { opacity: 0.6; }
+/* Ranking mode: entries below their tuned threshold. The signal is the "· below
+   threshold" text, not the dimming — and at opacity 0.6 that text measured 2.55:1 while
+   the label itself fell to 4.26:1. Same fix as tr.stale: a quieter colour, full opacity. */
+.pred.below-t { color: var(--muted); }
 .pred.below-t .bar span { background: var(--muted); }
 
 /* ---- training progress ---- */
@@ -254,12 +259,42 @@ button.chip {
 .chip.done   { border-color: var(--ok); }
 .chip.failed { border-color: var(--danger); }
 
-/* ---- toast ---- */
-#toast {
+/* ---- toasts ---- */
+/* Both stacks share the bottom centre and grow upwards. Empty they are zero-height and
+   pointer-transparent, so they can stay in the DOM (a live region written while
+   display:none is not reliably announced) without covering the page. */
+.toast-stack {
   position: fixed; bottom: var(--s-5); left: 50%; transform: translateX(-50%);
-  background: var(--text); color: var(--bg);
-  padding: var(--s-2) var(--s-4); border-radius: var(--radius); max-width: 90vw;
+  display: flex; flex-direction: column; gap: var(--s-2);
+  max-width: min(90vw, 44rem); z-index: 10; pointer-events: none;
 }
+#toast-alert { bottom: calc(var(--s-5) + 3.5rem); }
+.toast-item {
+  display: flex; align-items: flex-start; gap: var(--s-3);
+  background: var(--text); color: var(--bg);
+  padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
+  border-radius: var(--radius); pointer-events: auto;
+  /* A long German error is what this element is for; it wraps rather than being clipped. */
+  overflow-wrap: anywhere;
+}
+#toast-alert .toast-item { background: var(--danger); color: var(--danger-text); }
+.toast-x {
+  /* Inherits the item's colour so the contrast pairing is the one measured above, and
+     min-height 0 undoes the 40px button floor for a control inside a line of text. */
+  margin: 0; padding: 0 var(--s-1); min-height: 0; min-width: 24px;
+  background: transparent; color: inherit; font-size: 1.25em; line-height: 1;
+}
+
+/* Selectable but out of view — a display:none textarea cannot be selected, which is what
+   the execCommand clipboard fallback needs (see copyText in app.js). */
+.offscreen { position: fixed; left: -9999px; top: 0; opacity: 0; }
+
+/* The model checkbox group (was a <select multiple>). */
+.models-pick { border: 1px solid var(--border-ui); border-radius: var(--radius);
+  padding: var(--s-2) var(--s-3); margin: 0; }
+.models-pick legend { padding: 0 var(--s-1); font-size: 0.85em; color: var(--muted); }
+#query-models { display: flex; flex-direction: column; gap: var(--s-1);
+  max-height: 9rem; overflow-y: auto; }
 
 @media (prefers-reduced-motion: reduce) {
   .progress span { transition: none; }
@@ -367,3 +402,7 @@ tr.recommended { font-weight: 600; background: var(--bar-bg); }
 .correction .ok { color: var(--ok); font-weight: 600; }
 .correction .fb-message:empty { display: none; }
 .correction .small { margin-right: var(--s-2); }
+
+/* Proposed keywords: the existing .pill carries the colour (already contrast-checked);
+   this only wraps them. */
+.keywordlist { display: flex; flex-wrap: wrap; gap: var(--s-2); }

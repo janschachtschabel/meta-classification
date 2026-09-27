@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Without this the UA paints its own widgets (scrollbars, date pickers, the spin
+     buttons on number inputs) from the light palette while the CSS paints the page dark. -->
+<meta name="color-scheme" content="light dark">
 <!-- Text-free markup on purpose: every word lives in strings-de.js / strings-en.js
      and is written in by i18n.js, so a string exists in exactly one place and the
      two languages cannot drift from the page. The title keeps the product name as
@@ -42,7 +45,10 @@
   <!-- ======= App shell ======= -->
   <div id="view-app" hidden>
     <header class="topbar">
-      <span class="brand" data-i18n-html="shell.brandWithRole"></span>
+      <!-- An <h1>, not a <span>: the only level-1 heading was in the login section, which
+           is hidden the whole time anyone is using the app — so the signed-in page started
+           at <h2> and a screen-reader user had no top of the outline to jump to. -->
+      <h1 class="brand" data-i18n-html="shell.brandWithRole"></h1>
       <nav data-i18n-aria-label="shell.sections" role="tablist">
         <button class="tab" data-tab="query"    id="tab-btn-query"    role="tab" aria-controls="tab-query"    aria-selected="true"  tabindex="0"  data-i18n="shell.tab.query"></button>
         <button class="tab" data-tab="training" id="tab-btn-training" role="tab" aria-controls="tab-training" aria-selected="false" tabindex="-1" data-i18n="shell.tab.training"></button>
@@ -65,7 +71,7 @@
       <!-- ---- Query ---- -->
       <section id="tab-query" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-query" tabindex="0">
         <h2 data-i18n="query.heading"></h2>
-        <form id="query-form" class="card">
+        <form id="query-form" class="card" novalidate>
           <fieldset class="modes">
             <legend data-i18n="query.mode.legend"></legend>
             <label class="check"><input type="radio" name="query-mode" value="one" checked>
@@ -95,10 +101,15 @@
           </div>
 
           <div class="row">
-            <div>
-              <label for="query-models" data-i18n="query.models.label"></label>
-              <select id="query-models" multiple size="4" required></select>
-            </div>
+            <fieldset class="models-pick">
+              <legend data-i18n="query.models.label"></legend>
+              <!-- Filled by loadQueryTab. A checkbox group rather than the
+                   `<select multiple>` this was: that one needed Ctrl-click for a second
+                   model, which is undiscoverable with a mouse and unavailable from the
+                   keyboard in several browsers. `required` went with it, so the form's own
+                   translated check is the one that runs (see novalidate). -->
+              <div id="query-models"></div>
+            </fieldset>
             <div class="opts">
               <label for="query-topk" data-i18n-html="query.topk.label"></label>
               <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
@@ -107,6 +118,14 @@
                   <span data-i18n-html="query.diff.label"></span></label>
                 <label class="check"><input id="query-f1" type="checkbox" checked>
                   <span data-i18n-html="query.f1.label"></span></label>
+              </div>
+              <!-- Off by default: it is a second request per batch, and a caller who only
+                   wants labels should not pay for it. -->
+              <div id="query-metadata-option">
+                <label class="check"><input id="query-metadata" type="checkbox"
+                       aria-describedby="query-metadata-hint">
+                  <span data-i18n-html="query.metadata.label"></span></label>
+                <p id="query-metadata-hint" class="muted" data-i18n="query.metadata.hint"></p>
               </div>
             </div>
           </div>
@@ -122,6 +141,11 @@
         <h2 data-i18n="train.heading"></h2>
         <div class="card" id="train-status-card">
           <h3 data-i18n="train.status.heading"></h3>
+          <!-- Shown after three failed polls. The card keeps its last state on purpose —
+               one dropped tick should not blank a running job — but without this it kept
+               that state forever, and a dead backend read exactly like a live run. -->
+          <p id="train-stale" class="error" role="alert" hidden
+             data-i18n="trainStatus.connectionLost"></p>
           <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
                NOT be a live region — SRs would re-announce it continuously. Phase
                transitions are announced via the dedicated SR-only element below. -->
@@ -131,7 +155,7 @@
           <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
           <p id="train-queue" class="muted" aria-live="polite" hidden></p>
         </div>
-        <form id="train-form" class="card">
+        <form id="train-form" class="card" novalidate>
           <h3 data-i18n-html="train.form.heading"></h3>
           <div class="row">
             <div>
@@ -247,7 +271,7 @@
       <!-- ---- Models ---- -->
       <section id="tab-models" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-models" tabindex="0" hidden>
         <h2 data-i18n="models.heading"></h2>
-        <form id="import-form" class="card">
+        <form id="import-form" class="card" novalidate>
           <h3 data-i18n-html="models.import.heading"></h3>
           <div class="row">
             <div>
@@ -271,7 +295,7 @@
       <!-- ---- Datasets ---- -->
       <section id="tab-datasets" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-datasets" tabindex="0" hidden>
         <h2 data-i18n="datasets.heading"></h2>
-        <form id="upload-form" class="card">
+        <form id="upload-form" class="card" novalidate>
           <h3 data-i18n-html="datasets.upload.heading"></h3>
           <label for="upload-file" data-i18n-html="datasets.upload.file"></label>
           <input id="upload-file" type="file" accept=".csv,.csv.gz,.gz" required>
@@ -286,11 +310,17 @@
     </main>
   </div>
 
-  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <!-- Two stacks. Confirmations are polite and fade; failures are assertive and stay
+       until dismissed, because a reader that may drop the message is the wrong channel for
+       the sentence explaining why nothing happened. Neither is `hidden`: a live region
+       that is display:none when written is not reliably announced at all. -->
+  <div id="toast" class="toast-stack" role="status" aria-live="polite"></div>
+  <div id="toast-alert" class="toast-stack" role="alert" aria-live="assertive"></div>
 </div>
 
 <!-- The string maps come first: every module below may call t() while it loads,
      and the pill pickers in training.js do exactly that at construction time. -->
+<script src="escape.js"></script>
 <script src="strings-de.js"></script>
 <script src="strings-en.js"></script>
 <script src="i18n.js"></script>

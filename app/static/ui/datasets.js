@@ -9,7 +9,7 @@ async function loadDatasets() {
   try {
     const list = await Api.get("/datasets");
     if (!list.length) { el.innerHTML = `<p class="muted">${t("datasets.empty")}</p>`; return; }
-    el.innerHTML = `<div class="card table-wrap"><table>
+    el.innerHTML = `<div class="card table-wrap" tabindex="0"><table>
       <thead><tr><th>${t("datasets.table.name")}</th><th class="num">${t("datasets.table.rows")}</th>
       <th class="num">${t("datasets.table.size")}</th><th>${t("common.actions")}</th></tr></thead><tbody>` +
       list.map((d) => `<tr>
@@ -26,13 +26,13 @@ async function loadDatasets() {
       showDatasetDetail(b.dataset.dsdetail)));
     el.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () =>
       Api.download(`/datasets/${encodeURIComponent(b.dataset.dl)}/export`, b.dataset.dl)
-        .catch((err) => toast(err.message))));
+        .catch((err) => toastError(err))));
     el.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () =>
       shareResource("datasets", b.dataset.share, "#datasets-share")));
     el.querySelectorAll("[data-delds]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(t("datasets.deleteConfirm", { name: b.dataset.delds }))) return;
       try { await Api.del(`/datasets/${encodeURIComponent(b.dataset.delds)}`); toast(t("datasets.deleted")); loadDatasets(); }
-      catch (err) { toast(err.message); }
+      catch (err) { toastError(err); }
     }));
   } catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
   finally { renderShareLinks("datasets", "#datasets-links"); }  // same reason as loadModels

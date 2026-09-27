@@ -23,7 +23,11 @@ LIVE_REGIONS = {
     "train-announce": "state transitions only — the card itself re-renders every 2.5 s",
     "train-queue": "one line, and only while a run is actually queued",
     "train-preflight-announce": "the pre-flight's headline sentence, not its tables",
-    "toast": "the status-message element itself",
+    "toast": "confirmations — the polite stack, one short line per message",
+    # Split from #toast because politeness is not a detail here: a reader may
+    # drop a polite message, and the sentence explaining why an action did
+    # nothing is the one that must not be dropped.
+    "toast-alert": "failures — assertive, and stays until dismissed",
 }
 
 

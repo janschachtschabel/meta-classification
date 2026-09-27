@@ -184,18 +184,29 @@ function definitionList(model, rows) {
 
 /* ---------- the per-label table ---------- */
 
+/* One collator per sort, not one per comparison: `localeCompare` builds a collator on
+   every call, and this is the table with the most rows in the app. */
+const labelCollator = () => new Intl.Collator(I18n.locale());
+
 /* Nulls last in BOTH directions: a label nobody scored is unknown, not weak, and
    reversing the sort must not promote it to the top. */
 function compareBy(key, ascending) {
+  const collator = labelCollator();
   return (a, b) => {
     const x = a[key], y = b[key];
     if (x === null || x === undefined) return (y === null || y === undefined) ? 0 : 1;
     if (y === null || y === undefined) return -1;
-    const order = typeof x === "string"
-      ? String(x).localeCompare(String(y), I18n.locale()) : x - y;
+    const order = typeof x === "string" ? collator.compare(String(x), String(y)) : x - y;
     return ascending ? order : -order;
   };
 }
+
+/* The same discipline query.js applies to its bulk table (QUERY_TABLE_LIMIT = 200). This
+   is the view whose job is diagnosing a large label space, so it is the one that gets
+   handed 300+ rows — and it re-rendered and re-sorted all of them on every header click.
+   The sort still runs over EVERY label, so "weakest first" means weakest overall; only the
+   rendering is capped, and the notice says by how much. */
+const LABEL_TABLE_LIMIT = 200;
 
 const LABEL_COLUMNS = [
   ["label", "modelDetail.labels.label", ""],
@@ -206,12 +217,17 @@ const LABEL_COLUMNS = [
 
 function renderLabelTable(box, labels, sort) {
   const sorted = [...labels].sort(compareBy(sort.key, sort.ascending));
-  box.innerHTML = `<div class="table-wrap"><table>
+  const shown = sorted.slice(0, LABEL_TABLE_LIMIT);
+  const truncated = sorted.length > shown.length
+    ? `<p class="muted">${esc(t("modelDetail.labels.truncated",
+        { shown: fmtInt(shown.length), total: fmtInt(sorted.length) }))}</p>`
+    : "";
+  box.innerHTML = truncated + `<div class="table-wrap" tabindex="0"><table>
     <thead><tr>${LABEL_COLUMNS.map(([key, titleKey, cls]) => `
       <th class="${cls}" aria-sort="${sort.key === key ? (sort.ascending ? "ascending" : "descending") : "none"}">
         <button type="button" class="th-sort" data-sort="${key}">${esc(t(titleKey))}</button>
       </th>`).join("")}</tr></thead>
-    <tbody>${sorted.map((row) => `<tr>
+    <tbody>${shown.map((row) => `<tr>
       <td>${esc(row.label)}</td>
       <td class="num">${esc(fmtScore(row.f1))}</td>
       <td class="num">${esc(row.support === null || row.support === undefined ? "–" : fmtInt(row.support))}</td>
@@ -303,8 +319,8 @@ async function showModelDetail(name) {
   // otherwise their output would be hidden under the dialog's top layer.
   const actions = {
     download: () => Api.download(`/models/${encodeURIComponent(name)}/export`, `${name}.zip`)
-      .catch((err) => toast(err.message)),
-    curl: async () => { await navigator.clipboard.writeText(curlFor(name)); toast(t("modelDetail.curlCopied")); },
+      .catch((err) => toastError(err)),
+    curl: () => copyText(curlFor(name), t("modelDetail.curlCopied")),
     // Stays inside the dialog: the form belongs to THIS model, and closing the panel
     // to fill it in would lose the numbers it is meant to be compared against.
     evaluate: () => openEvaluateForm(name, frame),
@@ -317,7 +333,7 @@ async function showModelDetail(name) {
         dialog.close();
         toast(t("models.deleted"));
         loadModels();
-      } catch (err) { toast(err.message); }
+      } catch (err) { toastError(err); }
     },
   };
   frame.querySelectorAll("[data-act]").forEach((button) =>

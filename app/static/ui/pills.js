@@ -10,14 +10,11 @@ function createPillPicker({ pills, input, datalist, emptyHintKey, onChange = () 
   let selected = [];
   let ready = false;  // suppress onChange during construction (TDZ safety)
 
-  const escP = (s) => String(s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
   function render() {
     pills.innerHTML = selected.map((c) => `
-      <span class="pill">${escP(c)}
-        <button type="button" class="pill-x" data-remove="${escP(c)}"
-                aria-label="${escP(t("train.pills.remove", { name: c }))}">&times;</button></span>`).join("");
+      <span class="pill">${esc(c)}
+        <button type="button" class="pill-x" data-remove="${esc(c)}"
+                aria-label="${esc(t("train.pills.remove", { name: c }))}">&times;</button></span>`).join("");
     pills.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", () => {
       selected = selected.filter((c) => c !== b.dataset.remove);
       render();
@@ -25,7 +22,7 @@ function createPillPicker({ pills, input, datalist, emptyHintKey, onChange = () 
     }));
     // Suggest only what is not picked yet.
     datalist.innerHTML = available.filter((c) => !selected.includes(c))
-      .map((c) => `<option value="${escP(c)}">`).join("");
+      .map((c) => `<option value="${esc(c)}">`).join("");
     input.disabled = !available.length;
     // The key travels with the element: the markup carries one for the pre-script
     // state, and this input has TWO states. Without it, switching language after a

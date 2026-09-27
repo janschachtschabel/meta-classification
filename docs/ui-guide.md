@@ -47,7 +47,7 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
    in Betrieb geht), `best` für die genaueste Bewertung (~1,9× so lange wie
    `auto`; der Unterschied sind allein 5 statt 3 Bewertungsdurchläufe).
 4. **Evaluation:** Wie ehrlich die Qualität gemessen wird. Jedes Profil bringt
-   seine passende Einstellung schon mit — „Profile default“ belässt es dabei.
+   seine passende Einstellung schon mit — „Vorgabe des Profils“ belässt es dabei.
    - *Train/val/test split*: ein Teil der Daten wird als „unbekannte Prüfung“
      beiseitegelegt. Der Preis: **dieser Teil fließt nie ins Training ein**, das
      ausgelieferte Modell lernt nur aus 85 % der Zeilen.
