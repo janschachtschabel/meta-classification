@@ -60,10 +60,15 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app"]
-# The training child is a separate interpreter; without this its lines read as
-# uncovered and train_worker looks far worse than it is tested.
+# The training child is a separate interpreter. `parallel` gives it a data file of its own;
+# `patch` is what makes it write one at all: "subprocess" starts coverage in a Python child,
+# "_exit" saves before os._exit, which is how the child ends once its stdin closes -- after
+# every run. Without both, 26 tests run the child and none of it counts: train_worker read
+# 76 % before this and 91 % after (audit 2026-09-27, T-3 -- the comment here used to claim
+# `parallel` alone did it). Nothing uses multiprocessing, so it is not listed.
 parallel = true
-concurrency = ["thread", "multiprocessing"]
+patch = ["subprocess", "_exit"]
+concurrency = ["thread"]
 
 [tool.coverage.report]
 # Measured 95 % on 2026-09-20. The floor sits a little under it so a legitimate

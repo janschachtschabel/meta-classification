@@ -183,14 +183,23 @@ def test_a_stop_the_child_does_not_act_on_ends_it_anyway(tmp_path, monkeypatch):
 
 def test_a_kill_ends_the_child_at_once(tmp_path, monkeypatch):
     """At once means the child hears the closed pipe and goes — not that the parent waits
-    out the grace period and kills it. With a grace of a minute, the run still ends in
-    seconds only if the child ended itself."""
-    monkeypatch.setattr(train_worker, "_EXIT_GRACE_SECONDS", 60)
+    out the grace period and kills it.
+
+    The two outcomes are told apart by the grace period, not by a guess at how fast this
+    machine is: a child that ends itself finishes in the time an interpreter takes to start,
+    and one the parent had to wait out takes the whole grace. The bound sits halfway between.
+    It used to be a fixed 8 seconds, which measured the machine instead — under coverage on a
+    loaded box the spawn alone crossed it, and the test failed in two of five full runs on
+    2026-09-27 while passing 26/26 in isolation (audit T-1)."""
+    grace = 120
+    monkeypatch.setattr(train_worker, "_EXIT_GRACE_SECONDS", grace)
     started = time.monotonic()
     result, registry, _ = _run(tmp_path, should_stop=lambda: False, kill_requested=lambda: True)
+    elapsed = time.monotonic() - started
+
     assert result == {}
     assert not registry.exists("tiny_model") and not _staging(registry)
-    assert time.monotonic() - started < 8
+    assert elapsed < grace / 2, f"{elapsed:.1f}s: the parent waited out the grace period"
 
 
 def test_a_child_that_dies_without_an_answer_says_so(tmp_path, monkeypatch):
