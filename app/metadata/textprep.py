@@ -11,6 +11,10 @@ This is a separate concern from `app.data.clean_text`, which normalises the text
 trained and predicted on. That one has to produce exactly the features the vectorizer saw;
 this one has to recover the sentences and headings a human would read, which is why it
 undoes PDF line wrapping and drops page chrome instead of flattening everything.
+
+A little past the ~300-line guide since the sentence splitter gained its length bound
+(audit 2026-09-27, S-2). If it grows again, the splitter is the seam — ``split_sentences``,
+``_bounded`` and the segmenter, with a test file of their own already.
 """
 
 from __future__ import annotations
@@ -123,6 +127,37 @@ _TASK_VERBS = frozenset({
 
 _segmenter = pysbd.Segmenter(language="de", clean=False)
 _stemmer = snowballstemmer.stemmer("german")
+
+# pysbd's German abbreviation pass runs one whole-string re.sub per abbreviation candidate,
+# so a single call costs candidates x length: 25k -> 100k characters of prose on one line
+# took 0.23 s -> 2.94 s, while the same text as short lines stayed linear (audit 2026-09-27,
+# S-2). A line longer than this is handed over in pieces. Far above any real paragraph — the
+# parity fixture's longest line is 648 characters — and deep inside the range where pysbd
+# measured linear (up to ~25k per call).
+MAX_SEGMENT_CHARS = 4_000
+# Where a piece may end: sentence-final punctuation, an optional closing quote, whitespace.
+_PIECE_END_RE = re.compile(r"[.!?][\"'“”„»«)]?\s")
+
+
+def _bounded(line: str) -> list[str]:
+    """``line`` in pieces of at most ``MAX_SEGMENT_CHARS``, cut where a sentence ends if possible.
+
+    Cutting after the last sentence-final punctuation before the bound leaves pysbd's answer
+    unchanged for ordinary prose; failing that, after the last space; failing even that, at the
+    bound itself. A cut can land after an abbreviation ("z. B. ") and end a sentence pysbd
+    would have continued — only on a line over the bound, where the alternative was minutes of
+    CPU. Every cut advances by at least one character, so the loop always ends.
+    """
+    pieces: list[str] = []
+    start = 0
+    while len(line) - start > MAX_SEGMENT_CHARS:
+        window = line[start : start + MAX_SEGMENT_CHARS]
+        ends = [match.end() for match in _PIECE_END_RE.finditer(window)]
+        cut = ends[-1] if ends else (window.rfind(" ") + 1 or MAX_SEGMENT_CHARS)
+        pieces.append(window[:cut])
+        start += cut
+    pieces.append(line[start:])
+    return pieces
 
 
 def tokenize(s: str) -> list[str]:
@@ -250,15 +285,18 @@ def split_sentences(text: str) -> list[str]:
     """Split into sentences; every line break is a hard boundary (headings, list items)."""
     sentences: list[str] = []
     for line in text.splitlines():
+        # Per LINE, not per piece: the comma repair below may join across a piece boundary.
         start = len(sentences)
-        for segment in (s.strip() for s in _segmenter.segment(line)):
-            if not segment:
-                continue
-            # pysbd also ends a sentence at "Ludwig XVI., der …"; no sentence starts with "," or ";".
-            if len(sentences) > start and segment[0] in ",;":
-                sentences[-1] += segment
-            else:
-                sentences.append(segment)
+        for piece in _bounded(line):
+            for segment in (s.strip() for s in _segmenter.segment(piece)):
+                if not segment:
+                    continue
+                # pysbd also ends a sentence at "Ludwig XVI., der …"; no sentence starts with
+                # "," or ";".
+                if len(sentences) > start and segment[0] in ",;":
+                    sentences[-1] += segment
+                else:
+                    sentences.append(segment)
     return sentences
 
 
