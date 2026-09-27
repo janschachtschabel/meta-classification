@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app import deploy, tuning
+from app import deploy, feasibility, tuning
 from app.errors import TrainingInputError
-from app.memory import MiB
+from app.memory import MiB, head_bytes
 from app.prepare import Prepared
 from app.profiles import Profile
 from app.settings import Settings
@@ -226,7 +226,7 @@ def test_a_run_is_refused_when_the_head_fits_but_the_run_does_not():
     throttle's job, not this gate's.
     """
     budget = 6_000 * MiB
-    head_only = deploy.head_bytes(4_000, 200_000)
+    head_only = head_bytes(4_000, 200_000)
     assert head_only < budget, "the case is only interesting while the head itself fits"
 
     with pytest.raises(TrainingInputError) as excinfo:
@@ -302,8 +302,8 @@ def test_a_run_over_the_containers_own_limit_is_refused_even_without_a_budget(mo
     Counted against what is ALREADY held (this is the child process, with its matrix and
     targets built), because that is the number the kernel compares too.
     """
-    monkeypatch.setattr(deploy, "memory_limit_bytes", lambda: 8_192 * MiB)
-    monkeypatch.setattr(deploy, "held_bytes", lambda: 3_000 * MiB)
+    monkeypatch.setattr(feasibility, "memory_limit_bytes", lambda: 8_192 * MiB)
+    monkeypatch.setattr(feasibility, "held_bytes", lambda: 3_000 * MiB)
 
     with pytest.raises(TrainingInputError) as excinfo:
         deploy.refuse_if_the_run_cannot_fit(
@@ -318,8 +318,8 @@ def test_a_run_over_the_containers_own_limit_is_refused_even_without_a_budget(mo
 def test_a_run_inside_the_containers_limit_is_not_refused(monkeypatch):
     """The counterpart: without a budget, only the impossible is refused. A run that
     fits the container is the operator's business, however long it takes."""
-    monkeypatch.setattr(deploy, "memory_limit_bytes", lambda: 8_192 * MiB)
-    monkeypatch.setattr(deploy, "held_bytes", lambda: 1_000 * MiB)
+    monkeypatch.setattr(feasibility, "memory_limit_bytes", lambda: 8_192 * MiB)
+    monkeypatch.setattr(feasibility, "held_bytes", lambda: 1_000 * MiB)
 
     deploy.refuse_if_the_run_cannot_fit(
         n_labels=1_000, targets_bytes=200_000 * 1_000,
@@ -329,8 +329,8 @@ def test_a_run_inside_the_containers_limit_is_not_refused(monkeypatch):
 def test_no_limit_and_no_budget_refuses_nothing(monkeypatch):
     """Outside a container there is neither, and inventing one would refuse runs on a
     machine whose memory nobody has declared."""
-    monkeypatch.setattr(deploy, "memory_limit_bytes", lambda: None)
-    monkeypatch.setattr(deploy, "held_bytes", lambda: 3_000 * MiB)
+    monkeypatch.setattr(feasibility, "memory_limit_bytes", lambda: None)
+    monkeypatch.setattr(feasibility, "held_bytes", lambda: 3_000 * MiB)
 
     deploy.refuse_if_the_run_cannot_fit(
         n_labels=50_000, targets_bytes=250_000 * 50_000,

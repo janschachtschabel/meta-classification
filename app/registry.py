@@ -3,6 +3,12 @@ with atomic writes, two-lock concurrency, and safe zip import/export.
 
 Bundle (de)serialization and skops load-safety live in ``model_io``; this module
 orchestrates *where* and *when* those run (cache, disk locks, atomic publish).
+
+Past the project's ~300-line guide and kept whole (audit 2026-09-27, M-2). The archive
+methods (``stage_export``, ``export_to``, ``import_zip``, ``import_archive``) are the obvious
+seam, but they publish through the same ``_disk_lock`` and the same stage/publish pair as
+``save``. Moving them out would hand that lock to a second module, and the invariant that
+keeps a half-written bundle unpublishable would then live in two places.
 """
 
 from __future__ import annotations

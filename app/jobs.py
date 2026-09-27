@@ -21,8 +21,8 @@ shows below the figure beside it. What the bundle and the job history record is 
 run's own sampling alone, so those numbers stay comparable between two runs instead of
 depending on how often someone opened the status page.
 
-Deliberately one file past the project's ~300-line guide: of its 420 lines, 203 are
-code and the rest is this kind of "why". The seam a split would follow — what a run
+Deliberately one file past the project's ~300-line guide, about half of it this kind
+of "why" rather than code. The seam a split would follow — what a run
 REPORTS against how a run is EXECUTED — runs straight through ``self._lock``, the one
 invariant holding the status, the queue and the thread registration consistent:
 ``_busy_locked`` reads status and thread together, and ``_dispatch_next`` retires the

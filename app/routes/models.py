@@ -1,7 +1,10 @@
 """Model management: list, details, evaluate, delete, export, import.
 
 The share-link routes, which serve models and datasets alike, are in
-:mod:`app.routes.share`."""
+:mod:`app.routes.share`. A few lines past the ~300-line guide with one reason to change —
+the model endpoints; what several route modules share already lives in ``routes/_*.py``
+(audit 2026-09-27, M-2).
+"""
 
 from __future__ import annotations
 

@@ -18,6 +18,10 @@ The child writes the bundle into the registry's hidden staging directory only; t
 parent publishes it under its OWN disk lock, so the one-lock rule of ``registry.py``
 holds across the process boundary. End of stdin means the parent is gone or wants the
 run dead: the child exits at once. Its log goes to the inherited stderr.
+
+Past the ~300-line guide because both ends of one protocol live here — the parent's spawn
+and relay, the child's ``main`` — and a message that changes on one side changes on the
+other (audit 2026-09-27, M-2).
 """
 
 from __future__ import annotations

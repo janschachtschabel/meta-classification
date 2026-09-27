@@ -1,4 +1,8 @@
-"""Dataset management: list, inspect, analyze, validate, import/export, delete."""
+"""Dataset management: list, inspect, analyze, validate, import/export, delete.
+
+A few lines past the ~300-line guide with one reason to change — the dataset endpoints;
+what several route modules share already lives in ``routes/_*.py`` (audit 2026-09-27, M-2).
+"""
 
 from __future__ import annotations
 

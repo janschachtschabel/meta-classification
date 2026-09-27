@@ -10,6 +10,10 @@ actually needed.
 Stdlib only (procfs, cgroupfs, ctypes): psutil would be a 14th runtime dependency for
 three numbers. Every reading degrades to "unknown" (0 / None) instead of raising — this
 code reports on a training run and must never be the thing that fails it.
+
+A few lines past the ~300-line guide and kept whole (audit 2026-09-27, M-2): its parts
+answer one question — what this process holds and what it may hold — and it is a
+stdlib-only leaf, which a split would not make any simpler.
 """
 
 from __future__ import annotations
