@@ -73,19 +73,36 @@ def stratified_partition(
 
     subsets: list[list[int]] = [[] for _ in shares]
     unplaced = np.ones(n, dtype=bool)
+    # How many unplaced rows each label still has, carried forward rather than recomputed.
+    # It used to be `(y[unplaced] > 0).sum(axis=0)` at the top of every iteration — a fresh
+    # copy of the whole unplaced block once per label, measured at 6.3 s for 50k x 300 with
+    # ~90 MB of allocator churn per pass (audit PERF-8). The decrement below mirrors
+    # `label_debt`'s, which was already maintained this way; the partition is identical,
+    # which tests/test_correctness_lows.py pins.
+    remaining = (y > 0).sum(axis=0)
 
     while True:
-        remaining = (y[unplaced] > 0).sum(axis=0)
         live = np.flatnonzero(remaining > 0)
         if live.size == 0:
             break
         # The scarcest label first: it has the least room to be placed well later.
         label = int(live[np.argmin(remaining[live])])
-        for row in np.flatnonzero(unplaced & (y[:, label] > 0)):
+        rows = np.flatnonzero(unplaced & (y[:, label] > 0))
+        if rows.size == 0:
+            # Cannot happen while the count below is maintained correctly — and that is
+            # exactly why it is handled: the count is now carried forward rather than
+            # recomputed, so a wrong decrement would otherwise spin here forever instead of
+            # producing a wrong answer. Retiring the label keeps every iteration a step
+            # towards the end: one of the two counters strictly decreases.
+            remaining[label] = 0
+            continue
+        for row in rows:
             chosen = _pick_subset(label_debt[label], total_debt, rng)
             subsets[chosen].append(int(row))
             unplaced[row] = False
-            label_debt[y[row] > 0, chosen] -= 1
+            carries = y[row] > 0
+            label_debt[carries, chosen] -= 1
+            remaining[carries] -= 1
             total_debt[chosen] -= 1
 
     for row in np.flatnonzero(unplaced):

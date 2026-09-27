@@ -6,11 +6,12 @@ import asyncio
 import os
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from .. import __version__
+from .. import __version__, telemetry
 from ..jobs import job_runner
+from ..limiter import default_limit, limiter
 from ..memory import MiB
 from ..registry import get_registry
 from ..responses import ConfigResponse, HealthResponse, ReadyResponse
@@ -55,13 +56,20 @@ async def ready(settings: Settings = Depends(get_settings)) -> dict:
 
 
 @router.get("/metrics", summary="Prometheus metrics (public)", response_class=PlainTextResponse)
-async def metrics() -> PlainTextResponse:
+@limiter.limit(default_limit)
+async def metrics(request: Request) -> PlainTextResponse:
     """Operational gauges in the Prometheus text format (hand-rolled: a client
     library would be a new runtime dependency for six gauges).
 
     Public like /health: a standard ServiceMonitor cannot send custom auth
     headers, and the exposed values are operational counters only (no model
     names, paths or data).
+
+    Rate-limited despite being public, and *because* it is public: the values are
+    innocuous but the cost per call is not — an `iterdir` plus a stat per bundle. The
+    limiter declares `default_limits=[]`, so a route without a decorator has no limit at
+    all, and a scrape interval is measured in seconds while an attacker's is not. `request`
+    is in the signature because slowapi keys the bucket off it.
     """
     snap = job_runner.snapshot()
     registry = get_registry()
@@ -88,6 +96,12 @@ async def metrics() -> PlainTextResponse:
         "# HELP apiv3_training_progress Progress of the current/last training (0-100).",
         "# TYPE apiv3_training_progress gauge",
         f"apiv3_training_progress {progress:.0f}",
+        # Runs waiting behind the one in flight. `queued_names()` existed and was not
+        # exported, so "runs are piling up" could not be alerted on (audit OPS-9).
+        "# HELP apiv3_training_queued Runs waiting behind the one in flight.",
+        "# TYPE apiv3_training_queued gauge",
+        f"apiv3_training_queued {len(job_runner.queued_names())}",
+        *telemetry.render(),
     ]
     return PlainTextResponse(
         "\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8"

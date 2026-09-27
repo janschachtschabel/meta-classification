@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
@@ -324,6 +325,27 @@ class Registry:
                 for cached in [k for k in self._cache if k.casefold() == key]:
                     del self._cache[cached]
 
+    def stage_export(self, name: str) -> Path:
+        """Pack the bundle into a staging file beside the bundles and return its path.
+
+        Here rather than in the route (audit ARC-1) because *where* the staging file goes
+        is this class's business: on a container ``/tmp`` is often tmpfs, i.e. RAM, which
+        would give back exactly what streaming to a file removes — and the hidden
+        ``.*.tmp`` name is the one ``sweep`` already cleans, so a download that dies
+        mid-flight leaks nothing permanently. The caller owns deleting it once sent.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        handle, staged = tempfile.mkstemp(prefix=".export-", suffix=".zip.tmp", dir=self.dir)
+        os.close(handle)
+        path = Path(staged)
+        try:
+            with path.open("wb") as stream:
+                self.export_to(name, stream)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return path
+
     def export_to(self, name: str, target: BinaryIO) -> None:
         """Write the bundle's archive into ``target`` (card + manifest added by ``model_archive``).
 
@@ -353,10 +375,27 @@ class Registry:
             model_archive.pack_into(target, name, sources)
 
     def import_zip(self, name: str, data: bytes) -> dict:
-        """Validate an uploaded archive (``model_archive.unpack``) and install it."""
+        """Install a model from archive bytes already in memory.
+
+        A convenience over :meth:`import_archive`, which is the real implementation: the
+        bytes are spooled to a staging file and installed from there, so there is ONE
+        validate-stage-publish path rather than two that have to keep agreeing. Callers that
+        receive an upload should stream it to a file and use `import_archive` directly —
+        holding the whole archive is the peak API-5 is about.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".zip.tmp", dir=self.dir)
+        try:
+            with os.fdopen(handle, "wb") as sink:
+                sink.write(data)
+            return self.import_archive(name, Path(staged))
+        finally:
+            Path(staged).unlink(missing_ok=True)
+
+    def import_archive(self, name: str, archive_path: Path) -> dict:
+        """Validate an archive on disk (``model_archive.unpack_into``) and install it."""
         if self.exists(name):
             raise FileExistsError(name)
-        payloads = model_archive.unpack(data)
         # Stage + validate in a hidden tmp dir; publish only complete bundles.
         # Under the disk lock so a concurrent load/save/delete can never observe
         # the tmp dir or the exists()->replace window mid-flight.
@@ -366,8 +405,9 @@ class Registry:
                 shutil.rmtree(tmp)
             tmp.mkdir(parents=True)
             try:
-                for member, payload in payloads.items():
-                    (tmp / member).write_bytes(payload)
+                # Writes the members straight into the staging dir, one at a time, and
+                # removes them all again if any check fails.
+                model_archive.unpack_into(archive_path, tmp)
                 _read_bundle(tmp)  # validates config + skops safety; raises if unsafe
             except Exception as exc:
                 shutil.rmtree(tmp, ignore_errors=True)

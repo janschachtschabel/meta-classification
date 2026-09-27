@@ -1,0 +1,106 @@
+{
+  "source": "static-metadata-generators @ metagen/recommended.py",
+  "methods": {
+    "title": "title.heading_or_keywords",
+    "description": "description.lead",
+    "keywords": "keywords.tfidf"
+  },
+  "settings": {
+    "title_max": 90,
+    "desc_max": 500,
+    "n_keywords": 8
+  },
+  "note": "Generated from the source app before api_v3's port was written, so it is a specification and not a recording of our own output. Sample texts are the source repo's own, MIT-licensed. 'keywords_nltk_order', where present, is the order the source app's nltk stemmer produced; api_v3 ships snowballstemmer, whose German2 variant ranks the same keywords differently on that one document.",
+  "documents": [
+    {
+      "name": "01-fotosynthese.txt",
+      "text": "Fotosynthese – wie Pflanzen aus Licht Nahrung machen\n\nPflanzen können etwas, das Menschen und Tiere nicht können: Sie stellen ihre Nahrung selbst her. Den Vorgang, bei dem sie aus Licht, Wasser und Kohlenstoffdioxid Traubenzucker bilden, nennt man Fotosynthese. Das Wort stammt aus dem Griechischen und bedeutet so viel wie „Zusammensetzen mit Hilfe von Licht“.\n\nWo findet die Fotosynthese statt?\nDie Fotosynthese läuft vor allem in den Blättern ab. In den Zellen der Blätter befinden sich viele kleine, linsenförmige Zellbestandteile, die Chloroplasten. Sie enthalten den grünen Blattfarbstoff Chlorophyll. Das Chlorophyll fängt das Sonnenlicht ein und macht seine Energie für die Pflanze nutzbar. Deshalb erscheinen die meisten Pflanzen grün.\n\nWas braucht die Pflanze dafür?\nFür die Fotosynthese benötigt die Pflanze drei Dinge: Wasser, Kohlenstoffdioxid und Licht. Das Wasser nimmt sie mit ihren Wurzeln aus dem Boden auf und transportiert es über die Leitbündel im Stängel bis in die Blätter. Das Kohlenstoffdioxid gelangt aus der Luft durch winzige Öffnungen an der Blattunterseite, die Spaltöffnungen, in das Blatt. Das Licht liefert die nötige Energie.\n\nWas entsteht bei der Fotosynthese?\nAus den Ausgangsstoffen bildet die Pflanze Traubenzucker, auch Glukose genannt. Einen Teil davon nutzt sie sofort als Energiequelle, einen anderen Teil wandelt sie in Stärke um und speichert ihn, zum Beispiel in Kartoffelknollen oder Samen. Als Nebenprodukt entsteht Sauerstoff, den die Pflanze über die Spaltöffnungen an die Umgebung abgibt.\n\nDie Wortgleichung der Fotosynthese lautet:\nKohlenstoffdioxid + Wasser → Traubenzucker + Sauerstoff (mit Lichtenergie und Chlorophyll)\n\nWarum ist die Fotosynthese so wichtig?\nOhne Fotosynthese gäbe es kein Leben auf der Erde, wie wir es kennen. Pflanzen stehen am Anfang fast aller Nahrungsketten: Tiere fressen Pflanzen, andere Tiere fressen diese Tiere. Außerdem stammt nahezu der gesamte Sauerstoff in der Atmosphäre aus der Fotosynthese von Pflanzen, Algen und Cyanobakterien. Gleichzeitig entziehen Pflanzen der Luft Kohlenstoffdioxid. Wälder und Meere sind daher wichtige Kohlenstoffspeicher und spielen beim Klimaschutz eine große Rolle.\n\nWovon hängt die Fotosynthese ab?\nWie viel Traubenzucker eine Pflanze herstellt, hängt von mehreren Faktoren ab. Bei mehr Licht läuft die Fotosynthese schneller ab, allerdings nur bis zu einer bestimmten Grenze. Auch die Temperatur spielt eine Rolle: Ist es zu kalt oder zu heiß, verlangsamt sich der Vorgang. Fehlt Wasser, schließt die Pflanze ihre Spaltöffnungen, um nicht auszutrocknen – dann kann aber auch kein Kohlenstoffdioxid mehr ins Blatt gelangen.\n\nAufgaben\n1. Nenne die Ausgangsstoffe und die Produkte der Fotosynthese.\n2. Beschreibe den Weg des Wassers von der Wurzel bis in das Blatt.\n3. Erkläre, warum Pflanzen an einem heißen, trockenen Sommertag weniger Fotosynthese betreiben.\n4. Begründe, warum der Schutz von Wäldern auch für das Klima wichtig ist.\n",
+      "title": "Fotosynthese – wie Pflanzen aus Licht Nahrung machen",
+      "description": "Pflanzen können etwas, das Menschen und Tiere nicht können: Sie stellen ihre Nahrung selbst her. Den Vorgang, bei dem sie aus Licht, Wasser und Kohlenstoffdioxid Traubenzucker bilden, nennt man Fotosynthese. Das Wort stammt aus dem Griechischen und bedeutet so viel wie „Zusammensetzen mit Hilfe von Licht“. Die Fotosynthese läuft vor allem in den Blättern ab. In den Zellen der Blätter befinden sich viele kleine, linsenförmige Zellbestandteile, die Chloroplasten.",
+      "keywords": [
+        "Fotosynthese",
+        "Kohlenstoffdioxid",
+        "Traubenzucker",
+        "Pflanzen",
+        "Spaltöffnungen",
+        "Chlorophyll",
+        "Ausgangsstoffe",
+        "Blatt"
+      ]
+    },
+    {
+      "name": "02-franzoesische-revolution.txt",
+      "text": "Arbeitsblatt Geschichte – Klasse 8\nName: ____________________   Datum: ____________\n\nDie Französische Revolution\n\nIm Jahr 1789 war Frankreich ein Land voller Gegensätze. An der Spitze stand König Ludwig XVI., der als absolutistischer Herrscher nahezu uneingeschränkte Macht besaß. Die Gesellschaft war in drei Stände gegliedert: Der erste Stand bestand aus dem Klerus, also den Geistlichen, der zweite Stand aus dem Adel. Beide Stände genossen zahlreiche Vorrechte und mussten kaum Steuern zahlen. Den dritten Stand bildeten Bauern, Handwerker, Arbeiter und das Bürgertum – rund 98 Prozent der Bevölkerung. Sie trugen fast die gesamte Steuerlast.\n\nUrsachen der Revolution\nMehrere Entwicklungen verschärften die Lage. Der Staat war durch Kriege und die aufwendige Hofhaltung in Versailles hoch verschuldet. Nach schlechten Ernten stiegen die Brotpreise stark an, viele Menschen litten Hunger. Gleichzeitig verbreiteten sich die Ideen der Aufklärung. Philosophen wie Voltaire, Montesquieu und Rousseau stellten die Herrschaft des Königs in Frage und forderten Freiheit, Gleichheit vor dem Gesetz und die Teilung der staatlichen Gewalt.\n\nDer Verlauf\nUm die Staatsfinanzen zu retten, berief Ludwig XVI. im Mai 1789 die Generalstände ein. Als die Vertreter des dritten Standes sich benachteiligt fühlten, erklärten sie sich im Juni zur Nationalversammlung und schworen im Ballhausschwur, erst nach der Ausarbeitung einer Verfassung auseinanderzugehen. Am 14. Juli 1789 stürmten Pariser Bürgerinnen und Bürger die Bastille, ein Gefängnis und Symbol der königlichen Willkür. Dieser Tag gilt bis heute als Beginn der Revolution und ist Nationalfeiertag in Frankreich.\n\nIm August 1789 verabschiedete die Nationalversammlung die Erklärung der Menschen- und Bürgerrechte. Sie hielt fest, dass alle Menschen frei und gleich an Rechten geboren sind. Die Vorrechte von Adel und Klerus wurden abgeschafft. 1791 erhielt Frankreich eine Verfassung und wurde zur konstitutionellen Monarchie. Doch die Revolution radikalisierte sich: 1792 wurde die Republik ausgerufen, 1793 wurde der König hingerichtet. In der folgenden Schreckensherrschaft unter Maximilien de Robespierre wurden Tausende vermeintliche Gegner verfolgt und getötet.\n\nBedeutung\nDie Französische Revolution veränderte Europa nachhaltig. Mit dem Staatsstreich Napoleon Bonapartes endete sie im Jahr 1799. Viele ihrer Errungenschaften, etwa die rechtliche Gleichheit der Bürger und die Abschaffung der Feudalrechte, blieben jedoch erhalten und wurden später im Code civil festgeschrieben. Ihre Ideale „Freiheit, Gleichheit, Brüderlichkeit“ prägen demokratische Verfassungen bis heute.\n\nArbeitsaufträge\n1. Stelle die drei Stände in einer Tabelle gegenüber (Zusammensetzung, Rechte, Pflichten).\n2. Erkläre, welche Rolle die Aufklärung für den Ausbruch der Revolution spielte.\n3. Beurteile, ob der Sturm auf die Bastille zu Recht als Beginn der Revolution gilt.\n",
+      "title": "Die Französische Revolution",
+      "description": "Im Jahr 1789 war Frankreich ein Land voller Gegensätze. An der Spitze stand König Ludwig XVI., der als absolutistischer Herrscher nahezu uneingeschränkte Macht besaß. Die Gesellschaft war in drei Stände gegliedert: Der erste Stand bestand aus dem Klerus, also den Geistlichen, der zweite Stand aus dem Adel. Beide Stände genossen zahlreiche Vorrechte und mussten kaum Steuern zahlen. Den dritten Stand bildeten Bauern, Handwerker, Arbeiter und das Bürgertum – rund 98 Prozent der Bevölkerung.",
+      "keywords": [
+        "Revolution",
+        "Vorrechte",
+        "Gleichheit",
+        "Bastille",
+        "Ballhausschwur",
+        "Klerus",
+        "Nationalversammlung",
+        "Französische Revolution"
+      ]
+    },
+    {
+      "name": "03-brueche-addieren.txt",
+      "text": "Brüche addieren und subtrahieren\n\nBrüche begegnen uns im Alltag häufig: beim Teilen einer Pizza, in Rezepten oder bei Zeitangaben wie einer Dreiviertelstunde. Ein Bruch besteht aus zwei Zahlen, die durch einen Bruchstrich getrennt sind. Die Zahl über dem Bruchstrich heißt Zähler, die Zahl darunter Nenner. Der Nenner gibt an, in wie viele gleich große Teile ein Ganzes zerlegt wird, der Zähler, wie viele dieser Teile gemeint sind.\n\nGleichnamige Brüche\nBrüche mit demselben Nenner heißen gleichnamig. Sie lassen sich besonders einfach addieren oder subtrahieren: Man addiert oder subtrahiert nur die Zähler, der Nenner bleibt gleich.\nBeispiel: 2/7 + 3/7 = 5/7\nBeispiel: 5/9 − 1/9 = 4/9\nStell dir vor, eine Tafel Schokolade hat sieben Stücke. Isst du zuerst zwei Stücke und dann noch drei, hast du insgesamt fünf von sieben Stücken gegessen.\n\nUngleichnamige Brüche\nHaben Brüche unterschiedliche Nenner, spricht man von ungleichnamigen Brüchen. Bevor man sie addieren oder subtrahieren kann, müssen sie gleichnamig gemacht werden. Dazu sucht man einen gemeinsamen Nenner, am besten das kleinste gemeinsame Vielfache der beiden Nenner, den sogenannten Hauptnenner. Anschließend werden die Brüche durch Erweitern auf diesen Nenner gebracht. Beim Erweitern multipliziert man Zähler und Nenner mit derselben Zahl; der Wert des Bruches ändert sich dabei nicht.\nBeispiel: 1/4 + 1/6\nDas kleinste gemeinsame Vielfache von 4 und 6 ist 12.\n1/4 = 3/12 und 1/6 = 2/12\n3/12 + 2/12 = 5/12\n\nErgebnis kürzen\nOft lässt sich das Ergebnis noch vereinfachen. Beim Kürzen teilt man Zähler und Nenner durch dieselbe Zahl. Ein Bruch ist vollständig gekürzt, wenn Zähler und Nenner keinen gemeinsamen Teiler außer 1 mehr haben.\nBeispiel: 3/8 + 1/8 = 4/8 = 1/2\n\nGemischte Zahlen\nManchmal werden Brüche als gemischte Zahl angegeben, zum Beispiel 2 1/3. Das bedeutet zwei Ganze und ein Drittel. Zum Rechnen wandelt man gemischte Zahlen am besten in unechte Brüche um: 2 1/3 = 7/3. Danach addiert oder subtrahiert man wie gewohnt und wandelt das Ergebnis bei Bedarf wieder zurück.\n\nTypische Fehler\nEin häufiger Fehler ist es, Zähler und Nenner einfach getrennt zu addieren. So ergibt 1/2 + 1/3 nicht 2/5, sondern 5/6. Wer unsicher ist, kann das Ergebnis mit einer Zeichnung überprüfen.\n\nProbe mit Dezimalzahlen\nWer sein Ergebnis kontrollieren möchte, kann die Brüche auch in Dezimalzahlen umwandeln. Dazu teilt man den Zähler durch den Nenner: Ein Viertel entspricht 0,25 und ein Sechstel ungefähr 0,17. Die Summe von etwa 0,42 passt gut zum Ergebnis fünf Zwölftel, denn auch 5 geteilt durch 12 ergibt ungefähr 0,42. Stimmen beide Werte annähernd überein, war die Rechnung sehr wahrscheinlich richtig. Bei periodischen Dezimalzahlen wie 0,333… ist diese Probe allerdings nur eine Näherung.\n\nÜbungen\na) 3/5 + 1/5\nb) 7/10 − 3/10\nc) 2/3 + 1/4\nd) 5/6 − 3/8\ne) 1 1/2 + 2/3\n",
+      "title": "Brüche addieren und subtrahieren",
+      "description": "Brüche begegnen uns im Alltag häufig: beim Teilen einer Pizza, in Rezepten oder bei Zeitangaben wie einer Dreiviertelstunde. Ein Bruch besteht aus zwei Zahlen, die durch einen Bruchstrich getrennt sind. Die Zahl über dem Bruchstrich heißt Zähler, die Zahl darunter Nenner. Der Nenner gibt an, in wie viele gleich große Teile ein Ganzes zerlegt wird, der Zähler, wie viele dieser Teile gemeint sind. Brüche mit demselben Nenner heißen gleichnamig. Das kleinste gemeinsame Vielfache von 4 und 6 ist 12.",
+      "keywords": [
+        "Brüche",
+        "Zähler",
+        "Nenner",
+        "Bruchstrich",
+        "Dezimalzahlen",
+        "Ungleichnamige Brüche",
+        "Vielfache",
+        "Hauptnenner"
+      ]
+    },
+    {
+      "name": "04-passwoerter-2fa.txt",
+      "text": "Unterrichtsbaustein Medienbildung: Sicher unterwegs mit starken Passwörtern\n\nOb E-Mail-Postfach, Lernplattform oder soziales Netzwerk – fast jeder Onlinedienst verlangt ein Benutzerkonto. Geschützt wird es meist nur durch ein Passwort. Gelangen Unbefugte an dieses Passwort, können sie private Nachrichten lesen, im Namen der betroffenen Person Beiträge veröffentlichen oder Einkäufe tätigen. Der Baustein vermittelt in zwei Unterrichtsstunden, wie Jugendliche ihre Konten wirksam absichern.\n\nWie Angreifer an Passwörter kommen\nViele Passwörter werden nicht durch geschicktes Hacken erbeutet, sondern schlicht erraten. Programme probieren in kurzer Zeit Millionen häufiger Kombinationen wie „123456“, „passwort“ oder Vornamen mit Geburtsjahr aus. Man spricht von einem Brute-Force-Angriff oder, wenn Listen bekannter Passwörter verwendet werden, von einem Wörterbuchangriff. Eine weitere Gefahr ist Phishing: Gefälschte E-Mails oder Webseiten fordern dazu auf, Zugangsdaten einzugeben, die dann direkt bei den Angreifern landen. Wird ein Dienst gehackt, tauchen die erbeuteten Zugangsdaten oft in Datenlecks im Internet auf.\n\nMerkmale eines sicheren Passworts\nEin sicheres Passwort ist lang, schwer zu erraten und wird nur für einen einzigen Dienst verwendet. Empfehlenswert sind mindestens zwölf Zeichen. Wörter aus dem Wörterbuch, persönliche Daten oder einfache Tastaturmuster wie „qwertz“ sollten vermieden werden. Gut merken lassen sich sogenannte Passphrasen, die aus mehreren zufälligen Wörtern bestehen. Eine andere Methode ist die Satzmethode: Aus einem ausgedachten Satz werden die Anfangsbuchstaben, Zahlen und Satzzeichen übernommen. Wer viele Konten besitzt, kann einen Passwortmanager nutzen. Er speichert alle Zugangsdaten verschlüsselt, sodass man sich nur noch ein Hauptpasswort merken muss.\n\nZwei-Faktor-Authentifizierung\nNoch besser geschützt ist ein Konto mit der Zwei-Faktor-Authentifizierung. Dabei reicht das Passwort allein nicht aus, um sich anzumelden. Zusätzlich muss ein zweiter Nachweis erbracht werden, etwa ein Einmalcode aus einer Authenticator-App, eine Bestätigung auf dem Smartphone oder ein Sicherheitsschlüssel. Selbst wenn das Passwort gestohlen wurde, bleibt das Konto so geschützt.\n\nAblauf der Unterrichtseinheit\nIn der ersten Stunde sammeln die Schülerinnen und Schüler ihre Erfahrungen mit Onlinekonten und testen in Kleingruppen anhand von Beispielen, welche Passwörter leicht zu erraten sind. Anschließend erarbeiten sie Regeln für sichere Passwörter und erstellen mit der Satzmethode eigene Beispiele, die sie nicht verwenden. In der zweiten Stunde lernen sie typische Phishing-Nachrichten zu erkennen und richten – sofern möglich – bei einem eigenen Konto die Zwei-Faktor-Authentifizierung ein. Zum Abschluss gestalten sie ein Plakat mit Tipps für die Klasse.\n\nHinweis für Lehrkräfte: Echte Passwörter dürfen im Unterricht niemals genannt oder notiert werden.\n",
+      "title": "Unterrichtsbaustein Medienbildung: Sicher unterwegs mit starken Passwörtern",
+      "description": "Ob E-Mail-Postfach, Lernplattform oder soziales Netzwerk – fast jeder Onlinedienst verlangt ein Benutzerkonto. Geschützt wird es meist nur durch ein Passwort. Gelangen Unbefugte an dieses Passwort, können sie private Nachrichten lesen, im Namen der betroffenen Person Beiträge veröffentlichen oder Einkäufe tätigen. Der Baustein vermittelt in zwei Unterrichtsstunden, wie Jugendliche ihre Konten wirksam absichern. Empfehlenswert sind mindestens zwölf Zeichen.",
+      "keywords": [
+        "Passwörter",
+        "Satzmethode",
+        "Zwei-Faktor-Authentifizierung",
+        "Zugangsdaten",
+        "Unterrichtsbaustein",
+        "Wörterbuchangriff",
+        "Tastaturmuster",
+        "Passphrasen"
+      ]
+    },
+    {
+      "name": "05-gedichtanalyse.txt",
+      "text": "Methodenblatt Deutsch: Gedichtanalyse Schritt für Schritt\n\nGedichte wirken auf den ersten Blick oft rätselhaft. Mit einem klaren Vorgehen lässt sich jedoch jedes Gedicht erschließen. Dieses Methodenblatt zeigt, in welchen Schritten du eine Gedichtanalyse aufbaust und worauf du dabei achten solltest.\n\n1. Erster Leseeindruck\nLies das Gedicht mehrmals, am besten auch einmal laut. Notiere spontan, welche Stimmung es bei dir auslöst und worum es deiner Meinung nach geht. Dieser erste Eindruck hilft dir, eine Deutungshypothese zu formulieren, die du im Laufe der Analyse überprüfst.\n\n2. Einleitung\nDie Einleitung nennt Titel, Autorin oder Autor, Entstehungsjahr und die Textsorte. Außerdem fasst sie das Thema des Gedichts in einem Satz zusammen. Wenn möglich, ordnest du das Gedicht einer literarischen Epoche zu, etwa der Romantik oder dem Expressionismus.\n\n3. Formale Analyse\nUntersuche anschließend den äußeren Aufbau. Wie viele Strophen und Verse hat das Gedicht? Welches Reimschema liegt vor, zum Beispiel ein Paarreim, ein Kreuzreim oder ein umarmender Reim? Bestimme außerdem das Metrum, also das Versmaß: Wechseln betonte und unbetonte Silben regelmäßig, handelt es sich etwa um einen Jambus oder Trochäus. Achte auch auf die Kadenzen am Versende.\n\n4. Sprachliche Analyse\nIm nächsten Schritt betrachtest du die Sprache. Welche Wortfelder fallen auf? Werden viele Adjektive oder Verben verwendet? Besonders wichtig sind die sprachlichen Mittel, auch rhetorische Stilmittel genannt. Dazu gehören zum Beispiel Metapher, Personifikation, Vergleich, Alliteration, Anapher und Enjambement. Nenne nicht nur das Stilmittel, sondern erkläre immer auch seine Wirkung: Was wird dadurch betont oder veranschaulicht?\n\n5. Deutung\nFühre nun deine Beobachtungen zusammen. Wie hängen Form, Sprache und Inhalt zusammen? Beziehe dich dabei auf die Aussageabsicht des Gedichts und belege deine Aussagen mit Zitaten und Versangaben. Prüfe, ob sich deine anfängliche Deutungshypothese bestätigt hat.\n\n6. Schluss\nIm Schluss fasst du die wichtigsten Ergebnisse knapp zusammen. Du kannst außerdem eine begründete persönliche Stellungnahme abgeben oder das Gedicht mit einem anderen Text vergleichen.\n\nHäufige Fehler\nViele Analysen bleiben beim bloßen Aufzählen von Stilmitteln stehen. Entscheidend ist aber, ihre Funktion für die Aussage des Gedichts zu erläutern. Ein weiterer Fehler besteht darin, das lyrische Ich mit der Autorin oder dem Autor gleichzusetzen. Das lyrische Ich ist die Stimme, die im Gedicht spricht, und nicht automatisch die Person, die es geschrieben hat. Vermeide außerdem lange Nacherzählungen des Inhalts, denn eine knappe Zusammenfassung in der Einleitung genügt.\n\nTipp: Schreibe die Analyse im Präsens und verwende Fachbegriffe sicher. Eine Checkliste mit allen Schritten findest du auf der Rückseite.\n",
+      "title": "Methodenblatt Deutsch: Gedichtanalyse Schritt für Schritt",
+      "description": "Gedichte wirken auf den ersten Blick oft rätselhaft. Mit einem klaren Vorgehen lässt sich jedoch jedes Gedicht erschließen. Dieses Methodenblatt zeigt, in welchen Schritten du eine Gedichtanalyse aufbaust und worauf du dabei achten solltest. Dieser erste Eindruck hilft dir, eine Deutungshypothese zu formulieren, die du im Laufe der Analyse überprüfst. Die Einleitung nennt Titel, Autorin oder Autor, Entstehungsjahr und die Textsorte. Untersuche anschließend den äußeren Aufbau.",
+      "keywords": [
+        "Methodenblatt",
+        "Gedichtanalyse",
+        "Gedicht",
+        "Deutungshypothese",
+        "Stilmittel",
+        "Analyse",
+        "Leseeindruck",
+        "Versangaben"
+      ],
+      "keywords_nltk_order": [
+        "Methodenblatt",
+        "Gedichtanalyse",
+        "Gedicht",
+        "Deutungshypothese",
+        "Analyse",
+        "Leseeindruck",
+        "Versangaben",
+        "Stilmittel"
+      ]
+    }
+  ]
+}

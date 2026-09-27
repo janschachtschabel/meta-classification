@@ -3,11 +3,11 @@ anyone spends an afternoon on it."""
 
 import pytest
 
-from app.profiles import (
+from app.capacity import CapacityPlan
+from app.profile_costs import (
     ANCHOR_MINUTES,
     ANCHOR_ROWS,
     ANCHOR_THREADS,
-    CapacityPlan,
     estimated_minutes,
     head_fit_seconds_ratio,
 )
@@ -105,12 +105,13 @@ def test_a_run_in_a_child_process_plans_with_a_second_interpreter(monkeypatch):
     and pandas, and its budget counts this process too: it starts from the API's memory
     PLUS a fresh interpreter's. Planned from the API's alone, a run near a boundary was
     promised a thread its budget then withheld. 215k rows sit right at such a boundary."""
-    from app import profiles as profiles_mod
+    from app import capacity as capacity_mod
     from app import settings as settings_mod
-    from app.profiles import CHILD_PROCESS_BASE_BYTES, Profile
+    from app.profile_costs import CHILD_PROCESS_BASE_BYTES
+    from app.profiles import Profile
     from app.settings import Settings
 
-    monkeypatch.setattr(profiles_mod, "rss_bytes", lambda: 300 * MiB)
+    monkeypatch.setattr(capacity_mod, "rss_bytes", lambda: 300 * MiB)
     monkeypatch.setattr(settings_mod, "available_cpus", lambda: 16)
     profiles = {"auto": Profile("auto", use_char=True), "fast": Profile("fast", use_char=False)}
 

@@ -40,6 +40,33 @@ def test_clean_text_does_not_backtrack_on_unclosed_markup():
         assert time.perf_counter() - started < 2.0
 
 
+def test_clean_text_keeps_prose_between_a_bare_angle_bracket_and_a_block_tag():
+    """A regression pinned after it shipped once.
+
+    Removing a block-level tag in its own pass deletes the `<` and `>` that used to STOP
+    ``_HTML_TAG_RE``'s ``[^<>]+``. A later tag pass then joins the bare `<` before the tag to
+    the bare `>` after it and eats everything in between — ``Preis < 5 Euro <br> Menge > 3
+    Stück`` came back as ``Preis 3 Stück``. German prose comparing two values around an HTML
+    paragraph is ordinary input, and this is the text a model is trained and predicted on.
+    """
+    assert data.clean_text("Preis < 5 Euro <br> Menge > 3 Stück") == (
+        "Preis < 5 Euro Menge 3 Stück"
+    )
+    assert data.clean_text("a < b <p>Text</p> c > d") == "a < b Text c d"
+    assert data.clean_text("5 &lt; 7 <p>ja</p> 9 &gt; 2") == "5 < 7 ja 9 2"
+
+
+def test_clean_text_removes_control_characters_after_the_markdown_passes():
+    """Order that looks incidental and is not.
+
+    ``\x92`` is what a cp1252-mis-decoded curly quote leaves behind, and it is plausible in
+    scraped rows. Strip it BEFORE the Markdown passes and ``[Titel]\x92(http://x)`` turns into
+    a link that then collapses to ``Titel``; strip it after, and the text keeps both brackets.
+    Either is defensible, but only one is what the fitted vectorizers saw.
+    """
+    assert data.clean_text("[Titel]\x92(http://x)") == "[Titel](http://x)"
+
+
 def test_clean_text_strips_only_well_formed_markup():
     """Nested and unbalanced markup is left alone rather than half-eaten.
 

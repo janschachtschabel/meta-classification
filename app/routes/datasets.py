@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -26,13 +27,15 @@ from fastapi.responses import FileResponse
 
 from .. import data as data_mod
 from .. import dataset_stats as stats_mod
+from ..capacity import CapacityPlan
 from ..errors import TrainingInputError
 from ..limiter import default_limit, export_limit, limiter
-from ..profiles import CapacityPlan, load_training_config
+from ..profiles import load_training_config
 from ..schemas import AnalyzeRequest, ExportRequest, ValidateRequest
 from ..security import require_role, safe_name, spool_upload_capped
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
+from ._paging import Limit, Offset, page
 
 router = APIRouter(tags=["Datasets"])
 
@@ -52,10 +55,10 @@ def _dataset_path(dataset_name: str, settings: Settings) -> Path:
     honest and gives them one shared 404.
     """
     safe_name(dataset_name, "dataset name")
-    path = settings.data_dir / dataset_name
-    if not data_mod.is_dataset_name(dataset_name) or not path.exists():
-        raise HTTPException(404, f"Dataset '{dataset_name}' not found.")
-    return path
+    try:
+        return data_mod.resolve_dataset(settings.data_dir, dataset_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Dataset '{dataset_name}' not found.") from exc
 
 
 def _format_size(num_bytes: int) -> str:
@@ -71,10 +74,15 @@ def _format_size(num_bytes: int) -> str:
 @limiter.limit(export_limit)  # row counts read every CSV in full -> throttle like the heavy endpoints
 def list_datasets(
     request: Request,
+    limit: Limit = None, offset: Offset = 0,
     _: str = Depends(require_role("readonly")), settings: Settings = Depends(get_settings)
 ) -> list[dict]:
     """List all CSV files in the data directory with name, size and row count.
-    **Auth:** readonly."""
+
+    Omitting `limit` returns every dataset, as before. Note that the row count reads each
+    CSV in full, so a bound here is a real saving on a directory with many large files.
+    **Auth:** readonly.
+    """
     data_dir = settings.data_dir
     if not data_dir.exists():
         return []
@@ -82,7 +90,9 @@ def list_datasets(
     # Both suffixes: pandas reads a gzipped CSV natively, and the WLO full exports are
     # 126-195 MB compressed against ~1.4 GB plain — so the compressed form is the normal one
     # for large datasets, not an exception.
-    for csv in sorted([*data_dir.glob("*.csv"), *data_dir.glob("*.csv.gz")]):
+    # Paged before the row counts are read, not after: each one reads a whole CSV, so
+    # narrowing first is the difference between one file and all of them.
+    for csv in page(sorted([*data_dir.glob("*.csv"), *data_dir.glob("*.csv.gz")]), limit, offset):
         stat = csv.stat()
         out.append({"name": csv.name, "size_human": _format_size(stat.st_size),
                     "rows": data_mod.count_rows(csv)})
@@ -202,18 +212,65 @@ async def import_dataset(
     if target.exists():
         raise HTTPException(409, f"Dataset '{name}' already exists.")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    # Spool beside the target, then rename: the rename is what makes a dataset exist,
-    # so a failure before it leaves a ".part" file that no route can name (the listing
-    # globs the CSV suffixes and _dataset_path checks them) rather than a truncated CSV
-    # that lists, inspects and trains as if it were complete.
-    staging = target.with_name(target.name + ".part")
+    staging = _staging_path(settings.data_dir, name)
     size = await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, staging)
     try:
-        await asyncio.to_thread(os.replace, staging, target)
-    except BaseException:
+        await asyncio.to_thread(_publish_new_dataset, staging, target)
+    except FileExistsError as exc:
+        # Won the upload race and lost the name: the 409 above ran before the upload, so
+        # this is the same answer, decided at the moment it can actually be decided.
+        raise HTTPException(409, f"Dataset '{name}' already exists.") from exc
+    return {"status": "imported", "dataset_name": name, "size_bytes": size}
+
+
+def _staging_path(data_dir: Path, name: str) -> Path:
+    """A staging file for one upload, beside the target and nameable by no route.
+
+    Spool-then-rename is what makes the rename the moment a dataset exists, so a failure
+    part-way leaves something no route can ask for rather than a truncated CSV that lists,
+    inspects and trains as if it were complete. Two properties carry that:
+
+    * a **leading dot**, which ``safe_name`` rejects, and a ``.part`` suffix, which the
+      listing's CSV glob does not match and the startup sweep does clean;
+    * a **unique** name. It used to be ``<name>.part``, i.e. the same file for every request
+      importing one name — so two concurrent imports interleaved their bytes into whichever
+      one reached the rename (audit SEC-12).
+    """
+    handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".part", dir=data_dir)
+    os.close(handle)
+    return Path(staged)
+
+
+def _publish_new_dataset(staging: Path, target: Path) -> None:
+    """Move the staged upload into place, or refuse because the name was taken.
+
+    ``os.replace`` is atomic but silently OVERWRITES, and the 409 check runs before the
+    upload — so a name created during a long upload was replaced by it anyway. ``os.link``
+    fails with ``FileExistsError`` instead, atomically, which is the answer this route
+    already gives for a name that exists (audit SEC-12).
+
+    :raises FileExistsError: the target appeared while the upload was running.
+    """
+    try:
+        os.link(staging, target)
+    except FileExistsError:
         staging.unlink(missing_ok=True)
         raise
-    return {"status": "imported", "dataset_name": name, "size_bytes": size}
+    except OSError:
+        # No hard links here (a filesystem or platform that refuses them). Fall back to the
+        # atomic-but-overwriting rename after one more check: the race window shrinks from
+        # the whole upload to these two statements, which is the best this can do without
+        # links.
+        if target.exists():
+            staging.unlink(missing_ok=True)
+            raise FileExistsError(target) from None
+        try:
+            os.replace(staging, target)
+        except BaseException:
+            staging.unlink(missing_ok=True)
+            raise
+        return
+    staging.unlink(missing_ok=True)
 
 
 @router.post("/datasets/{dataset_name}/export", summary="Export a dataset (download or share link)",

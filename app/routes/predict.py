@@ -9,33 +9,16 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 
 from ..classifier import ClassifierModel, Prediction
 from ..explain import explain_prediction
 from ..limiter import limiter, predict_limit
-from ..registry import UnsafeModelError, get_registry
 from ..schemas import ExplainRequest, MultiPredictRequest, PredictRequest
-from ..security import require_role, safe_name
+from ..security import require_role
+from ._bundles import load_model
 
 router = APIRouter(tags=["Prediction"])
-
-
-def load_model(model_name: str) -> ClassifierModel:
-    safe_name(model_name, "model name")
-    registry = get_registry()
-    if not registry.exists(model_name):
-        raise HTTPException(404, f"Model '{model_name}' not found.")
-    try:
-        return registry.get(model_name)
-    except FileNotFoundError as exc:
-        # Deleted in the window between exists() and get() (TOCTOU) -> 404, the
-        # same clean response as a plainly missing model, never a 500.
-        raise HTTPException(404, f"Model '{model_name}' not found.") from exc
-    except UnsafeModelError as exc:
-        # A bundle that exists but can't be safely loaded (corrupt/version drift)
-        # is a client-visible 422, not a 500 that leaks internals.
-        raise HTTPException(422, "Model bundle is invalid or unloadable.") from exc
 
 
 def _truncate(text: str) -> str:
@@ -54,16 +37,13 @@ def _pred_dict(p: Prediction) -> dict:
 
 
 def _applied_settings(model: ClassifierModel, body: PredictRequest | MultiPredictRequest) -> dict:
-    # Report what was actually APPLIED, per model: an explicit top_k resolves to
-    # the ranking size; without one, multiclass/binary decide with argmax (1)
-    # and multilabel with its tuned thresholds (no cap -> null).
-    single = model.task_type in ("binary", "multiclass")
-    applied_top_k = model.resolved_top_k(body.top_k)
-    if applied_top_k is None and single:
-        applied_top_k = 1
+    # Report what was actually APPLIED, per model. The rule is the model's — how a task
+    # type decides, and therefore what ranking size that amounts to — and asking it here
+    # rather than restating it is the point: this route had its own copy of "binary and
+    # multiclass decide by argmax, so it is 1" (audit ARC-3).
     return {
         "threshold": body.threshold if body.threshold is not None else model.global_threshold,
-        "top_k": applied_top_k,
+        "top_k": model.applied_top_k(body.top_k),
         "classification_type": model.task_type,
         "auto_mode": body.top_k is None and body.threshold is None,
     }

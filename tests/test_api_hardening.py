@@ -415,7 +415,7 @@ def test_startup_sweeps_upload_staging_left_by_a_kill(tmp_path):
     (neither carries a dataset suffix), so nothing reclaims them — while the analogous
     leak in the models dir HAS been swept since the export staging landed. Same problem,
     same treatment."""
-    from app.main import sweep_upload_staging
+    from app.lifecycle import sweep_upload_staging
 
     (tmp_path / "orphan.csv.part").write_text("half an upload", encoding="utf-8")
     (tmp_path / ".predict-abc123.csv.tmp").write_text("half a stream", encoding="utf-8")

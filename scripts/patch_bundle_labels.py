@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -60,10 +61,12 @@ def patch(bundle: Path, names: dict[str, str], *, apply: bool) -> tuple[int, int
         if not backup.exists():  # keep the FIRST original, not the previous patch
             shutil.copy2(config_path, backup)
         config["uri_to_label"] = updated
-        # Same writer settings as model_io._write_bundle, so the file stays comparable.
-        config_path.write_text(
-            json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # Same writer settings as model_io._write_bundle, so the file stays comparable —
+        # and the same tmp-then-rename, which matters more here than anywhere: this is
+        # `config.json` inside a bundle that may be serving, and it is what model_io trusts
+        # for class order and thresholds. A plain write_text that dies half-way (a full disk,
+        # a kill) leaves a truncated file the registry then refuses to load (audit T-5).
+        write_config_atomically(config_path, config)
         # Re-read and assert the parts that must NOT have changed.
         after = json.loads(config_path.read_text(encoding="utf-8"))
         assert after["classes"] == classes, "class list changed - aborting"
@@ -74,6 +77,22 @@ def patch(bundle: Path, names: dict[str, str], *, apply: bool) -> tuple[int, int
     else:
         print("  DRY RUN - pass --apply to write")
     return corrected, added, len(nameless)
+
+
+def write_config_atomically(config_path: Path, config: dict) -> None:
+    """Replace a bundle's config.json in one step, or leave it exactly as it was.
+
+    The same pattern as `Registry.update_info`: write beside the target, then `os.replace`,
+    which is atomic on both POSIX and Windows. Extracted so it can be tested — the write
+    itself was the untested part.
+    """
+    tmp = config_path.with_name(config_path.name + ".tmp")
+    tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        os.replace(tmp, config_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def main() -> None:

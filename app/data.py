@@ -11,7 +11,6 @@ API live in ``dataset_stats``. Both consume this module, never the reverse.
 from __future__ import annotations
 
 import gzip
-import html
 import re
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from . import stratify
 from .errors import TrainingInputError
 from .label_names import is_container_label
+from .markup import CONTROL_RE, MD_LINK_RE, MD_MARK_RE, strip_tags
 
 
 def read_csv(path: str | Path, **kwargs: object) -> pd.DataFrame:
@@ -39,17 +39,6 @@ def read_csv(path: str | Path, **kwargs: object) -> pd.DataFrame:
         raise TrainingInputError(f"The CSV is empty or malformed: {exc}") from exc
 
 
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-# Both classes exclude their own OPENING delimiter, and that is load-bearing rather than
-# cosmetic: with `[^>]+` a run of unclosed "<" made every start position consume to the end
-# of the string before failing — quadratic, 52 s for one text at the 100,000-character
-# maximum /predict accepts, with the GIL held throughout. Excluding "<" lets a start
-# position fail in O(1). The cost is that nested or unbalanced markup is now left alone
-# instead of being half-eaten (pinned in tests/test_data.py); well-formed markup, which
-# cannot contain its own opening delimiter, cleans exactly as before.
-_HTML_TAG_RE = re.compile(r"<[^<>]+>")
-_MD_LINK_RE = re.compile(r"!?\[([^\[\]]*)\]\([^()]*\)")  # [text](url) / ![alt](url) -> text/alt
-_MD_MARK_RE = re.compile(r"[*_`~#>]+")  # emphasis / code / heading / quote markers
 _WS_RE = re.compile(r"\s+")
 
 
@@ -58,14 +47,21 @@ def clean_text(value: object) -> str:
 
     Decodes HTML entities, strips HTML tags and common Markdown markup, removes
     control characters and collapses whitespace.
+
+    The result is one line of single-spaced tokens, which is what the fitted vectorizers
+    saw, so this may flatten freely — marker runs of any length, markers inside a word,
+    and script bodies all go, none of which ``strip_markup_preserving_lines`` may touch.
+    The order of the steps below is equally load-bearing; both places say why.
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
-    text = html.unescape(str(value))
-    text = _HTML_TAG_RE.sub(" ", text)
-    text = _MD_LINK_RE.sub(r"\1", text)
-    text = _MD_MARK_RE.sub("", text)
-    text = _CONTROL_RE.sub("", text)
+    text = strip_tags(str(value))
+    text = MD_LINK_RE.sub(r"\1", text)
+    text = MD_MARK_RE.sub("", text)
+    # Control characters LAST, as they always were: removed earlier, a mangled byte
+    # between "]" and "(" closes up into a Markdown link that then collapses to its
+    # text. See app/markup.py's CONTROL_RE.
+    text = CONTROL_RE.sub("", text)
     return _WS_RE.sub(" ", text).strip()
 
 
@@ -93,6 +89,24 @@ DATASET_SUFFIXES = (".csv", ".csv.gz")
 def is_dataset_name(name: str) -> bool:
     """Does this file name denote a dataset the API may serve, share or delete?"""
     return name.lower().endswith(DATASET_SUFFIXES)
+
+
+def resolve_dataset(data_dir: Path, name: str) -> Path:
+    """The path of an existing dataset, or ``FileNotFoundError``.
+
+    One function so the rule cannot drift between the routes that apply it. The data directory
+    holds more than datasets — ``label_names.json`` is the display-name sidecar every training
+    reads — and a route that checked only ``exists()`` accepted it, answered 202, and surfaced
+    the problem minutes later as a job error.
+
+    Raises ``FileNotFoundError``, not an HTTP error: the caller owns the status code, and this
+    module is one the routes delegate to. The name must already have been through
+    ``security.safe_name``; that check belongs at the trust boundary and stays there.
+    """
+    path = data_dir / name
+    if not is_dataset_name(name) or not path.exists():
+        raise FileNotFoundError(name)
+    return path
 
 
 # path -> (mtime_ns, size, rows). Bounded: cleared beyond 256 entries (the data

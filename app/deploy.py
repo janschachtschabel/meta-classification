@@ -44,7 +44,7 @@ from .metrics import compute_metrics, is_single_label
 from .prepare import Prepared
 from .profiles import Profile
 from .settings import Settings
-from .thresholds import name_threshold_columns, tune_thresholds
+from .thresholds import resolve_cuts, tune_thresholds
 from .tuning import cross_val_evaluate, select_c
 from .vectorizers import TfidfBackend
 
@@ -145,21 +145,19 @@ def select_on_split(
         return None
     logger.info("Selected C=%s (val_f1_macro=%.4f)", best_c, val_f1)
 
-    if not thresholds_apply:
-        global_t, per_label = 0.5, {}
-    elif val_thresholds is not None:
-        # Already tuned inside the C search, on this very head's validation
-        # probabilities — re-deriving them would score the same rows again to reach
-        # the same answer. No progress phase either: there is no work to report.
-        global_t, columns = val_thresholds
-        per_label = name_threshold_columns(columns, classes) if profile.threshold_per_label else {}
-    else:
+    def tune_now() -> tuple[float, dict[str, float]]:
+        # Only the branch that actually tunes reports a phase: the other two do no work.
         on_progress(phase="threshold", progress=75,
                     message="Tuning per-label classification thresholds (on validation)...")
-        global_t, per_label = tune_thresholds(
+        return tune_thresholds(
             y_val, head.predict_proba(x_va), classes, per_label=profile.threshold_per_label,
             shrink_k=profile.threshold_shrinkage_k, keep_global=keep_global,
         )
+
+    global_t, per_label = resolve_cuts(
+        applies=thresholds_apply, pretuned=val_thresholds, classes=classes,
+        per_label=profile.threshold_per_label, tune=tune_now,
+    )
 
     on_progress(phase="evaluating", progress=85,
                 message="Evaluating on the held-out test split (honest metrics)...")

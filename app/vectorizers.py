@@ -102,15 +102,12 @@ class TfidfBackend:
             dtype=np.float32,
         )
 
-    def fit(self, texts: list[str]) -> TfidfBackend:
-        self.word_vec = self._make("word", self.word_ngram, self.max_word_features)
-        self.word_vec.fit(texts)
-        self.char_vec = (
-            self._make("char_wb", self.char_ngram, self.max_char_features) if self.use_char else None
-        )
-        if self.char_vec is not None:
-            self.char_vec.fit(texts)
-        return self
+    # No `fit()`. It existed, called scikit-learn's own `fit` on each vectorizer, and so
+    # bypassed `vocabulary.fit_transform_exact` — i.e. the 4-19x memory peak the two-pass
+    # design exists to avoid, and the documented cause of an OOM on the full export. Nothing
+    # in the pipeline called it; one test did. Deleted rather than corrected, because the
+    # correct version is `fit_transform` below and a second name for it is the whole hazard:
+    # the next caller reaching for the obvious one would have reintroduced the peak.
 
     def transform(self, texts: list[str]):
         if self.word_vec is None:

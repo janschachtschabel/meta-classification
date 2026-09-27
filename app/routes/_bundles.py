@@ -1,0 +1,56 @@
+"""The registry, over HTTP: resolve a model name, or hand a bundle back as a download.
+
+Not a route module — it defines no endpoints. It exists because three route modules need
+these two things and a route importing a sibling route makes one endpoint's module the
+owner of another's policy (audit ARC-1): `share.py` took its download staging from
+`models.py`, and `predict_bulk.py` took the exists/get/TOCTOU mapping from `predict.py`.
+
+Both functions are HTTP mapping, which is why they live under `routes/` rather than in a
+core module: they raise `HTTPException` and build a `FileResponse`, and `CLAUDE.md` keeps
+FastAPI out of the modules the routes delegate *to*. What is not HTTP — placing the staging
+file and cleaning it up on failure — moved to `Registry.stage_export`, beside `export_to`.
+"""
+
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+
+from ..classifier import ClassifierModel
+from ..errors import UnsafeModelError
+from ..registry import get_registry
+from ..security import safe_name
+
+
+def load_model(model_name: str) -> ClassifierModel:
+    """The model that name refers to, or the right 4xx — never a 500."""
+    safe_name(model_name, "model name")
+    registry = get_registry()
+    if not registry.exists(model_name):
+        raise HTTPException(404, f"Model '{model_name}' not found.")
+    try:
+        return registry.get(model_name)
+    except FileNotFoundError as exc:
+        # Deleted in the window between exists() and get() (TOCTOU) -> 404, the
+        # same clean response as a plainly missing model, never a 500.
+        raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+    except UnsafeModelError as exc:
+        # A bundle that exists but can't be safely loaded (corrupt/version drift)
+        # is a client-visible 422, not a 500 that leaks internals.
+        raise HTTPException(422, "Model bundle is invalid or unloadable.") from exc
+
+
+def staged_zip_response(name: str) -> FileResponse:
+    """Stream the bundle's archive back from a staging file on disk.
+
+    The archive is not built in memory: a production bundle is 50-180 MB and the byte path
+    peaked at 2.78x that (measured). `Registry.stage_export` owns where the file goes and
+    why; this owns the response that streams it and deletes it once the body is sent.
+    """
+    path = get_registry().stage_export(name)
+    return FileResponse(
+        path, media_type="application/zip",
+        # `safe_name` rejects the quote and the semicolon, so the name cannot end the
+        # filename parameter early (audit SEC-8); it runs on every path that reaches here.
+        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
+        background=BackgroundTask(path.unlink, missing_ok=True),
+    )

@@ -416,7 +416,7 @@ def test_model_info_can_be_set_after_training_and_travels_with_the_bundle(traine
 
 def test_train_stores_the_info_block_given_up_front():
     """Documentation supplied WITH the training request has to survive the route.
-    `_REQ_KEYS` is an explicit allowlist of the fields that reach run_training, so a
+    `_REQ_EXCLUDED` names the only fields that do NOT reach run_training, so a
     new body field is silently dropped until it is listed there — the bundle then
     comes out undocumented and nothing says why."""
     body = {
@@ -433,7 +433,7 @@ def test_train_stores_the_info_block_given_up_front():
 def test_train_applies_the_weights_and_caps_the_request_asked_for():
     """The two levers a caller can set over the text itself — repeating a field in the
     training text, and the vocabulary caps — are validated by the schema and then have
-    to REACH the run. `_REQ_KEYS` did not list them, so all three were accepted and
+    to REACH the run. The allowlist that preceded `_REQ_EXCLUDED` did not list them, so all three were accepted and
     dropped: a title weighting set in the form never reached a single model. The bundle
     records what was actually applied, which is where that shows."""
     body = {
@@ -1052,7 +1052,13 @@ def test_predict_on_unloadable_bundle_returns_422_not_500():
 
 def test_unhandled_error_returns_clean_500(monkeypatch):
     """A route raising an unexpected error returns a sanitized 500 body via the
-    global exception handler — no internal detail leaks."""
+    global exception handler — no internal detail leaks.
+
+    The body also names the request id its traceback was logged under (audit OPS-8): the
+    whole point of sanitizing is that the answer says nothing, which leaves the operator
+    needing something to search the log for. The key SET is still pinned, so the body cannot
+    grow a field that leaks something without this failing.
+    """
     from fastapi.testclient import TestClient as _TC
 
     from app import registry as _reg
@@ -1064,8 +1070,12 @@ def test_unhandled_error_returns_clean_500(monkeypatch):
     safe_client = _TC(app, raise_server_exceptions=False)
     r = safe_client.get("/models/api_model", headers=RO)
     assert r.status_code == 500
-    assert r.json() == {"detail": "Internal server error."}
+    body = r.json()
+    assert set(body) == {"detail", "request_id"}, body
+    assert body["detail"] == "Internal server error."
+    assert body["request_id"] == r.headers["X-Request-ID"]
     assert "boom secret" not in r.text
+    assert "/etc/passwd" not in r.text
 
 
 def test_share_link_is_bearer_capability_no_key_needed():
@@ -1112,6 +1122,32 @@ def test_security_headers_on_every_response():
         assert r.headers.get("referrer-policy") == "no-referrer", path
 
 
+def test_security_headers_survive_a_short_circuited_response():
+    """A rejected oversized body still carries the hardening headers.
+
+    The body-size ceiling answers 413 without ever reaching a route, so whether that response
+    is hardened depends purely on the order the two middlewares are registered in
+    (`app/middleware.py::install`): Starlette runs them in reverse, so the headers must be
+    registered LAST to end up outermost. Swap the two and every rejected upload silently loses
+    its headers, which is the kind of regression nothing else here would catch.
+    """
+    from app.settings import get_settings
+
+    settings = get_settings()
+    oversized = str(settings.max_upload_mb * 1024 * 1024 + 1)
+
+    # The declared length is deliberately a lie: the ceiling reads Content-Length and never
+    # the body, which is the whole point (it must reject before anything is streamed to disk).
+    # The ASGI transport does not reconcile the two, so a 2-byte body with a 200 MB header is
+    # exactly the shape a hostile client would send.
+    r = client.post("/predict", headers={**RO, "content-length": oversized}, content=b"{}")
+
+    assert r.status_code == 413, r.text
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert r.headers.get("content-security-policy", "").startswith("default-src 'self'")
+
+
 def test_metrics_endpoint_prometheus_format():
     """/metrics is public (ServiceMonitors cannot send custom auth headers) and
     exposes only operational gauges in the Prometheus text format."""
@@ -1150,6 +1186,22 @@ def test_dataset_read_endpoints_are_rate_limited(monkeypatch):
         assert second.status_code == 429, path
 
 
+def test_metrics_is_rate_limited(monkeypatch):
+    """/metrics is public, unauthenticated AND was unthrottled (audit SEC-7).
+
+    `app/limiter.py` sets `default_limits=[]`, so a route without an explicit decorator has
+    no limit at all. The exposed gauges are innocuous — that was checked — but the COST per
+    call was never part of that trade: it is an `iterdir` plus a stat per bundle, and anyone
+    on the network can ask for it as fast as they like.
+    """
+    from app.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "rate_limit_default", "1/minute")
+    first = client.get("/metrics")  # public: no key
+    assert first.status_code == 200, first.text
+    assert client.get("/metrics").status_code == 429
+
+
 def test_share_download_is_rate_limited(monkeypatch):
     """GET /share/{id} is public (bearer capability), so it must be rate-limited —
     otherwise share ids could be brute-forced without any throttle."""
@@ -1177,7 +1229,7 @@ def test_train_request_validator_edge_cases():
 
 def test_train_request_cv_folds_validation_and_plumbing():
     """cv_folds: 1 is rejected (meaningless — neither split nor CV); valid values
-    reach the training request dict the /train route builds via _REQ_KEYS."""
+    reach the training request dict the /train route builds."""
     import pytest
     from pydantic import ValidationError
 
@@ -1190,7 +1242,7 @@ def test_train_request_cv_folds_validation_and_plumbing():
         TrainRequest(**{**TRAIN_BODY, "cv_folds": 21})
 
     body = TrainRequest(**{**TRAIN_BODY, "cv_folds": 5})
-    req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
+    req = body.model_dump(exclude=training_routes._REQ_EXCLUDED)
     assert req["cv_folds"] == 5
     assert TrainRequest(**TRAIN_BODY).cv_folds is None  # default: use config
 
@@ -1288,15 +1340,20 @@ def test_a_dataset_upload_that_dies_before_the_rename_leaves_nothing_behind(monk
     """A dataset upload is capped at 200 MB and used to be assembled in memory first —
     the chunks, then the joined copy, so twice the file before a byte reached disk.
 
-    It now spools straight into "<name>.part" and is renamed into place. The rename is
-    what makes a dataset exist, so a failure before it must leave nothing that can be
-    listed, inspected, downloaded or trained on — and no orphan on the volume either.
+    It now spools into a unique hidden ".import-*.part" and is published into place. The
+    publish is what makes a dataset exist, so a failure before it must leave nothing that can
+    be listed, inspected, downloaded or trained on — and no orphan on the volume either.
+
+    Both publish primitives are failed: `os.link` is the one used (it refuses an existing
+    target atomically, audit SEC-12) and `os.replace` is the fallback for a filesystem
+    without hard links, so failing only the latter stopped injecting anything at all.
     """
     import app.routes.datasets as datasets_mod
 
-    def _die(_src, _dst):
+    def _die(*_args):
         raise OSError("no space left on device")
 
+    monkeypatch.setattr(datasets_mod.os, "link", _die)
     monkeypatch.setattr(datasets_mod.os, "replace", _die)
     files = {"file": ("crash.csv", b"title,label\nx,uri:math\n", "text/csv")}
     with pytest.raises(OSError):
@@ -1306,6 +1363,7 @@ def test_a_dataset_upload_that_dies_before_the_rename_leaves_nothing_behind(monk
     assert "crash.csv" not in listed
     assert client.get("/datasets/crash.csv", headers=RO).status_code == 404
     assert not list((_TMP / "data").glob("*.part")), "the partial upload is cleaned up"
+    assert not list((_TMP / "data").glob(".import-*")), "the staging file is cleaned up"
 
 
 def test_an_oversized_dataset_upload_is_refused_without_filling_the_disk(monkeypatch):
@@ -1413,7 +1471,7 @@ def test_classifying_a_csv_reports_an_unknown_model_and_an_oversized_upload(trai
 def test_train_request_synthetic_rows_validation_and_plumbing():
     """What a run does with the rows an LLM wrote: train on them (never validating on
     them), or leave them out. Anything else is a typo the caller wants to hear about,
-    and a valid value has to REACH the run through the _REQ_KEYS allowlist."""
+    and a valid value has to REACH the run."""
     import pytest
     from pydantic import ValidationError
 
@@ -1425,14 +1483,14 @@ def test_train_request_synthetic_rows_validation_and_plumbing():
     assert TrainRequest(**TRAIN_BODY).synthetic_rows == "train"
 
     body = TrainRequest(**{**TRAIN_BODY, "synthetic_rows": "exclude"})
-    req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
+    req = body.model_dump(exclude=training_routes._REQ_EXCLUDED)
     assert req["synthetic_rows"] == "exclude"
 
 
 
 def test_train_request_thin_label_threshold_validation_and_plumbing():
     """The user decides what a label that reached the minimum only through AI rows is
-    cut at; the choice has to reach the run through the _REQ_KEYS allowlist."""
+    cut at; the choice has to reach the run."""
     import pytest
     from pydantic import ValidationError
 
@@ -1444,7 +1502,7 @@ def test_train_request_thin_label_threshold_validation_and_plumbing():
     assert TrainRequest(**TRAIN_BODY).thin_label_threshold == "own"
 
     body = TrainRequest(**{**TRAIN_BODY, "thin_label_threshold": "global"})
-    req = {key: getattr(body, key) for key in training_routes._REQ_KEYS}
+    req = body.model_dump(exclude=training_routes._REQ_EXCLUDED)
     assert req["thin_label_threshold"] == "global"
 
 

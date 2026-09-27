@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import data as data_mod
+from .errors import TrainingInputError
 from .profiles import TrainingConfig
 from .provenance import RowProvenance
 
@@ -29,6 +30,20 @@ def split_rows(
     none -- and the run falls back to every row and says so, rather than refusing the
     synthetic-only training data-prep's Runs push exists for.
     """
+
+    # Checked here, once, for both branches below: with val + test >= 1 there are no rows
+    # left to train on and scikit-learn raises its own ValueError deep inside the split. On
+    # the all-rows path nothing caught it and the operator got "Training failed; see server
+    # logs" — a configuration mistake reported as a server fault. On the marked-row path the
+    # `except ValueError` caught it and quietly took the all-rows fallback, training a run
+    # nobody configured. Both are worse than saying which two numbers are wrong (audit CORR-6).
+    held_back = training_cfg.validation_size + training_cfg.test_size
+    if held_back >= 1.0:
+        raise TrainingInputError(
+            f"validation_size ({training_cfg.validation_size}) + test_size "
+            f"({training_cfg.test_size}) = {held_back:g} leaves no rows to train on. "
+            "Together they must stay below 1.0."
+        )
 
     def every_row() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return data_mod.three_way_split(

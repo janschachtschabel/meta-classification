@@ -94,9 +94,11 @@ No key is ever required for `/health`, `/metrics` and `GET /share/{id}`
 | `APIV3_MAX_UPLOAD_MB` | `200` | Upload cap for datasets/model bundles (streamed; aborts at the cap). |
 | `APIV3_MAX_MODELS_IN_MEMORY` | `2` | LRU cache size: models kept resident in RAM. Raised automatically to fit `WARMUP_MODELS`; `GET /config` reports the resolved `effective_max_models_in_memory`. |
 | `APIV3_WARMUP_MODELS` | *(empty)* | Comma-separated model names to preload + warm on startup so their first `/predict` pays no cold skops-load — the practical setting for a server answering several target fields. **All listed models stay resident** (the cache is sized to fit them). Best-effort: a missing or unloadable name is logged and skipped, never fatal to startup. Wired through `docker-compose.yml` and the Helm chart (`config.limits.warmupModels`). |
-| `APIV3_RATE_LIMIT_ENABLED` | `true` | In-process limiter, keyed on client IP. |
-| `APIV3_RATE_LIMIT_PREDICT` | `300/minute` | `/predict`, `/predict/batch`, `/predict/multi`, `/predict/explain`. |
-| `APIV3_RATE_LIMIT_TRAIN` | `5/minute` | `POST /train`. |
+| `APIV3_WARMUP_METADATA` | `false` | Run the `/metadata` generators once on startup so the first request pays no cold load — measured 330–380 ms for that request, 10 ms after. Off by default because the cost is permanent rather than one-off: `wordfreq` loads its German frequency table on first use (~58 MB resident, measured), and it then stays for the life of the process. Turn it on where `/metadata` is served; leave it off on a box that mostly trains, where `ThreadBudget` would get fewer parallel head fits for a table nothing reads. Best-effort: a failure is logged, never fatal to startup. |
+| `APIV3_MAX_CONCURRENT_CSV` | `4` | How many `POST /predict/csv` streams may run at once; over it the answer is `503` with `Retry-After`. Each stream is a sync generator inside a `StreamingResponse`, which Starlette iterates on one anyio threadpool worker for the *whole* classification — minutes for a 200 MB file — and that pool (40 workers) is shared with every non-async route and every `asyncio.to_thread` call. Unbounded, enough concurrent bulk jobs made every other endpoint wait for a worker. Rejecting beats queueing here: a queued request holds its connection and its uploaded temp file while waiting for work that has not started. |
+| `APIV3_RATE_LIMIT_ENABLED` | `true` | In-process limiter, keyed on client IP. A throttled request answers `429` with `Retry-After` set to the bucket's window in seconds. |
+| `APIV3_RATE_LIMIT_PREDICT` | `300/minute` | `/predict`, `/predict/batch`, `/predict/multi`, `/predict/explain`, `/predict/csv`, `/metadata` — one shared bucket, so size it for the total if a deployment leans on `/metadata`. |
+| `APIV3_RATE_LIMIT_TRAIN` | `5/minute` | `POST /train` **and** `POST /models/{name}/evaluate` — one shared bucket, because both occupy the same single background worker. |
 | `APIV3_RATE_LIMIT_EXPORT` | `30/minute` | Import/export endpoints, CSV-reading dataset endpoints, public `GET /share/{id}`. |
 | `APIV3_RATE_LIMIT_DEFAULT` | `120/minute` | Fallback bucket. |
 
@@ -126,12 +128,33 @@ oversubscription); override only via real OS environment variables
 
 ## `config.yaml` (training profiles)
 
+A profile may set any of the thirteen keys below; every one it omits takes the default in the
+right-hand column, **not** the value the shipped profiles use. Two of those defaults are worth
+knowing before writing a custom profile:
+
+| Key | Default when omitted | What it decides |
+|---|---|---|
+| `description` | `""` | Free text, shown by `GET /train/profiles`. |
+| `C_grid` (or `c_grid`) | `[1.0, 2.0, 4.0]` | The regularisation candidates. A winner at the edge of the grid means the search ran out of candidates. |
+| `cv_folds` | `null` | `null` = holdout split; a number = k-fold. |
+| `tune_threshold` | `true` | Whether decision cuts are searched at all. |
+| `threshold_per_label` | `true` | One cut per label, or one global cut. |
+| `use_char` | `true` | Char n-grams alongside word n-grams. Word-only degrades 3.6× more under character noise. |
+| `max_word_features` | `null` | `null` = the preprocessing default. |
+| `max_char_features` | `null` | `null` = the preprocessing default. |
+| `refit_vectorizer_per_fold` | `true` | Refit TF-IDF inside each fold. `false` leaks vocabulary across folds and flatters the score. |
+| `selection_tol` | `null` | How close two `C` scores count as tied; `null` = exact comparison. |
+| `select_c_on_tuned_thresholds` | `true` | Whether `C` is chosen against tuned cuts or default ones. |
+| `threshold_shrinkage_k` | `null` | Pulls a thin label's cut toward the global one; `null` = no shrinkage. |
+| **`stratified_splits`** | **`false`** | **Keeps each label's share in every fold. The shipped `auto` and `best` set it to `true` — measured at +0.0050 macro F1 with the run-to-run spread nearly halved (sd 0.0031 → 0.0017). `fast` omits it on purpose: it splits holdout, where stratifying also moves rows between train/val/test and so changes the model itself, which was never measured. A k-fold profile that omits it silently takes the worse setting, so set it explicitly.** |
+
 ```yaml
 default_profile: auto
 profiles:
-  fast:       # C_grid, cv_folds, tune_threshold, threshold_per_label, use_char,
-  auto:       # max_word_features, max_char_features per profile
-  best:
+  fast:       # description, C_grid, cv_folds, tune_threshold, threshold_per_label,
+  auto:       # use_char, max_word_features, max_char_features, refit_vectorizer_per_fold,
+  best:       # selection_tol, select_c_on_tuned_thresholds, threshold_shrinkage_k,
+              # stratified_splits
 preprocessing:
   min_text_length_chars: 5
   drop_duplicates: true          # identical texts are deduplicated (prevents CV leakage)

@@ -3,192 +3,108 @@
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 
-from . import __version__
-from .jobs import job_runner
+from . import __version__, correlation, middleware
+from .correlation import RequestIdFilter
+from .docs_content import DESCRIPTION, FAVICON_SVG, SWAGGER_HTML, TAGS_METADATA
+from .lifecycle import lifespan
 from .limiter import limiter
-from .registry import Registry, get_registry
-from .routes import datasets, feedback, models, predict, predict_bulk, share, system, training
-from .settings import Settings, get_settings
+from .log_filters import RedactShareTokens
+from .routes import datasets, feedback, metadata, models, predict, predict_bulk, share, system, training
+from .settings import get_settings
 
+# Boot-time, but deliberately NOT in `lifecycle`: this has to run at import, before anything
+# else logs, and `lifecycle` is imported above — putting it there would run it earlier still.
+# `settings.log_level` is a Literal for the sake of this line, so a typo fails as a named
+# pydantic error instead of a stdlib "Unknown level" crash loop.
 logging.basicConfig(
     level=get_settings().log_level.upper(),
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    # The request id is in every line so a sanitized 500 body can be traced to the
+    # traceback that explains it (audit OPS-8). `-` outside a request.
+    format="%(asctime)s %(name)s %(levelname)s [%(request_id)s] %(message)s",
 )
+# On the root handlers, not on one logger: uvicorn's access and error lines go through
+# their own loggers, and correlating only our own would still leave the two halves apart.
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(RequestIdFilter())
+    # Share ids are bearer capabilities and uvicorn's access log writes the URL, so the
+    # capability was in the log for as long as it was valid (audit SEC-9).
+    _handler.addFilter(RedactShareTokens())
 logger = logging.getLogger("api_v3")
-
-
-def _warmup_models(registry: Registry, names: list[str]) -> None:
-    """Preload configured models into the LRU cache and run one empty-text
-    prediction, so the first real /predict pays no cold skops-load. Best-effort:
-    a missing or unreadable model is logged and skipped, never fatal to startup."""
-    for name in names:
-        try:
-            registry.get(name).baseline_proba()
-        except Exception as exc:  # noqa: BLE001 - warmup is best-effort; never fail startup
-            logger.warning("Warmup skipped model %r: %r", name, exc)
-        else:
-            logger.info("Warmed up model %r", name)
-
-
-def sweep_upload_staging(data_dir: Path) -> int:
-    """Delete upload staging orphaned by a kill; returns how many were removed.
-
-    A dataset upload spools to ``<name>.part`` and a CSV classification to a hidden
-    ``.predict-*.csv.tmp``, both renamed or deleted on every normal and error path. A
-    SIGKILL mid-stream leaves one behind, and neither carries a dataset suffix, so the
-    listings never show it and nothing reclaims the disk. The models dir has been swept
-    for exactly this since the export staging landed (``Registry.sweep_stale_tmp``); this
-    is the same problem in the other directory.
-    """
-    if not data_dir.exists():
-        return 0
-    removed = 0
-    for path in data_dir.iterdir():
-        if not path.is_file():
-            continue
-        if path.name.endswith(".part") or (path.name.startswith(".") and path.name.endswith(".tmp")):
-            path.unlink(missing_ok=True)
-            removed += not path.exists()
-    return removed
-
-
-def _check_auth_configuration(settings: Settings) -> None:
-    """Refuse to start an authenticated deployment that nobody can administer.
-
-    With auth on and no admin key, ``_role_for_key`` can never return "admin": every
-    request 401s and no model can ever be trained, imported or deleted. That reads
-    like a client-side key problem and has cost real debugging time, so fail here
-    with the variable name instead. A readonly-only deployment is legitimate, so
-    only the admin key is required.
-    """
-    if not settings.auth_enabled:
-        return
-    if not settings.api_key_admin:
-        raise RuntimeError(
-            "APIV3_AUTH_ENABLED is true but APIV3_API_KEY_ADMIN is not set — every "
-            "request would be rejected with 401. Set the key, or run with "
-            "APIV3_AUTH_ENABLED=false for local use."
-        )
-    if settings.api_key_admin == settings.api_key_readonly:
-        logger.warning(
-            "APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY are identical — the "
-            "readonly role grants full admin access."
-        )
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Create storage dirs on startup, sweep model staging dirs orphaned by a
-    crashed/killed save (a hidden ``.name.tmp`` whose atomic rename never ran),
-    and preload any configured warmup models."""
-    settings = get_settings()
-    _check_auth_configuration(settings)
-    settings.ensure_dirs()
-    registry = get_registry()
-    swept = registry.sweep_stale_tmp()
-    if swept:
-        logger.warning("Swept %d orphaned model staging dir(s) from a previous crash", swept)
-    spooled = sweep_upload_staging(settings.data_dir)
-    if spooled:
-        logger.warning("Swept %d orphaned upload staging file(s) from a previous crash", spooled)
-    if settings.warmup_models_list:
-        resident = settings.effective_max_models_in_memory()
-        if resident > settings.max_models_in_memory:
-            # Never silently: the operator set a RAM ceiling and the warmup list
-            # raised it, so the extra memory has to be visible in the log.
-            logger.info(
-                "Model cache holds %d models (raised from APIV3_MAX_MODELS_IN_MEMORY=%d "
-                "to fit the %d warmup models)",
-                resident, settings.max_models_in_memory, len(settings.warmup_models_list),
-            )
-        _warmup_models(registry, settings.warmup_models_list)
-    logger.info(
-        "api_v3 ready (models_dir=%s, auth=%s)", settings.models_dir, settings.auth_enabled
-    )
-    yield
-    # Ask a running training to stop at its next checkpoint (between the C fits,
-    # before the deploy fit). The thread is a daemon and dies with the process
-    # anyway; this gives it the chance to end cleanly inside the termination grace
-    # period instead, which is what the Helm chart's 60 s already assumed.
-    job_runner.stop()
-    logger.info("api_v3 shutting down")
-
-
-_TAGS_METADATA = [
-    {"name": "System", "description": "Health check and (safe) configuration."},
-    {"name": "Training", "description": "Train models asynchronously and monitor progress."},
-    {"name": "Prediction", "description": "Classify texts with a trained model."},
-    {"name": "Models", "description": "List, inspect, evaluate, delete, export/import and share models."},
-    {"name": "Datasets", "description": "Manage, analyze and validate CSV datasets."},
-    {"name": "Feedback", "description": "Corrections to predictions, and the CSV they train from."},
-]
-
-_DESCRIPTION = (
-    "**MetaClassify** — torch-free, CPU-only text-classification API. Train on "
-    "your metadata, serve multiple models via REST.\n\n"
-    "**Authentication:** `X-API-Key` header. Role *readonly* for classification "
-    "and status, *admin* for training and management actions. `/health` is public.\n\n"
-    "**Typical flow:** provide a dataset → `POST /train` → `GET /train/status` "
-    "(phase, progress, estimated time remaining) → `POST /predict`. Multiple models "
-    "coexist; select per request via `model_name`.\n\n"
-    "**AI-written rows:** a dataset prepared in data-prep marks the rows an LLM wrote or "
-    "touched (`generated_for`, `example_for`, `enriched_fields`). Training learns from "
-    "them but validates on real rows only; when too few real rows force an exception, "
-    "the model says so (`synthetic_data` in `GET /models/{name}`)."
-)
-
-
-# Self-hosted Swagger UI page: vendored assets + an external init script (no inline
-# JS), so it renders same-origin under CSP without any CDN. Assets live in
-# static/swagger and are pinned (see static/swagger/README.md).
-_SWAGGER_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MetaClassify — API docs</title>
-  <link rel="stylesheet" href="/swagger-static/swagger-ui.css">
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="/swagger-static/swagger-ui-bundle.js"></script>
-  <script src="/swagger-static/swagger-init.js"></script>
-</body>
-</html>"""
-
-
-# Tab icon for /ui and /docs, inline so the app stays free of binary assets. Served
-# as SVG under the .ico name browsers request unprompted (they honour the content
-# type, not the extension) — otherwise every visit logs a 404.
-_FAVICON_SVG = (
-    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-    b'<rect width="32" height="32" rx="7" fill="#0f5cad"/>'
-    b'<path d="M8 11h16M8 16h11M8 21h7" stroke="#fff" stroke-width="3" '
-    b'stroke-linecap="round"/></svg>'
-)
 
 
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Log the traceback server-side and return a sanitized 500 body so internal
-    details (exception text, paths) never leak to clients."""
+    details (exception text, paths) never leak to clients.
+
+    The body carries the request id the traceback was logged under: sanitizing is right, and
+    without it the operator has a report and no way to find the matching line (audit OPS-8).
+    """
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error."})
+    request_id = correlation.of_request(request)
+    # The header is set here rather than by the middleware because this response never
+    # passes through it: ServerErrorMiddleware is outside the whole stack.
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error.", "request_id": request_id},
+        headers={"X-Request-ID": request_id},
+    )
 
 
 async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """Emit the same ``{"detail": ...}`` envelope as every other error (slowapi's
-    default handler uses a divergent ``{"error": ...}`` key)."""
-    return JSONResponse(status_code=429, content={"detail": f"Rate limit exceeded: {exc.detail}"})
+    default handler uses a divergent ``{"error": ...}`` key).
+
+    With ``Retry-After``, which slowapi omits unless ``headers_enabled`` is set: without it
+    every client has to guess, and the usual guess is an immediate retry (audit API-6). The
+    window is parsed off the limit slowapi already resolved, so the number is the real one
+    rather than a constant that drifts from the configuration.
+    """
+    # slowapi's RateLimitExceeded carries the Limit it tripped, whose ``.limit`` is the
+    # ``limits`` RateLimitItem; ``get_expiry()`` is that library's window in seconds
+    # (verified: 30/minute -> 60, 5/second -> 1). The fallback covers slowapi changing
+    # shape rather than asserting a private structure holds forever.
+    item = getattr(getattr(exc, "limit", None), "limit", None)
+    expiry = getattr(item, "get_expiry", None)
+    seconds = int(expiry()) if callable(expiry) else 60
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"Rate limit exceeded: {exc.detail}"},
+        headers={"Retry-After": str(seconds)},
+    )
+
+
+async def _validation_error_handler(
+    request: Request, exc: RequestValidationError,
+) -> JSONResponse:
+    """Report a 422 with ``detail`` as a string, like every other error in this API.
+
+    FastAPI's default handler makes ``detail`` a list of objects on this status alone, so
+    client code written against any other 4xx — ``body["detail"].startswith(...)`` — raises
+    on exactly the status a client hits most while integrating (audit API-7). The per-field
+    information is what a form needs, so it is kept under ``errors`` rather than dropped.
+    """
+    errors = exc.errors()
+    where = ".".join(str(part) for part in errors[0].get("loc", ())) if errors else "request"
+    first = errors[0].get("msg", "invalid") if errors else "invalid"
+    detail = f"Validation error at {where}: {first}"
+    if len(errors) > 1:
+        detail += f" (and {len(errors) - 1} more)"
+    return JSONResponse(
+        status_code=422,
+        # jsonable_encoder: an error's `input`/`ctx` can hold whatever the caller sent,
+        # including values json.dumps refuses (bytes, a ValueError from a validator).
+        content={"detail": detail, "errors": jsonable_encoder(errors)},
+    )
 
 
 def create_app() -> FastAPI:
@@ -200,72 +116,18 @@ def create_app() -> FastAPI:
     # CSP. ReDoc (also CDN-backed, redundant with Swagger) stays off.
     app = FastAPI(
         title="MetaClassify",
-        description=_DESCRIPTION,
+        description=DESCRIPTION,
         version=__version__,
         lifespan=lifespan,
-        openapi_tags=_TAGS_METADATA,
+        openapi_tags=TAGS_METADATA,
         docs_url=None,
         redoc_url=None,
     )
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, _unhandled_exception_handler)
-
-    @app.middleware("http")
-    async def refuse_oversized_bodies(request: Request, call_next):
-        """Refuse a body larger than the upload cap on its DECLARED size, before it
-        is read.
-
-        The per-route caps run too late to bound what reaches disk: FastAPI resolves
-        ``UploadFile`` during dependency injection, so Starlette has already streamed the
-        whole part into a spooled temp file by the time a route body runs — and it
-        enforces ``max_part_size`` only for non-file parts. Under the chart's read-only
-        root filesystem that spill lands in an emptyDir on node ephemeral storage, and
-        ``POST /predict/csv`` needs only a readonly key.
-
-        Content-Length is client-supplied and a chunked body carries none, so this is a
-        cheap ceiling rather than the whole answer — the streaming caps in ``security``
-        stay where they are and remain the real enforcement.
-        """
-        declared = request.headers.get("content-length")
-        if declared and declared.isdigit():
-            limit = settings.max_upload_mb * 1024 * 1024
-            if int(declared) > limit:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": f"Request body exceeds {settings.max_upload_mb} MB limit."},
-                )
-        return await call_next(request)
-
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):
-        """Baseline hardening headers on every response. No HSTS (TLS is
-        terminated at the reverse proxy, which should set it)."""
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        # Everything is same-origin now (the admin UI and the self-hosted Swagger
-        # page both load only vendored assets, no inline JS), so CSP applies
-        # everywhere. Swagger UI injects its own styles and inline SVG/data: icons
-        # at runtime, so /docs alone needs style-src 'unsafe-inline' + img-src data:;
-        # every other route keeps the strict same-origin policy.
-        if request.url.path.startswith("/docs"):
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; base-uri 'self'; form-action 'self'; "
-                "frame-ancestors 'none'; object-src 'none'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-            )
-        else:
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; base-uri 'self'; form-action 'self'; "
-                "frame-ancestors 'none'; object-src 'none'"
-            )
-        if request.url.path.startswith("/ui"):
-            # Always revalidate UI assets (304 when unchanged): browsers otherwise
-            # keep executing a stale app.js from the heuristic cache after updates.
-            response.headers["Cache-Control"] = "no-cache"
-        return response
+    middleware.install(app, settings)
 
     if settings.cors_origins_list:
         origins = settings.cors_origins_list
@@ -288,11 +150,11 @@ def create_app() -> FastAPI:
 
     @app.get("/docs", include_in_schema=False)
     async def swagger_ui() -> HTMLResponse:
-        return HTMLResponse(_SWAGGER_HTML)
+        return HTMLResponse(SWAGGER_HTML)
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:
-        return Response(_FAVICON_SVG, media_type="image/svg+xml",
+        return Response(FAVICON_SVG, media_type="image/svg+xml",
                         headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/", include_in_schema=False)
@@ -305,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(training.router)
     app.include_router(predict.router)
     app.include_router(predict_bulk.router)
+    app.include_router(metadata.router)
     app.include_router(models.router)
     app.include_router(share.router)
     app.include_router(datasets.router)

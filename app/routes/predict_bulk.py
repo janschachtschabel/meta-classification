@@ -22,12 +22,13 @@ from starlette.background import BackgroundTask
 
 from .. import predict_csv as predict_csv_mod
 from ..bundle_meta import as_mapping, as_names
+from ..concurrency import csv_slots
 from ..errors import TrainingInputError
 from ..limiter import limiter, predict_limit
 from ..registry import get_registry
 from ..security import require_role, spool_upload_capped
 from ..settings import Settings, get_settings
-from .predict import load_model
+from ._bundles import load_model
 
 router = APIRouter(tags=["Prediction"])
 
@@ -137,11 +138,30 @@ async def predict_csv(
         path.unlink(missing_ok=True)
         raise
 
+    # Claimed AFTER the upload and the column check, so a request that was going to be a
+    # 400 does not occupy a slot, and released when the generator ends — normally, on an
+    # error, or because the client disconnected (Starlette closes the generator, which runs
+    # its `finally`).
+    slots = csv_slots()
+    if not slots.try_acquire():
+        path.unlink(missing_ok=True)
+        raise HTTPException(
+            503,
+            f"Too many bulk classifications running ({slots.capacity}). Retry shortly.",
+            headers={"Retry-After": "30"},
+        )
+
+    def released_stream():
+        try:
+            yield from predict_csv_mod.classify_csv(
+                path, model, text_columns=columns, weights=weights,
+                separator=separator, threshold=threshold, top_k=top_k,
+            )
+        finally:
+            slots.release()
+
     return StreamingResponse(
-        predict_csv_mod.classify_csv(
-            path, model, text_columns=columns, weights=weights,
-            separator=separator, threshold=threshold, top_k=top_k,
-        ),
+        released_stream(),
         media_type="text/csv",
         headers={"Content-Disposition":
                  f'attachment; filename="{_download_name(file.filename, model_name)}"'},

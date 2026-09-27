@@ -14,13 +14,11 @@ on rare labels that buys recall with false positives. Macro dilutes those 1/N, m
 pools them - which is why micro collapses while macro only sags.
 """
 import json
-import os
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-import psutil
 
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
@@ -31,13 +29,16 @@ from sklearn.metrics import f1_score, precision_score, recall_score  # noqa: E40
 from app.classifier import make_head  # noqa: E402
 from app.data import prepare_targets, three_way_split  # noqa: E402
 from app.dataset_load import load_dataset  # noqa: E402
+from app.memory import rss_bytes  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 
 SEED = 42
 N_JOBS = 6
 C_FIXED = 4.0
 LABEL_COUNTS = [48, 300]
-PROC = psutil.Process(os.getpid())
+# RSS via app.memory rather than psutil: psutil is a dependency this project
+# does not declare or install (audit DEP-4), and `rss_bytes` is the same reading
+# the training memory budget itself acts on.
 
 
 def log(msg: str) -> None:
@@ -45,7 +46,7 @@ def log(msg: str) -> None:
 
 
 def rss_mb() -> float:
-    return PROC.memory_info().rss / 1024**2
+    return rss_bytes() / 1024**2
 
 
 log("loading data_30k_ai.csv with ccm:curriculum as the label column ...")

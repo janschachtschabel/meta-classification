@@ -10,6 +10,11 @@ or, for the routes that raise them directly, in their own response.
 from __future__ import annotations
 
 
+class UnsafeModelError(Exception):
+    """Raised when a model file contains untrusted types, an unsafe layout, or is
+    unreadable/corrupt (any bundle we cannot safely load)."""
+
+
 class UserFacingError(Exception):
     """A failure whose message was written for the operator: safe to show as it is.
 

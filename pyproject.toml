@@ -8,6 +8,10 @@ license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
+    # Imported directly (routes/models.py, routes/predict_bulk.py: BackgroundTask) —
+    # declared so the version is pinned/tested instead of riding along transitively
+    # via fastapi, same reason as joblib below.
+    "starlette>=0.46",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
@@ -22,6 +26,14 @@ dependencies = [
     "pandas>=2.1",
     "skops>=0.10",
     "pyyaml>=6.0",
+    # Descriptive metadata (POST /metadata). wordfreq supplies the rarity term of the
+    # keyword score -- the difference between the best keyword method and the best one
+    # without it; pysbd splits German sentences (abbreviations, ordinals); snowballstemmer
+    # merges the surface forms of one keyword. Weighed against the alternatives in
+    # docs/plans/2026-09-26-descriptive-metadata.md.
+    "wordfreq>=3.1",
+    "pysbd>=0.3.4",
+    "snowballstemmer>=3.0",
 ]
 
 [project.optional-dependencies]

@@ -467,6 +467,8 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
   - `baseline_diff` (`include_baseline_diff=true`) — confidence minus the model's empty-text prediction. A high confidence with a diff near zero means the label fires for almost anything, not for this text.
   - `label_f1` (`include_label_f1=true`) — this label's F1 from the training evaluation. Confidence says how sure the model is *here*, `label_f1` how much that is worth: `Politik 0.95` on a label scoring 0.68 deserves a human look, `Mathematik 0.95` on a label scoring 0.95 does not. Left out for labels the bundle has no score for — among them labels no real row could validate when AI-marked rows trained the model.
 
+- **Descriptive metadata:** `POST /metadata` proposes a **title**, a **description** and **keywords** for each text (up to 100 per call), so a classified item can be stored as a complete record rather than as labels alone. **No model is involved** — the proposals come out of the text itself, so they hold whichever model classified it, and a text from a domain nothing was trained on is answered just as well. All three are **extractive: every word occurs in the input**, so nothing is invented; they are proposals for an editor to check. The budgets (`title_max`, `desc_max`, `n_keywords`) come with the request. German — the stopwords, noun-phrase rules and word frequencies are German. In the admin UI the Query tab has a checkbox for it. See [Descriptive metadata](#descriptive-metadata).
+
 ### Classifying a whole CSV
 
 `POST /predict/csv` takes an uploaded CSV and streams a CSV back — the daily editorial
@@ -496,6 +498,65 @@ chunked`, no `content-length`). The upload obeys `max_upload_mb`; the header is 
 before a byte is streamed, because once a streaming response starts the status line is
 already 200. A malformed row deep in the file therefore truncates the download — the row
 numbers say where it stopped.
+
+### Descriptive metadata
+
+`POST /metadata` proposes a **title**, a **description** and **keywords** for each text,
+so an item can be handed on as a complete metadata record rather than as labels alone.
+**No model is involved**: the proposals come out of the text itself.
+
+```bash
+curl -X POST http://localhost:8000/metadata -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["Bruchrechnung\nBrueche begegnen uns im Alltag haeufig ..."]}'
+```
+
+```json
+{"results": [{"text": "Bruchrechnung\nBrueche begegnen uns ...",
+              "title": "Bruchrechnung",
+              "description": "Brueche begegnen uns im Alltag haeufig: beim Teilen einer Pizza ...",
+              "keywords": ["Brueche", "Zaehler", "Nenner", "Hauptnenner"]}]}
+```
+
+| Field | How it is derived |
+|---|---|
+| `title` | A real heading if the text opens with one; otherwise the template `Keyword1: Keyword2 und Keyword3` from its three strongest keywords — running text has no heading, and heading extraction alone drops to the level of the first sentence on it. |
+| `description` | The first usable sentences up to `desc_max`, whole sentences only. Headings, list items, task instructions ("Beschreibe …") and page chrome are skipped, so it starts at the first real sentence rather than at the top of the file. |
+| `keywords` | Noun phrases weighted by how often they occur in this text against how rare they are in German (`wordfreq`), best first. |
+
+- **Proposals, not finished metadata.** All three are **extractive — every word occurs in
+  the input** — so nothing is invented, and an editor checks them. That is the point: the
+  comparison these methods come from found that small generative models were no better at
+  the job and did invent facts.
+- **Budgets** come with the request: `title_max` (default 90), `desc_max` (500),
+  `n_keywords` (8). Up to 100 texts per call; each is answered independently.
+- **Empty fields are an answer.** A text that yields nothing — blank, or only boilerplate —
+  comes back with empty strings and an empty list rather than an error.
+- **German.** The stopwords, the noun-phrase rules and the word frequencies are German;
+  other languages return something, but nothing about it was measured.
+- **Markup is removed, line breaks are not.** HTML and Markdown go, along with the bodies of
+  `script`, `style`, `nav` and `footer` — code and page chrome, not prose. (Without the last
+  two, a breadcrumb `<nav>` becomes the document's first line and the title heuristic proposes
+  it over the `<h1>` below.) A block-level tag counts as a line break, so a scraped page can be
+  sent as it is. Keep the source's line breaks though — the generators find a heading and a
+  paragraph start in them, and a text flattened to one line gives them nothing to work with.
+  The patterns are shared with `/predict`'s cleaner (`app/markup.py`); each pipeline composes
+  them for its own end, and `/predict`'s composition is unchanged.
+- **Cost:** 12–22 ms per text, so a full batch of 100 is about two seconds. It runs in a
+  worker thread, like `/predict`. The **first** request additionally pays ~350 ms while
+  `wordfreq` loads its German frequency table; `APIV3_WARMUP_METADATA=true` moves that to
+  startup, at the price of ~58 MB resident for the life of the process (both measured).
+- In the **admin UI** the Query tab has a checkbox, *Beschreibende Metadaten erzeugen*. In
+  single-text mode the proposals appear as their own card; in many-texts mode the title and
+  keywords become table columns and all three fields are added to the CSV download.
+
+**Where the methods come from.** They are the default combination of an evaluation of 52
+methods over two test sets (`static-metadata-generators`); only that default is
+implemented — there is nothing to choose between. `tests/test_metadata_parity.py` holds
+this port to the pipeline it came from, against a fixture generated before the port was
+written. The one deliberate difference, and the dependencies the generators need, are
+recorded in
+[`docs/plans/2026-09-26-descriptive-metadata.md`](docs/plans/2026-09-26-descriptive-metadata.md).
 
 - **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
 - **Share links:** `GET /share/{id}` (public bearer download), `GET /share` and `DELETE /share/{id}` (admin: review what is outstanding, withdraw it early)
@@ -669,8 +730,9 @@ add complementary signal.*
 
 An exported model is a ZIP with `config.json` + `head.skops` + `vectorizer.skops` +
 `vocabulary.json` (pure sklearn objects) and loads **directly with scikit-learn + skops** —
-without this app. Two further members are generated per export and describe *that
-archive*: a **`README.md`** model card (what it classifies, the author's own statements,
+without this app. `metrics.json` travels with them when the bundle has one: it is the training
+record, written by every run since the file existed and absent only from bundles older than it.
+Two further members are generated per export and describe *that archive*: a **`README.md`** model card (what it classifies, the author's own statements,
 how it was trained, how well it scores, and its ten weakest labels) and a
 **`manifest.json`** listing a SHA-256 for every other member. Import verifies the
 manifest and refuses an archive that arrived altered or incomplete — an archive without
@@ -763,14 +825,14 @@ above is the right form for everything at once.
 ```bash
 pip install -r requirements.txt -c requirements.lock
 pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
-python -m pytest tests -q                          # 331 tests
+python -m pytest tests -q                          # the whole suite
 python -m ruff check app tests scripts             # lint
 python -m mypy app --config-file pyproject.toml    # types
 ```
 
 ## Security & operations
 
-- Models are pickle-free (skops); import rejects any file with unknown types, unexpected member names (allowlist of the four bundle files), and archives that inflate both past 64 MB and far beyond their upload size (zip-bomb guard). Bundles are written atomically (staged in a hidden tmp dir, then renamed), so a crash can never leave a half-readable model.
+- Models are pickle-free (skops); import rejects any file with unknown types and any unexpected member name — an allowlist of the seven members an export may contain (the four required bundle files, `metrics.json`, and the two generated ones). The zip-bomb guard refuses an archive that inflates both past 64 MB and far beyond its upload size, and in no case past an absolute 1 GiB ceiling: the ratio alone scales with the upload, so at a 200 MB cap it would have waved 4 GiB of declared expansion straight into memory. Bundles are written atomically (staged in a hidden tmp dir, then renamed), so a crash can never leave a half-readable model.
 - Single-worker design (training status, model cache and rate limiter are process-local). Plan a shared store before running multiple workers.
 - Rate limiting keys on the client IP and covers every expensive or public route: `/predict*`, `/train`, all import/export endpoints, the CSV-reading `GET /datasets`, `GET /datasets/{name}`, `/datasets/analyze` + `/datasets/{name}/validate`, and the key-less `GET /share/{id}` (throttles share-id brute-forcing). Cheap status routes and `/health` stay unthrottled by design (probes, UI polling). Behind a reverse proxy all clients share the proxy's IP, so limits act globally until uvicorn is told which peer may speak for a client. The image already runs with `--proxy-headers`; supply the trusted source with `FORWARDED_ALLOW_IPS` (Helm: `config.limits.forwardedAllowIps`, e.g. the ingress controller's pod CIDR). Never `*` — any client could then spoof `X-Forwarded-For` and bypass the limiter entirely.
 - Every response carries baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`). No HSTS in-app — set it at the TLS-terminating reverse proxy.

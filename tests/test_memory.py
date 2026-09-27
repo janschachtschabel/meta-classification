@@ -85,12 +85,20 @@ def test_peak_sampler_keeps_a_peak_that_is_already_gone():
 def test_a_peak_counts_the_processes_that_share_the_budget(monkeypatch):
     """In process mode the status shows the API plus the training process and the budget
     counts both; a peak of the training process alone read LOWER than the live figure
-    beside it, and understated what the container held."""
+    beside it, and understated what the container held.
+
+    No sleep, and the exact equality is safe: `peak_bytes` is a property that records a
+    reading when it is accessed, and `__init__` takes one too, so the arithmetic under test
+    never waits on the sampler thread. Proven by construction — with `interval=1000`, where no
+    sample can possibly be scheduled inside the context, the answer is still 23 MiB. The sleep
+    that used to be here bought nothing and made the test read as timing-dependent, which an
+    audit duly flagged it as (T-4).
+    """
     monkeypatch.setattr(memory, "rss_bytes",
                         lambda pid=None: {None: 20 * MiB, 4242: 3 * MiB}[pid])
     monkeypatch.setattr(memory, "_budget_shared_with", [4242])
-    with PeakSampler(interval=0.01) as sampler:
-        time.sleep(0.05)
+    with PeakSampler(interval=1000) as sampler:
+        pass
     assert sampler.peak_bytes == 23 * MiB
 
 

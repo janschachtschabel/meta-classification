@@ -18,13 +18,11 @@ The extrapolation to 600k uses the fitted exponent from log-log regression, so a
 super-linear term would show up rather than being assumed away.
 """
 import json
-import os
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-import psutil
 
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
@@ -34,6 +32,7 @@ from joblib import parallel_backend  # noqa: E402
 from app.classifier import make_head  # noqa: E402
 from app.data import prepare_targets  # noqa: E402
 from app.dataset_load import load_dataset  # noqa: E402
+from app.memory import rss_bytes  # noqa: E402
 from app.vectorizers import TfidfBackend  # noqa: E402
 
 SEED = 42
@@ -46,7 +45,9 @@ SHAPES = {
     "large (word 200k)": (False, 200_000, 0),
     "fast (word 50k)": (False, 50_000, 0),
 }
-PROC = psutil.Process(os.getpid())
+# RSS via app.memory rather than psutil: psutil is a dependency this project
+# does not declare or install (audit DEP-4), and `rss_bytes` is the same reading
+# the training memory budget itself acts on.
 
 
 def log(msg: str) -> None:
@@ -54,7 +55,7 @@ def log(msg: str) -> None:
 
 
 def rss_mb() -> float:
-    return PROC.memory_info().rss / 1024**2
+    return rss_bytes() / 1024**2
 
 
 def sparse_mb(m) -> float:

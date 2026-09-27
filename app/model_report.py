@@ -22,7 +22,9 @@ import json
 from pathlib import Path
 
 from .bundle_meta import as_count, as_mapping, as_names, per_label_f1
+from .errors import UnsafeModelError
 from .label_names import label_vocabulary
+from .metrics import is_single_label
 
 
 def read_documents(directory: Path) -> tuple[dict, dict]:
@@ -30,10 +32,26 @@ def read_documents(directory: Path) -> tuple[dict, dict]:
 
     Metrics are optional: bundles trained before a field existed — or before the file
     did — must still be describable, so an absent one reads as an empty document.
+
+    A parse failure becomes `UnsafeModelError`, the same mapping `model_io._read_bundle` makes
+    for the identical documents, so a route answers 422 rather than a sanitized 500. That
+    matters most here: these are the read-only reports an operator opens *because* a bundle
+    looks wrong, and `Registry.exists` tests for `config.json` alone, so a write interrupted
+    mid-file is listed and looks present. `FileNotFoundError` still propagates — routes map it
+    to 404.
     """
-    config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
-    metrics_path = directory / "metrics.json"
-    metadata = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
+    try:
+        config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        metrics_path = directory / "metrics.json"
+        metadata = (
+            json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
+        )
+    except ValueError as exc:
+        # `directory.name` is the model name, already through `safe_name`; the exception text
+        # is a parser position, not a path, so neither leaks the filesystem layout.
+        raise UnsafeModelError(
+            f"Model '{directory.name}' has an unreadable bundle document: {exc}"
+        ) from exc
     return config, metadata
 
 
@@ -62,7 +80,7 @@ def label_diagnostics(config: dict, metadata: dict) -> list[dict]:
     support = as_mapping(metadata.get("per_label_support"))
     thresholds = as_mapping(config.get("per_label_thresholds"))
     names = as_mapping(config.get("uri_to_label"))
-    single_label = config.get("task_type") in ("binary", "multiclass")
+    single_label = is_single_label(str(config.get("task_type") or ""))
 
     entries = [
         {

@@ -120,6 +120,15 @@ class Settings(BaseSettings):
     # are loaded in order but only the last that many stay resident. ---
     warmup_models: str = ""
 
+    # --- Warmup: run the descriptive-metadata generators once on startup, so the first
+    # /metadata request pays no cold load. Off by default because the cost is permanent,
+    # not one-off: `wordfreq` loads its German frequency table on first use — measured at
+    # 245-286 ms and ~58 MB of RSS — and that table then stays resident. A deployment serving
+    # /metadata pays the memory on its first request anyway and should turn this on; one
+    # that only trains or classifies would be giving a training fewer parallel head fits
+    # (see ThreadBudget) for a table it never reads. ---
+    warmup_metadata: bool = False
+
     # --- Admin UI (static single-page app served at /ui; the page itself is
     # public like /docs — every data request from it carries the X-API-Key) ---
     ui_enabled: bool = True
@@ -185,6 +194,14 @@ class Settings(BaseSettings):
     ] = "INFO"
 
     # --- Rate limiting ---
+    # How many /predict/csv streams may run at once. Each holds one anyio threadpool
+    # worker for the whole classification (a sync generator inside a StreamingResponse), and
+    # that pool — 40 workers by default — is shared with every `def` route and every
+    # asyncio.to_thread call. 4 leaves the rest of the API responsive while still letting a
+    # small editorial team run bulk jobs side by side; over it, the answer is 503 with
+    # Retry-After rather than a queued connection holding an uploaded temp file (audit PERF-2).
+    max_concurrent_csv: int = 4
+
     rate_limit_enabled: bool = True
     rate_limit_predict: str = "300/minute"
     rate_limit_train: str = "5/minute"

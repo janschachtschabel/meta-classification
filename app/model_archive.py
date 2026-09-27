@@ -20,8 +20,9 @@ import io
 import json
 import zipfile
 import zlib
+from collections.abc import Iterator
 from pathlib import Path
-from typing import BinaryIO
+from typing import IO, BinaryIO
 
 from . import model_card
 from .bundle_meta import as_mapping
@@ -32,8 +33,13 @@ from .model_io import (
     UnsafeModelError,
     build_manifest,
     digest_file,
+    verify_digests,
     verify_manifest,
 )
+
+# One block per read while streaming a member to disk. 1 MiB is large enough that the syscall
+# count is irrelevant next to the inflate, and small enough to be invisible in the peak.
+_STREAM_BLOCK = 1024 * 1024
 
 # Every api_v3 bundle contains all four; requiring them lets a truncated/crafted
 # archive be rejected cleanly (400) instead of crashing later in _read_bundle.
@@ -50,8 +56,45 @@ ALLOWED_MEMBERS = REQUIRED_FILES | {"metrics.json", MANIFEST_FILE, CARD_FILE}
 # validation — acceptable residual risk since import is admin-only + rate-limited.
 _MAX_DECOMPRESSION_RATIO = 20
 _DECOMPRESSION_FLOOR_BYTES = 64 * 1024 * 1024
+# The ratio is a multiplier, so on its own it stops bounding anything: at the default 200 MB
+# upload cap it permits 4 GiB of declared expansion, and `unpack` returns every member's bytes,
+# so all of it lands in the SERVING process's RAM on top of the upload buffer — beside the
+# model LRU cache and whatever a training is holding. An absolute ceiling is what makes this a
+# bound. 1 GiB sits well above any bundle this project can produce (the largest described is a
+# 300-label model at 200k features: n_labels x n_features x 4 = ~240 MB of head, plus a ~3 MB
+# vocabulary and the vectorizer) and a quarter of what the ratio alone waved through.
+_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 # What a damaged archive actually raises, measured rather than assumed (see unpack).
 _DAMAGED = (zipfile.BadZipFile, zlib.error, EOFError, ValueError)
+# A STREAMED read raises one more: `ZipFile.open` seeks to the member's local header, so a
+# corrupt central directory surfaces as OSError(EINVAL) from that seek rather than BadZipFile.
+# Only ever applied to the read — an OSError from the destination file is a full disk or a
+# read-only volume, i.e. a server fault, and must not read as "your archive is broken".
+_DAMAGED_STREAM = (*_DAMAGED, OSError)
+
+
+def _refuse_if_overexpanded(total_uncompressed: int, compressed: int) -> None:
+    """Refuse an archive that declares more expansion than either limit allows.
+
+    Two limits, and the tighter one wins. The ratio (with its floor) is what lets a small,
+    genuinely compressible bundle through; the ceiling is what stops the ratio from scaling the
+    allowance with the attacker's own upload. Split out of `unpack` so the policy can be tested
+    as the arithmetic it is — reaching the ceiling through a real archive would need a ~75 MB
+    upload just to clear the ratio first.
+
+    The sizes come from the central directory, which is binding: CPython truncates a member to
+    its declared `file_size`, so a lying header cannot deliver more than it claims.
+    """
+    allowance = min(
+        max(_DECOMPRESSION_FLOOR_BYTES, _MAX_DECOMPRESSION_RATIO * compressed),
+        _MAX_UNCOMPRESSED_BYTES,
+    )
+    if total_uncompressed > allowance:
+        raise UnsafeModelError(
+            f"Archive decompresses to {total_uncompressed} bytes from a "
+            f"{compressed}-byte upload, over the {allowance}-byte allowance; "
+            "refusing (possible zip bomb)."
+        )
 
 
 def _document(path: Path | None) -> dict:
@@ -98,36 +141,54 @@ def pack_into(target: BinaryIO, name: str, sources: dict[str, Path]) -> None:
         archive.writestr(MANIFEST_FILE, json.dumps(manifest, ensure_ascii=False, indent=2))
 
 
+def _open(source: Path | io.BytesIO) -> zipfile.ZipFile:
+    try:
+        return zipfile.ZipFile(source)
+    except zipfile.BadZipFile as exc:
+        raise UnsafeModelError(f"Not a valid zip archive: {exc}") from exc
+
+
+def _validated_names(archive: zipfile.ZipFile, compressed: int) -> list[str]:
+    """The archive's members, or ``UnsafeModelError`` — the checks that run before a byte is
+    extracted.
+
+    Shared by both import paths so the member allowlist (which is what kills path traversal,
+    dotfiles and Windows drive-relative names) and the expansion bound are stated once.
+    """
+    names = archive.namelist()
+    unexpected = set(names) - ALLOWED_MEMBERS
+    if unexpected:
+        raise UnsafeModelError(f"Unexpected archive members: {sorted(unexpected)}")
+    if not REQUIRED_FILES.issubset(set(names)):
+        raise UnsafeModelError(f"Archive missing required files: {sorted(REQUIRED_FILES)}")
+    # The upload cap bounds only the COMPRESSED size; refuse archives that
+    # inflate far beyond it (zip bomb -> memory DoS) before extracting.
+    _refuse_if_overexpanded(sum(info.file_size for info in archive.infolist()), compressed)
+    return names
+
+
+def _manifest_from(payload: bytes) -> object:
+    try:
+        return json.loads(payload)
+    except ValueError as exc:
+        raise UnsafeModelError(f"{MANIFEST_FILE} is not valid JSON: {exc!r}") from exc
+
+
 def unpack(data: bytes) -> dict[str, bytes]:
-    """Validate an uploaded archive and return the files to install.
+    """Validate an in-memory archive and return the files to install.
 
     The transport artifacts (manifest and card) are verified and then dropped: they
     describe one archive and are rebuilt on the next export, so keeping them on disk
     would make that export ship a stale copy beside the fresh one.
 
+    Holds every member at once, which is why the install path uses :func:`unpack_into`
+    instead (audit API-5). Kept for callers that already have the bytes.
+
     :raises UnsafeModelError: for anything we will not install — an unreadable zip,
         an unexpected or missing member, a zip bomb, or a checksum that does not match.
     """
-    try:
-        archive_file = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile as exc:
-        raise UnsafeModelError(f"Not a valid zip archive: {exc}") from exc
-
-    with archive_file as archive:
-        names = archive.namelist()
-        unexpected = set(names) - ALLOWED_MEMBERS
-        if unexpected:
-            raise UnsafeModelError(f"Unexpected archive members: {sorted(unexpected)}")
-        if not REQUIRED_FILES.issubset(set(names)):
-            raise UnsafeModelError(f"Archive missing required files: {sorted(REQUIRED_FILES)}")
-        # The upload cap bounds only the COMPRESSED size; refuse archives that
-        # inflate far beyond it (zip bomb -> memory DoS) before extracting.
-        total_uncompressed = sum(info.file_size for info in archive.infolist())
-        if total_uncompressed > max(_DECOMPRESSION_FLOOR_BYTES, _MAX_DECOMPRESSION_RATIO * len(data)):
-            raise UnsafeModelError(
-                f"Archive decompresses to {total_uncompressed} bytes from a "
-                f"{len(data)}-byte upload; refusing (possible zip bomb)."
-            )
+    with _open(io.BytesIO(data)) as archive:
+        names = _validated_names(archive, len(data))
         try:
             payloads = {member: archive.read(member) for member in names}
         except _DAMAGED as exc:
@@ -141,9 +202,77 @@ def unpack(data: bytes) -> dict[str, bytes]:
     if MANIFEST_FILE in payloads:
         # Absent for bundles exported before the manifest existed: verification
         # applies when a manifest is there, its absence is not an error.
-        try:
-            manifest = json.loads(payloads[MANIFEST_FILE])
-        except ValueError as exc:
-            raise UnsafeModelError(f"{MANIFEST_FILE} is not valid JSON: {exc!r}") from exc
-        verify_manifest(manifest, {m: p for m, p in payloads.items() if m != MANIFEST_FILE})
+        verify_manifest(_manifest_from(payloads[MANIFEST_FILE]),
+                        {m: p for m, p in payloads.items() if m != MANIFEST_FILE})
     return {m: p for m, p in payloads.items() if m not in (MANIFEST_FILE, CARD_FILE)}
+
+
+def _read_blocks(source: IO[bytes]) -> Iterator[bytes]:
+    """The member's bytes in blocks, with a read failure reported as archive damage.
+
+    A generator so the guard covers exactly the read: the caller's ``sink.write`` stays outside
+    it, because a write failure is the server's problem and not the archive's.
+    """
+    while True:
+        try:
+            block = source.read(_STREAM_BLOCK)
+        except _DAMAGED_STREAM as exc:
+            raise UnsafeModelError(f"Archive member could not be read: {exc!r}") from exc
+        if not block:
+            return
+        yield block
+
+
+def unpack_into(archive_path: Path, target: Path) -> None:
+    """Validate an archive on disk and write the installable members into ``target``.
+
+    The memory-frugal half of the pair. ``unpack`` holds the whole archive *and* every member;
+    at the 200 MB upload cap that was ~400 MB of buffer plus the members again, inside the
+    process that serves predictions, for an operation that only ever moves bytes to disk
+    (audit API-5). Here the zip is read from the file, one member at a time, in blocks.
+
+    The checksums are computed while streaming and compared afterwards with the same rules the
+    buffered path uses (``model_io.verify_digests``). A member is therefore written before it
+    is known to be intact, so **every member is removed again if anything fails** — a caller
+    must never be handed a partially verified bundle to publish.
+
+    :raises UnsafeModelError: the same set as :func:`unpack`.
+    """
+    written: list[Path] = []
+    try:
+        with _open(archive_path) as archive:
+            names = _validated_names(archive, archive_path.stat().st_size)
+            digests: dict[str, str] = {}
+            transport: dict[str, bytes] = {}
+            for member in names:
+                if member in (MANIFEST_FILE, CARD_FILE):
+                    # Kilobytes of JSON and markdown, and the manifest is needed whole to
+                    # compare against; the members it describes are the large ones.
+                    try:
+                        transport[member] = archive.read(member)
+                    except _DAMAGED_STREAM as exc:
+                        raise UnsafeModelError(
+                            f"Archive member could not be read: {exc!r}") from exc
+                    continue
+                digest = hashlib.sha256()
+                destination = target / member
+                try:
+                    source = archive.open(member)
+                except _DAMAGED_STREAM as exc:
+                    raise UnsafeModelError(f"Archive member could not be read: {exc!r}") from exc
+                with source, destination.open("wb") as sink:
+                    written.append(destination)
+                    for block in _read_blocks(source):
+                        digest.update(block)
+                        sink.write(block)
+                digests[member] = digest.hexdigest()
+
+        if MANIFEST_FILE in transport:
+            recorded = dict(digests)
+            if CARD_FILE in transport:
+                recorded[CARD_FILE] = hashlib.sha256(transport[CARD_FILE]).hexdigest()
+            verify_digests(_manifest_from(transport[MANIFEST_FILE]), recorded)
+    except BaseException:
+        for path in written:
+            path.unlink(missing_ok=True)
+        raise

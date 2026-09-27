@@ -7,6 +7,7 @@ probability calibration step is needed (unlike SVMs).
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -14,6 +15,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
 
 from .data import clean_text
+from .metrics import is_single_label
 from .vectorizers import TfidfBackend
 
 
@@ -88,11 +90,23 @@ class ClassifierModel:
     # Lazily computed empty-text probabilities (deterministic per model, so
     # cached once); runtime-only, never persisted in the bundle.
     _baseline: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
+    # Guards the line above. This object is shared: the registry's LRU cache hands the same
+    # instance to every request, and `def` routes run in worker threads.
+    _baseline_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False)
 
     def baseline_proba(self) -> np.ndarray:
-        """Per-label probabilities for an empty text — the model's base rates."""
+        """Per-label probabilities for an empty text — the model's base rates.
+
+        Double-checked: the fast path is a plain attribute read, and only the first callers
+        take the lock. Two concurrent first requests both found this unset and both paid the
+        cold pass — benign, because the answer is deterministic, but it is the pass this
+        cache exists to avoid (audit PERF-4).
+        """
         if self._baseline is None:
-            self._baseline = self.predict_proba([""])[0]
+            with self._baseline_lock:
+                if self._baseline is None:
+                    self._baseline = self.predict_proba([""])[0]
         return self._baseline
 
     def predict_proba(self, texts: list[str]) -> np.ndarray:
@@ -110,6 +124,11 @@ class ClassifierModel:
             return override
         return self.per_label_thresholds.get(uri, self.global_threshold)
 
+    @property
+    def _is_single_label(self) -> bool:
+        """Whether exactly one label comes back — the taxonomy's rule, not a second copy."""
+        return is_single_label(self.task_type)
+
     def resolved_top_k(self, top_k: int | None) -> int | None:
         """The ranking size an explicit ``top_k`` resolves to (``0`` = the
         training set's typical label count); ``None`` = threshold mode."""
@@ -117,8 +136,21 @@ class ClassifierModel:
             return None
         if top_k > 0:
             return top_k
-        single = self.task_type in ("binary", "multiclass")
-        return 1 if single else max(1, round(self.avg_labels))
+        return 1 if self._is_single_label else max(1, round(self.avg_labels))
+
+    def applied_top_k(self, top_k: int | None) -> int | None:
+        """The ranking size a caller should be *told* was applied.
+
+        ``resolved_top_k`` answers a different question — what ``predict`` ranks by, where
+        ``None`` means "use the thresholds instead". For reporting, a single-label task with
+        no ``top_k`` still returns exactly one label, because argmax does: so the number
+        applied is 1, not "no cap". Both answers come from the same place, because the
+        route used to derive this one itself.
+        """
+        resolved = self.resolved_top_k(top_k)
+        if resolved is None and self._is_single_label:
+            return 1
+        return resolved
 
     def predict(
         self,
@@ -147,7 +179,7 @@ class ClassifierModel:
         """
         proba = self.predict_proba(texts)
         baseline = self.baseline_proba() if include_baseline_diff else None
-        single = self.task_type in ("binary", "multiclass")
+        single = self._is_single_label
         rank_k = self.resolved_top_k(top_k)
         results: list[list[Prediction]] = []
         for row in range(len(texts)):

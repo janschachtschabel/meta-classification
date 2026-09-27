@@ -13,8 +13,15 @@ way — ``tuning`` and ``deploy`` read it, it reads neither.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 from sklearn.metrics import f1_score
+
+# The cut a model stores when thresholds do not apply to it at all: binary and multiclass
+# decide by argmax, and serving never reads a threshold for them. Named because it appeared
+# as a bare 0.5 in three modules, where it read like a tuned value rather than a placeholder.
+DEFAULT_THRESHOLD = 0.5
 
 # Nineteen fixed cuts, 0.05 apart. Coarse on purpose, which is a measurement and not an
 # oversight: plan item C2 proposed replacing this with every observed score as a
@@ -109,7 +116,7 @@ def tune_threshold_columns(
     if grid.size == 0:
         # No cut to beat it, so the global threshold keeps the value it starts at — which
         # is what the scan below produced for an empty grid before it was a scan.
-        return 0.5, np.full(proba.shape[1], 0.5)
+        return DEFAULT_THRESHOLD, np.full(proba.shape[1], DEFAULT_THRESHOLD)
 
     cut_f1, positives = _cut_scores(y_val, proba, grid)
     # A macro average IS the mean of the per-label F1 over every column, so the global cut
@@ -150,6 +157,36 @@ def tuned_score(
     global_t, columns = tune_threshold_columns(
         y_true, proba, per_label=per_label, shrink_k=shrink_k, keep_global=keep_global)
     return macro_f1(y_true, (proba >= columns).astype(np.int8)), global_t, columns
+
+
+def resolve_cuts(
+    *,
+    applies: bool,
+    pretuned: tuple[float, np.ndarray] | None,
+    classes: list[str],
+    per_label: bool,
+    tune: Callable[[], tuple[float, dict[str, float]]],
+) -> tuple[float, dict[str, float]]:
+    """The global cut and the per-label cuts a finished run will serve with.
+
+    One function because the three-way decision was written twice, once per evaluation mode
+    (`deploy` for the holdout, `tuning` for k-fold) — they agreed, and nothing made them keep
+    agreeing (audit CORR-8). The mechanics around it genuinely differ: the holdout has a head
+    and matrices, k-fold has out-of-fold probabilities. This is only the part that does not.
+
+    * ``applies`` False — binary/multiclass decide by argmax and serving never reads a
+      threshold, so the stored value is the neutral default and there is nothing to tune.
+    * ``pretuned`` — the C search already tuned on this head's own validation probabilities.
+      Re-deriving would score the same rows again to reach the same answer.
+    * otherwise ``tune()`` — deferred as a callable so this function needs neither the
+      probabilities nor the shape they come in.
+    """
+    if not applies:
+        return DEFAULT_THRESHOLD, {}
+    if pretuned is not None:
+        global_threshold, columns = pretuned
+        return global_threshold, (name_threshold_columns(columns, classes) if per_label else {})
+    return tune()
 
 
 def name_threshold_columns(columns: np.ndarray, classes: list[str]) -> dict[str, float]:

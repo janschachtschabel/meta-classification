@@ -9,12 +9,19 @@ the dependency is one-directional (stats -> data), never the reverse.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .data import auto_min_samples, read_csv, split_labels
 from .dataset_load import load_dataset
-from .profiles import CapacityPlan, estimated_minutes
+from .profile_costs import estimated_minutes
+
+if TYPE_CHECKING:
+    # Annotation only: `analyze_dataset` is handed a plan and calls two methods on
+    # it. Importing `capacity` for real would pull `Settings` into a module whose
+    # whole job is reading a file it was given.
+    from .capacity import CapacityPlan
 
 _SHIPPED_PROFILES = ("fast", "auto", "best")
 

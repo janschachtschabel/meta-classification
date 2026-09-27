@@ -25,18 +25,20 @@ from fastapi import (
 from fastapi import (
     Path as PathParam,
 )
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 
+from .. import data as data_mod
 from ..evaluate import run_evaluation
 from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter, train_limit
 from ..registry import UnsafeModelError, get_registry
 from ..responses import TrainStartedResponse
 from ..schemas import EvaluateRequest, ExportRequest, ModelInfo
-from ..security import read_upload_capped, require_role, safe_name
+from ..security import require_role, safe_name, spool_upload_capped
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
+from ._bundles import staged_zip_response
+from ._jobs import start_or_queue
+from ._paging import Limit, Offset, page
 
 router = APIRouter(tags=["Models"])
 
@@ -46,38 +48,17 @@ ModelName = Annotated[str, PathParam(description=(
     "characters (400 otherwise). A name no model has answers 404."))]
 
 
-def staged_zip_response(name: str) -> FileResponse:
-    """Pack the bundle into a staging file and stream that file back.
-
-    The archive is not built in memory: a production bundle is 50-180 MB and the byte
-    path peaked at 2.78x that (measured). Staging goes next to the bundles rather than
-    into the system temp — on a container /tmp is often tmpfs, i.e. RAM, which would
-    give back exactly what this removes — and carries the same hidden ".*.tmp" name the
-    startup sweep already cleans, so a download that dies mid-flight leaks nothing
-    permanently. The response deletes it once the body is sent.
-    """
-    registry = get_registry()
-    registry.dir.mkdir(parents=True, exist_ok=True)
-    handle, staged = tempfile.mkstemp(prefix=".export-", suffix=".zip.tmp", dir=registry.dir)
-    os.close(handle)
-    path = Path(staged)
-    try:
-        with path.open("wb") as stream:
-            registry.export_to(name, stream)
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
-    return FileResponse(
-        path, media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
-        background=BackgroundTask(path.unlink, missing_ok=True),
-    )
-
-
 @router.get("/models", summary="List all models")
-async def list_models(_: str = Depends(require_role("readonly"))) -> list[str]:
-    """Names of all available models (bundles in the model directory). **Auth:** readonly."""
-    return await asyncio.to_thread(get_registry().list)
+async def list_models(
+    limit: Limit = None, offset: Offset = 0,
+    _: str = Depends(require_role("readonly")),
+) -> list[str]:
+    """Names of all available models (bundles in the model directory).
+
+    Omitting `limit` returns every name, as before. `limit`/`offset` page through a large
+    registry; the order is the registry's own and stable between calls. **Auth:** readonly.
+    """
+    return page(await asyncio.to_thread(get_registry().list), limit, offset)
 
 
 @router.get("/models/{model_name}", summary="Model details & metrics")
@@ -112,6 +93,8 @@ async def model_info(model_name: ModelName, _: str = Depends(require_role("reado
         return await asyncio.to_thread(get_registry().info, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+    except UnsafeModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/models/{model_name}/labels", summary="Per-label diagnostics")
@@ -134,6 +117,8 @@ async def model_labels(model_name: ModelName, _: str = Depends(require_role("rea
         return await asyncio.to_thread(get_registry().label_diagnostics, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
+    except UnsafeModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.put("/models/{model_name}/info", summary="Set the model's documentation")
@@ -249,14 +234,27 @@ async def import_model(
     if name in job_runner.queued_names():
         raise HTTPException(409, f"A training for model '{name}' is queued; retry after it finishes, "
                                  "or import under another name.")
-    data = await read_upload_capped(file, settings.max_upload_mb * 1024 * 1024)
+    # Spooled to disk rather than joined in memory: `read_upload_capped` holds the chunks
+    # AND the joined copy, i.e. twice the 200 MB cap, before a byte lands — and the import
+    # only ever moves those bytes onto disk anyway (audit API-5). Beside the bundles, under
+    # the hidden `.*.tmp` name the startup sweep already cleans.
+    registry = get_registry()
+    registry.dir.mkdir(parents=True, exist_ok=True)
+    handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".zip.tmp", dir=registry.dir)
+    os.close(handle)
+    archive_path = Path(staged)
     try:
+        await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, archive_path)
         # Validation loads both skops files — seconds of CPU; off the event loop.
-        info = await asyncio.to_thread(get_registry().import_zip, name, data)
+        info = await asyncio.to_thread(registry.import_archive, name, archive_path)
     except FileExistsError as exc:
         raise HTTPException(409, f"Model '{name}' already exists.") from exc
     except (UnsafeModelError, ValueError) as exc:
         raise HTTPException(400, f"Invalid or unsafe model archive: {exc}") from exc
+    finally:
+        # The install copies what it keeps into the bundle dir, so the staged archive is
+        # never needed again — on success or on any failure.
+        archive_path.unlink(missing_ok=True)
     return {"status": "imported", **info}
 
 
@@ -302,24 +300,15 @@ async def evaluate_model(
     # the server reads whatever it is pointed at. /train guards its dataset name the
     # same way — this route was the one that did not.
     safe_name(body.dataset_name, "dataset name")
+    try:
+        data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.") from exc
     registry = get_registry()
     if not registry.exists(model_name):
         raise HTTPException(404, f"Model '{model_name}' not found.")
-    if not (settings.data_dir / body.dataset_name).exists():
-        raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.")
 
     req = {"model_name": model_name, **body.model_dump()}
-    try:
-        position = job_runner.submit(
-            run_evaluation, req, settings, registry,
-            model_name=model_name, request=req, kind="evaluation",
-        )
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {
-        "status": "started" if position == 0 else "queued",
-        "model_name": model_name,
-        "profile": "evaluation",
-        "status_url": "/train/status",
-        "queue_position": position,
-    }
+    return start_or_queue(run_evaluation, req, settings, registry,
+                          model_name=model_name, request=req, profile="evaluation",
+                          kind="evaluation")

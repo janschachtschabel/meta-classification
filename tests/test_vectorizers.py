@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 from scipy.sparse import csr_matrix, hstack
 from scipy.sparse import random as sparse_random
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app.vectorizers import TfidfBackend, merge_columns
 
@@ -144,7 +143,7 @@ def test_fit_transform_fits_both_vocabularies_in_two_passes_one_after_the_other(
     assert record == [1, 2]  # never two at once; one call per vocabulary
 
 
-def test_fit_never_fits_the_two_vocabularies_at_once(monkeypatch):
-    record = _max_concurrent(monkeypatch, TfidfVectorizer, "fit")
-    TfidfBackend(max_word_features=40, max_char_features=60).fit(TEXTS)
-    assert record[0] == 1
+# There was a second test here asserting the same "never both vocabularies at once" property
+# via `TfidfBackend.fit`. That method is gone (audit CORR-9) — it bypassed the two-pass
+# vocabulary fit — and the test above already pins the property on `fit_transform`, which is
+# the path the pipeline takes.

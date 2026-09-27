@@ -82,14 +82,21 @@ def test_cross_val_evaluate_oof_metric():
     assert metrics["f1_macro"] > 0.9
 
 
-def test_tfidf_backend_fit_then_transform_and_unfitted_guard():
-    """fit()+transform() (the split-free path) matches the fitted vocabulary, and
-    transform() before fit fails loudly instead of returning garbage."""
+def test_tfidf_backend_transform_matches_its_fit_and_guards_the_unfitted_case():
+    """`fit_transform` then `transform` agree on the fitted vocabulary, and `transform`
+    before any fit fails loudly instead of returning garbage.
+
+    Was `fit()` + `transform()`; `fit` is gone (audit CORR-9) because it called
+    scikit-learn's own fit and so bypassed the two-pass vocabulary — the 4-19x memory peak
+    `vocabulary.fit_transform_exact` exists to avoid. `fit_transform` is the path the
+    pipeline uses and the one this now measures; both assertions are unchanged.
+    """
     texts = ["mathematik algebra gleichung", "geschichte rom antike", "biologie zelle erbgut"]
     backend = TfidfBackend(use_char=True, max_word_features=100, min_df=1)
-    backend.fit(texts)
+    fitted = backend.fit_transform(texts)
     x = backend.transform(texts)
     assert x.shape[0] == 3 and x.shape[1] > 0
+    assert x.shape == fitted.shape, "transform disagrees with the matrix the fit produced"
     assert x.dtype == np.float32  # RAM contract: features stay float32
 
     with pytest.raises(RuntimeError, match="before fit"):

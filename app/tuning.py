@@ -24,7 +24,7 @@ from .metrics import argmax_onehot, compute_metrics, is_single_label
 from .stratify import stratified_partition
 from .thresholds import (
     macro_f1,
-    name_threshold_columns,
+    resolve_cuts,
     tune_thresholds,
     tuned_score,
 )
@@ -247,22 +247,22 @@ def cross_val_evaluate(
         # happens only once the next fold's matrices exist, so both folds would stack up.
         del x_tr, x_te
     thresholds_apply = tune_threshold and not is_single_label(task_type)
+    pretuned: tuple[float, np.ndarray] | None = None
     if select_on_tuned_thresholds and thresholds_apply:
-        best_c, global_t, columns = _best_under_own_thresholds(
+        best_c, global_threshold, columns = _best_under_own_thresholds(
             y_rows, oof, c_grid, per_label=per_label, shrink_k=threshold_shrink_k,
             keep_global=keep_global,
         )
-        # The winner's thresholds ARE the ones it was selected on; re-deriving them
-        # would repeat the same search for the same answer.
-        per_label_t = name_threshold_columns(columns, classes) if per_label else {}
+        pretuned = (global_threshold, columns)
     else:
         best_c = max(c_grid, key=lambda c: macro_f1(y_rows, _default_decision(oof[c], task_type)))
-        if thresholds_apply:
-            global_t, per_label_t = tune_thresholds(
-                y_rows, oof[best_c], classes, per_label=per_label, shrink_k=threshold_shrink_k,
-                keep_global=keep_global)
-        else:
-            global_t, per_label_t = 0.5, {}
+
+    global_t, per_label_t = resolve_cuts(
+        applies=thresholds_apply, pretuned=pretuned, classes=classes, per_label=per_label,
+        tune=lambda: tune_thresholds(
+            y_rows, oof[best_c], classes, per_label=per_label, shrink_k=threshold_shrink_k,
+            keep_global=keep_global),
+    )
     metrics = compute_metrics(y_rows, oof[best_c], classes, global_t, per_label_t,
                               task_type=task_type, scored=scored)
     return best_c, global_t, per_label_t, metrics

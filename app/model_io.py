@@ -32,6 +32,7 @@ from skops.io import load as skops_load
 from . import __version__
 from .bundle_meta import per_label_f1
 from .classifier import ClassifierModel
+from .errors import UnsafeModelError
 from .label_names import is_container_label
 from .vectorizers import TfidfBackend
 
@@ -51,11 +52,6 @@ _VOCAB_FILE = "vocabulary.json"
 # installed bundle (a stale copy on disk would be zipped alongside the fresh one).
 MANIFEST_FILE = "manifest.json"
 CARD_FILE = "README.md"
-
-
-class UnsafeModelError(Exception):
-    """Raised when a model file contains untrusted types, an unsafe layout, or is
-    unreadable/corrupt (any bundle we cannot safely load)."""
 
 
 def digest_file(path: Path) -> str:
@@ -97,19 +93,30 @@ def verify_manifest(manifest: object, members: dict[str, bytes]) -> None:
     Covers three failures with one comparison: a truncated download, a member altered
     in transit, and a member the manifest does not mention at all.
     """
+    verify_digests(manifest, {
+        member: hashlib.sha256(payload).hexdigest() for member, payload in members.items()
+    })
+
+
+def verify_digests(manifest: object, digests: dict[str, str]) -> None:
+    """The same check, for a caller that hashed the members as it streamed them to disk.
+
+    Split out so the buffered and streaming import paths compare against the manifest with
+    one set of rules rather than two implementations of the same three failures (audit API-5).
+    """
     if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), dict):
         raise UnsafeModelError(f"{MANIFEST_FILE} is malformed")
     expected: dict = manifest["files"]
-    for member, payload in sorted(members.items()):
-        digest = expected.get(member)
-        if digest is None:
+    for member, digest in sorted(digests.items()):
+        recorded = expected.get(member)
+        if recorded is None:
             raise UnsafeModelError(f"{member} is not listed in {MANIFEST_FILE}")
-        if hashlib.sha256(payload).hexdigest() != digest:
+        if digest != recorded:
             raise UnsafeModelError(
                 f"{member} does not match its checksum in {MANIFEST_FILE} "
                 "(the archive was altered or arrived incomplete)"
             )
-    missing = sorted(set(expected) - set(members))
+    missing = sorted(set(expected) - set(digests))
     if missing:
         raise UnsafeModelError(f"{MANIFEST_FILE} lists files the archive lacks: {missing}")
 

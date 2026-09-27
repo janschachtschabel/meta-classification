@@ -7,6 +7,7 @@ from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from .. import data as data_mod
 from .. import job_history
 from ..jobs import job_runner
 from ..limiter import limiter, train_limit
@@ -18,18 +19,23 @@ from ..security import require_role, safe_name
 from ..settings import Settings, get_settings
 from ..train_worker import run_in_child
 from ..training import run_training
+from ._jobs import start_or_queue
 
 router = APIRouter(tags=["Training"])
 
-# An allowlist, so a new body field reaches the run only when it is listed here — and
-# is silently dropped until then. That is what happened to the three text levers below:
-# accepted, validated, and never applied (tests/test_api.py pins each of them).
-_REQ_KEYS = (
-    "dataset_name", "model_name", "text_columns", "label_column",
-    "csv_separator", "label_separator", "label_filter", "task_type",
-    "min_samples_per_label", "cv_folds", "synthetic_rows", "thin_label_threshold",
-    "text_column_weights", "max_word_features", "max_char_features",
-)
+# A DENYLIST, deliberately. This was an allowlist of 15 field names, which meant a new body
+# field reached the run only once somebody remembered to add it here and was silently dropped
+# until then — accepted by pydantic, validated, and never applied. That is not hypothetical: it
+# happened to three text levers, each of which now carries its own regression test in
+# tests/test_api.py. Inverting it makes the default "a declared field is used", and the two
+# exceptions have to justify themselves rather than the other fifteen having to enrol.
+# `tests/test_train_request_completeness.py` asserts the property.
+_REQ_EXCLUDED = {
+    # A nested model, while the pipeline stores plain JSON — converted just below.
+    "info",
+    # Resolved to a profile object before submission, and recorded from that.
+    "optimize_parameters",
+}
 
 
 @router.get("/train/profiles", summary="List training profiles")
@@ -151,45 +157,37 @@ async def train(
         # str(KeyError) reprs its message (stray quotes) — use the message itself.
         raise HTTPException(400, str(exc.args[0])) from exc
 
-    if not (settings.data_dir / body.dataset_name).exists():
-        raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.")
+    # Via the shared policy, not a bare exists(): the data directory holds non-datasets
+    # (label_names.json), and accepting one here turned a 404 into a job failure later.
+    try:
+        data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.") from exc
     if get_registry().exists(body.model_name):
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
 
-    req = {key: getattr(body, key) for key in _REQ_KEYS}
-    # Not in _REQ_KEYS: it is a nested model, and the pipeline stores plain JSON.
+    req = body.model_dump(exclude=_REQ_EXCLUDED)
     # exclude_none keeps the bundle from claiming fields the caller left unset.
     req["info"] = body.info.model_dump(exclude_none=True) if body.info else None
     # In a child process by default (settings.training_isolation): a hard stop ends the
     # child at once, which a thread cannot offer.
     target = (run_training if settings.training_isolation == "thread"
               else partial(run_in_child, kill_requested=job_runner.hard_stop_requested))
-    try:
-        # The singleton registry is injected so the training save shares its disk
-        # lock with every API-side registry operation — in process mode it is the one
-        # that publishes what the child staged.
-        position = job_runner.submit(
-                           target, req, settings, cfg, profile, get_registry(),
-                           model_name=body.model_name,
-                           # Everything but the documentation block: `info` is what the
-                           # model says about itself, not a parameter of the run.
-                           # The profile is not in _REQ_KEYS (it is resolved separately),
-                           # yet it is the dimension two runs differ on most — recorded
-                           # under the field name a caller would resend, holding the
-                           # profile that was actually used rather than what was asked.
-                           request={**{k: v for k, v in req.items() if k != "info"},
-                                    "optimize_parameters": profile.name})
-    except RuntimeError as exc:
-        # A full queue, or this name already running/queued: both are the caller's to
-        # resolve, and both are conflicts with what the server is already doing.
-        raise HTTPException(409, str(exc)) from exc
-    return {
-        "status": "started" if position == 0 else "queued",
-        "model_name": body.model_name,
-        "profile": profile.name,
-        "status_url": "/train/status",
-        "queue_position": position,
-    }
+    # The singleton registry is injected so the training save shares its disk lock with
+    # every API-side registry operation — in process mode it is the one that publishes
+    # what the child staged.
+    return start_or_queue(
+        target, req, settings, cfg, profile, get_registry(),
+        model_name=body.model_name,
+        # Everything but the documentation block: `info` is what the model says about
+        # itself, not a parameter of the run. The profile is in _REQ_EXCLUDED (it is
+        # resolved separately), yet it is the dimension two runs differ on most —
+        # recorded under the field name a caller would resend, holding the profile that
+        # was actually used rather than what was asked.
+        request={**{k: v for k, v in req.items() if k != "info"},
+                 "optimize_parameters": profile.name},
+        profile=profile.name,
+    )
 
 
 @router.get("/train/status", summary="Current training status")
@@ -252,7 +250,12 @@ async def stop(
 
 @router.get("/train/history", summary="Outcomes of finished training runs")
 async def history(
-    limit: int = Query(50, description="How many runs to return, newest first; clamped to 1-200."),
+    limit: int = Query(
+        50, ge=1, le=200,
+        description="How many runs to return, newest first. Out of range is a 422 — it used "
+                    "to be silently clamped, so a request for 1000 answered with 200 and said "
+                    "nothing about it.",
+    ),
     _: str = Depends(require_role("readonly")),
 ) -> list[dict]:
     """What every finished run left behind, newest first — trainings and evaluations alike.
@@ -273,4 +276,5 @@ async def history(
     """
     # The runner thread holds the same lock across a full read-modify-rewrite of the
     # history file, so waiting for it on the loop means waiting for a training.
-    return await asyncio.to_thread(job_history.recent, limit=max(1, min(limit, 200)))
+    # No clamp: Query validates the range, so this is the number the caller asked for.
+    return await asyncio.to_thread(job_history.recent, limit=limit)

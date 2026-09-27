@@ -2,6 +2,92 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased] — descriptive metadata (2026-09-26)
+
+### Added
+
+- **`POST /metadata` proposes a title, a description and keywords for a text.** Until now
+  the API said what a text is *about*, in a trained model's vocabulary, and a caller who
+  wanted to store a complete record had to write the descriptive fields themselves. This
+  derives them from the text: a real heading as the title where the text has one and the
+  template `K1: K2 und K3` from its strongest keywords where it does not, the first usable
+  sentences as the description, and noun phrases weighted by their rarity in German as the
+  keywords. Up to 100 texts a call, 12-22 ms each, in a worker thread.
+  - **No model is involved** — nothing is read from the volume, and a text from a domain
+    nothing was trained on is answered just as well.
+  - **All three are extractive: every word occurs in the input.** They are proposals for an
+    editor to check, not finished metadata; the comparison they come from found small
+    generative models no better at the job and prone to inventing facts.
+  - Empty fields are an answer, not an error: a text that yields nothing says so.
+  - German-only, and honest about it — the stopwords, noun-phrase rules and word
+    frequencies are German.
+- **HTML and Markdown are removed from the input**, so a scraped page can be sent as it is.
+  The patterns moved to a new stdlib-only leaf, `app/markup.py`, because both text pipelines
+  need them and each has to compose them differently: `data.clean_text` flattens everything to
+  one line of space-separated tokens, which is what a fitted vectorizer saw, while the
+  generators keep the line breaks — a heading is a heading by standing alone on its line.
+  `data.clean_text` itself is unchanged — differential-tested at 0 divergences over 1,546,832
+  inputs (adversarial cases, markup-heavy fuzzing, and 1.1 M real rows) against the pre-change
+  implementation.
+  - A block-level tag counts as a line break. Scraped HTML often has no newline between the
+    heading and the body, and without that distinction the two merge into one line and the
+    heading stops being recognisable as one. Tags are removed in a single pass that picks the
+    replacement per match: removing block tags in a pass of their own deletes the `<` and `>`
+    that stop `<[^<>]+>`, and the following pass then joins a bare `<` before the tag to a bare
+    `>` after it and eats the prose between — `Preis < 5 Euro <br> Menge > 3 Stück` became
+    `Preis 3 Stück`.
+  - **The bodies of `script`, `style`, `nav` and `footer` go too** — code and page chrome
+    rather than prose. Both halves were found by measurement, not foresight: with the tags
+    removed but the body kept, `<h1>Bruchrechnung</h1><script>var tracker = {id: 42}; …`
+    produced the title `Bruchrechnung var tracker = {id: 42}; function send(){ … }`, and a page
+    opening with a breadcrumb `<nav>` produced `Startseite » Mathematik` instead of the `<h1>`
+    right below it. `header` and `aside` are deliberately not in the set: pages put the real
+    `<h1>` inside `<header>`, and an `<aside>` often carries a definition box.
+  - Two refinements apply to the generators only, never to `clean_text`, because changing that
+    would shift the features of every model already trained: emphasis is judged per run (a run
+    longer than three of the *same* marker is a rule or a form blank — `Name: ______ Datum:
+    ______` would otherwise become the kept-but-empty line `Name: Datum:`; a run between two
+    word characters belongs to the word, so `arbeitsblatt_1_loesung.pdf` survives, which the
+    endpoint's "every word occurs in the input" guarantee requires), and script/style removal
+    runs before entities are decoded (so a prose mention of `&lt;script&gt;` is not read as a
+    real unclosed tag that swallows the rest of the sentence).
+  - Markdown heading markers are trimmed with `rstrip` rather than an optional trailing group
+    in the pattern, and quote markers are removed before them. The obvious pattern
+    (`#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$`) has three consumers competing for the same
+    whitespace and backtracks quadratically — 9.2 s for one 25,000-character line, ~150 s at
+    the 100,000 a request may carry, GIL held. Now 5.3 ms at 100,000.
+- **`APIV3_WARMUP_METADATA` (new, default `false`)** runs the generators once on startup.
+  `wordfreq` loads its German frequency table on the first lookup, not at import, so without
+  this the first `/metadata` request pays it: measured 328–381 ms, against 10–11 ms once warm.
+  Off by default because that cost is permanent, not one-off — the table is ~58 MB resident for
+  the life of the process, and `ThreadBudget` sizes how many head fits a training may run in
+  parallel against the memory left, so a table nothing reads would quietly cost a training.
+  Best-effort like the model warmup: a failure is logged, never fatal to startup.
+- **The admin UI's Query tab can ask for them**, off by default. Single-text mode shows the
+  proposals as their own card; many-texts mode adds the title and keywords as table columns
+  and all three fields to the CSV download. Hidden in CSV mode, where `/predict/csv` streams
+  its answer from the server and this view never holds the rows to attach anything to.
+
+### Changed
+
+- **`app/main.py` split by responsibility, 352 -> 120 lines** (behaviour-preserving; the bodies
+  were moved verbatim). It had four reasons to change in one file; it now keeps the factory and
+  hands the rest to `app/lifecycle.py` (boot and shutdown: the auth-configuration check, the
+  crash-recovery sweeps, the warmups, the `lifespan`), `app/middleware.py` (the declared-body-size
+  ceiling and the baseline security headers) and `app/docs_content.py` (the OpenAPI text, the
+  self-hosted Swagger page, the inline favicon). `create_app` drops from 126 to 71 lines.
+  - Extracting the middleware surfaced an untested property: the body ceiling answers 413 without
+    reaching a route, so whether that response is hardened depends purely on registration order.
+    Starlette runs middleware in reverse, so the headers must be registered last. Swapping them
+    strips the headers from every rejected upload and nothing caught it — now pinned.
+- **Three runtime dependencies, 13 -> 16:** `wordfreq` (how rare a word is in German — the
+  keyword score's whole second term), `pysbd` (German sentence splitting) and
+  `snowballstemmer` (merging the surface forms of one keyword). The justification, and the
+  two alternatives measured and rejected — vendoring wordfreq's data, which would put a
+  CC-BY-SA obligation on an MIT repo, and `nltk`, whose import costs 10 s and pulls
+  `urllib.request` and `ssl` into a process that must not be able to fetch a URL — are in
+  [`docs/plans/2026-09-26-descriptive-metadata.md`](docs/plans/2026-09-26-descriptive-metadata.md).
+
 ## [Unreleased] — the admin UI's quality floor (2026-09-21)
 
 Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md).
