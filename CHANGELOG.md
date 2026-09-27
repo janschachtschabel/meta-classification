@@ -2,7 +2,25 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased] — descriptive metadata (2026-09-26)
+## [4.0.0] — 2026-09-27
+
+### Breaking
+
+- **A 422 carries `detail` as a string; the per-field errors moved to `errors`.** FastAPI's
+  default handler makes `detail` a list of objects on this status alone, so client code
+  written against any other 4xx — `body["detail"].startswith(...)`, which this project's own
+  UI did — raised on exactly the status a caller hits most while integrating (audit API-7).
+  `detail` is now a sentence naming the first offending field, and the full list is kept
+  under `errors` in FastAPI's shape rather than dropped. **A client reading
+  `detail[0]["loc"]` has to read `errors[0]["loc"]`.** This is the only breaking change in
+  the release, and the reason 3.2.0 is followed by 4.0.0 rather than 3.3.0.
+
+Everything below, from "descriptive metadata" down to "reused names", is the work this
+release contains: nine packages written as they landed, between 2026-09-11 and 2026-09-26,
+left in that order rather than rewritten into one list. `v3.2.0` was tagged on 2026-09-10,
+and `latest` pointed at it until this release — so the published image had none of it.
+
+## descriptive metadata (2026-09-26)
 
 ### Added
 
@@ -88,7 +106,7 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   `urllib.request` and `ssl` into a process that must not be able to fetch a URL — are in
   [`docs/plans/2026-09-26-descriptive-metadata.md`](docs/plans/2026-09-26-descriptive-metadata.md).
 
-## [Unreleased] — the admin UI's quality floor (2026-09-21)
+## the admin UI's quality floor (2026-09-21)
 
 Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md).
 
@@ -158,7 +176,7 @@ Findings FE-1… of [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-a
   re-checks, which is exactly how `--border` survived: `tests/test_ui_contrast.py` now
   recomputes every stated ratio from the two colours it names and fails on any that drifts.
 
-## [Unreleased] — the numbers a run reports (2026-09-21)
+## the numbers a run reports (2026-09-21)
 
 Findings CORR-2 to CORR-4 of
 [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md). Nobody got a worse
@@ -253,7 +271,7 @@ model from these; they got numbers that described it inaccurately.
   same integers from those floats — so every recorded `scripts/benchmark_*.py` number stays
   comparable. The stratified splitter was already correct and is untouched.
 
-## [Unreleased] — the audit's blockers (2026-09-20)
+## the audit's blockers (2026-09-20)
 
 Findings SEC-1, SEC-4 and OPS-1 of
 [`docs/audits/2026-09-20-audit.md`](docs/audits/2026-09-20-audit.md).
@@ -388,7 +406,7 @@ Findings SEC-1, SEC-4 and OPS-1 of
   rows; the difference is confined to malformed markup and disappears on the next
   retrain.
 
-## [Unreleased] — two defects the API-docs review turned up (2026-09-20)
+## two defects the API-docs review turned up (2026-09-20)
 
 ### Changed
 
@@ -419,7 +437,7 @@ Findings SEC-1, SEC-4 and OPS-1 of
   was accepted. The four request models that take one now require at least one
   character, so the boundary answers 422.
 
-## [Unreleased] — AI rows train, real rows measure (2026-09-19)
+## AI rows train, real rows measure (2026-09-19)
 
 data-prep marks the rows an LLM wrote or touched. api_v3 read none of those marks, so a
 label balanced from 3 real rows to 100 was scored mostly on text the same LLM wrote from
@@ -506,7 +524,7 @@ dataset enriched before it is best enriched again.
   `requirements.lock`, and `docker.yml` gates the image build on the same scan. With
   anyio set back to 4.14.1 it fails on the three CVEs above.
 
-## [Unreleased] — levers that never arrived (2026-09-12)
+## levers that never arrived (2026-09-12)
 
 Four findings from using the thing: three of them were fields or numbers the UI showed
 and the code then ignored.
@@ -580,7 +598,7 @@ and the code then ignored.
   probable labels and shows them dimmed below the note, marked as below threshold. The
   model's decision is untouched.
 
-## [Unreleased] — training memory (2026-09-11)
+## training memory (2026-09-11)
 
 A training run on the full WLO export (426 724 records) was OOM-killed in an 8 GB
 container while it fitted its first head — a phase that logs nothing. Where a run's memory
@@ -667,7 +685,7 @@ without changing a single number the model produces.
   the input matrix only — the head-fit threads multiply the fit memory (measured 11.9× the
   matrix at 6 threads).
 
-## [Unreleased] — reused names (2026-09-11)
+## reused names (2026-09-11)
 
 A check for problems with reused model and dataset names found three, each reproduced
 through the API before it was fixed, plus one test-isolation leak. Creating under an

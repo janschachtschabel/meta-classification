@@ -11,5 +11,5 @@ version: 0.1.0
 # other artifact here is pinned (base image by digest, Actions by SHA, CI images by
 # exact tag), and a mutable tag means two installs of this chart a week apart run
 # different code. CI overrides it per release with --app-version.
-appVersion: "3.2.0"
+appVersion: "4.0.0"
 kubeVersion: ">=1.23.0-0"
