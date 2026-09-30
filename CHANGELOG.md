@@ -2,6 +2,23 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased]
+
+The findings of the audit of 2026-09-30 (`docs/audits/2026-09-30-audit.md`); the IDs in
+brackets are its finding numbers.
+
+### Fixed
+
+- **The Training tab loads a dataset's columns again.** The debounce wrapper handed its
+  listener's `change` event to the handler as the `isCurrent` predicate; the first call threw,
+  and no training could be started from the admin UI in 4.0.1. The Evaluate form kept the
+  previous dataset's columns the same way. The UI handlers are now executed under node in the
+  suite, not pattern-matched. (U01)
+- **GitLab's test stage can pass.** `tests/test_helm_chart.py` refuses to skip under `CI`, and
+  GitLab's `pytest` job had no helm: eight render tests failed in every pipeline, so neither
+  image nor chart ever reached the company registry, not even for `v4.0.1`. The job installs
+  helm 3.16.4, verified against its published checksum. (B01)
+
 ## [4.0.1] — 2026-09-27
 
 The findings of the audit of the same day (`docs/audits/2026-09-27-audit.md`): two security
