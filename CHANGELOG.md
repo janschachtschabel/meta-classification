@@ -65,6 +65,11 @@ brackets are its finding numbers.
   enough to be page chrome, so a paragraph about data protection is no longer dropped for
   saying "Datenschutzerklärung". The source pipeline's five reference documents come out
   unchanged. (M06)
+- **The task type is that of the labels actually trained.** It was read off the raw label
+  cells, where `uri:a,uri:a` counted as two labels and so did a second label too rare to
+  train: one such row made a single-label dataset "multilabel", decided by thresholds instead
+  of argmax, and a nonsense text then got every label. It is now read off the target matrix
+  after every drop, and a label named twice in one cell counts once. (T04)
 
 ### Fixed
 

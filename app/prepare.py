@@ -212,7 +212,6 @@ def prepare_data(
             f"min_samples_per_label, or add rows for the labels you want to learn."
         )
     texts = np.array([t for t, keep in zip(loaded.texts, row_keep, strict=False) if keep], dtype=object)
-    kept_label_lists = [labs for labs, keep in zip(loaded.label_lists, row_keep, strict=False) if keep]
     marks = None if loaded.marks is None else np.asarray(loaded.marks, dtype=np.int8)[row_keep]
     # Re-check AFTER dropping rare-label rows: the pre-filter guard above counts
     # rows that prepare_targets may have just removed, so the three-way split
@@ -224,12 +223,6 @@ def prepare_data(
             f"with them or without them ({n_kept} of {n_texts}). Lower min_samples_per_label "
             "or add more data."
         )
-    forced = req.get("task_type")
-    if forced in ("multilabel", "multiclass", "binary"):
-        task_type = forced
-    else:
-        task_type = data_mod.detect_task_type(kept_label_lists, len(classes))
-
     # --- Train / val / test split ---
     train_only = marks != 0 if marks is not None and marks.any() else None
     (train_idx, val_idx, test_idx), fallback = split_rows(
@@ -265,6 +258,10 @@ def prepare_data(
         logger.warning("AI-marked rows validate after all: %s", fallback)
     if len(classes) < 2:
         raise TrainingInputError("Fewer than 2 learnable labels; dataset too small/sparse.")
+    forced = req.get("task_type")
+    # After every drop: the type of the targets that are actually trained (T04).
+    task_type = forced if forced in ("multilabel", "multiclass", "binary") else (
+        data_mod.detect_task_type(y_all))
     if should_stop():
         return None
     # AFTER the drops, so the average describes the label space actually trained.

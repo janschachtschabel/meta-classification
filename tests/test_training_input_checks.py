@@ -177,3 +177,37 @@ def test_a_text_column_the_csv_lacks_is_refused_not_skipped(tmp_path):
 
     with pytest.raises(ValueError, match="beschreibung"):
         load_dataset(tmp_path / "set.csv", ["title", "beschreibung"], "labels", separator=";")
+
+
+
+# --- T04: the task type ----------------------------------------------------------------------
+
+
+def test_the_task_type_is_that_of_the_labels_trained_not_of_the_raw_cells(tmp_path):
+    """T04: `uri:math,uri:math` on one row, or a second label too rare to train, made a
+    three-class dataset "multilabel" -- decided by thresholds instead of argmax, so a
+    nonsense text got all three labels."""
+    rows = [f"{text} Teil {i};{uri}" for uri, text in SUBJECTS.items() for i in range(20)]
+    rows[0] = rows[0].replace(";uri:math", ";uri:math,uri:math")
+    rows[1] = rows[1].replace(";uri:math", ";uri:math,uri:rare")  # 1 row < min_samples 2
+    settings = _dataset(tmp_path, rows)
+
+    result = _train(settings)
+
+    assert result["task_type"] == "multiclass"
+
+
+def test_a_label_named_twice_in_one_cell_counts_once(tmp_path):
+    from app.dataset_load import load_dataset
+
+    _dataset(tmp_path, [f"{text} Teil;uri:a,uri:a,uri:b" for text in SUBJECTS.values()])
+
+    loaded = load_dataset(tmp_path / "set.csv", ["title"], "labels", separator=";")
+
+    assert loaded.label_lists[0] == ["uri:a", "uri:b"]
+
+
+def test_the_task_type_follows_the_target_matrix():
+    assert data.detect_task_type(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])) == "multiclass"
+    assert data.detect_task_type(np.array([[1, 0], [0, 1]])) == "binary"
+    assert data.detect_task_type(np.array([[1, 1], [1, 0]])) == "multilabel"

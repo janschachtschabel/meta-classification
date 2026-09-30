@@ -161,12 +161,17 @@ def count_rows(path: str | Path) -> int:
     return rows
 
 
-def detect_task_type(label_lists: list[list[str]], n_classes: int) -> str:
-    """Infer 'binary' | 'multiclass' | 'multilabel' from the label structure."""
-    max_per_sample = max((len(labs) for labs in label_lists), default=0)
-    if max_per_sample <= 1:
-        return "binary" if n_classes <= 2 else "multiclass"
-    return "multilabel"
+def detect_task_type(y: np.ndarray) -> str:
+    """'binary' | 'multiclass' | 'multilabel', read off the target matrix a run trains on.
+
+    Not off the raw label cells: those counted a label named twice in one cell (`a,a`) and a
+    second label too rare to train, and either made a single-label dataset "multilabel" --
+    decided by thresholds instead of argmax, so a nonsense text got every label (audit
+    2026-09-30, T04). The matrix holds each label once and only the labels that survived.
+    """
+    if y.size and int(y.sum(axis=1).max()) > 1:
+        return "multilabel"
+    return "binary" if y.shape[1] <= 2 else "multiclass"
 
 
 def auto_min_samples(n_samples: int, override: int | None = None) -> int:

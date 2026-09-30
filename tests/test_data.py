@@ -110,9 +110,12 @@ def test_count_rows_cached_by_mtime_and_size(tmp_path, monkeypatch):
 
 
 def test_detect_task_type():
-    assert data.detect_task_type([["a"], ["b"], ["a"]], 3) == "multiclass"
-    assert data.detect_task_type([["a"], ["b"]], 2) == "binary"
-    assert data.detect_task_type([["a", "b"], ["a"]], 2) == "multilabel"
+    """Read off the target matrix since audit 2026-09-30, T04 (it took raw label lists)."""
+    import numpy as np
+
+    assert data.detect_task_type(np.array([[1, 0, 0], [0, 1, 0], [1, 0, 0]])) == "multiclass"
+    assert data.detect_task_type(np.array([[1, 0], [0, 1]])) == "binary"
+    assert data.detect_task_type(np.array([[1, 1], [1, 0]])) == "multilabel"
 
 
 def test_prepare_targets_uses_a_compact_dtype():

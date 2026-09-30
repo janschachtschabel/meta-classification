@@ -243,7 +243,12 @@ class _Collector:
                     split_labels(name_cell, self.label_separator),
                 ):
                     self.uri_to_label.setdefault(uri, name)
-        label_lists = [split_labels(cell, self.label_separator) for cell in label_series]
+        # Each label once per row: `a,a` is one label, and counted twice it made a single-label
+        # dataset look multilabel to every statistic built on these lists (audit 2026-09-30,
+        # T04). Not in split_labels itself: the display-name column is split by it too, and
+        # paired with the URIs by position, where two URIs may share one name.
+        label_lists = [list(dict.fromkeys(split_labels(cell, self.label_separator)))
+                       for cell in label_series]
         self.used.update(uri for labels in label_lists for uri in labels)
         if self.label_filter:
             label_lists = [[lab for lab in labs if self.label_filter in lab] for labs in label_lists]
