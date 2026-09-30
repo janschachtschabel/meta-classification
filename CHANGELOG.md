@@ -7,6 +7,18 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 The findings of the audit of 2026-09-30 (`docs/audits/2026-09-30-audit.md`); the IDs in
 brackets are its finding numbers.
 
+### Security
+
+- **No request body is read before its API key checks out.** FastAPI parses a body before any
+  dependency runs, and the key check is one: a caller without a key made the server parse up
+  to the upload cap — 48 MiB of JSON took the process from 232 to 1,485 MiB for a 401 — or
+  spool a chunked upload, which declares no size for the old ceiling to check, whole into
+  `/tmp` (the chart's 1 Gi emptyDir, whose overflow evicts the pod and its training). A pure
+  ASGI guard now authenticates every request that carries a body before reading a byte, and
+  counts the bytes as they arrive, chunked included: uploads against `APIV3_MAX_UPLOAD_MB`,
+  every other body against the new `APIV3_MAX_JSON_MB` (default 10; Helm
+  `config.limits.maxJsonMb`; reported by `GET /config`). (S01)
+
 ### Fixed
 
 - **The Training tab loads a dataset's columns again.** The debounce wrapper handed its

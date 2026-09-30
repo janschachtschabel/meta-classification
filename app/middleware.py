@@ -8,49 +8,98 @@ in the factory — it is conditional on configuration and belongs with the assem
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import correlation, telemetry
+from .security import authenticate
 from .settings import Settings
+
+MiB = 1024 * 1024
+
+
+class BodyGuard:
+    """No request body is read before its caller is known, nor past its limit.
+
+    FastAPI parses a body -- JSON into objects, multipart into spooled temp files -- before
+    any dependency runs, and ``require_role`` is a dependency. So a caller without a key made
+    the server read and parse whatever it sent, up to the upload cap: 48 MiB of `[{},...]`
+    took the process from 232 to 1,485 MiB for a 401, and a chunked upload -- no
+    Content-Length, which was all the old ceiling looked at -- landed whole in a temp file
+    before its 413 (audit 2026-09-30, S01). Under the chart that temp file is node ephemeral
+    storage, and a full one evicts the pod with its running training.
+
+    So a request that carries a body -- declared, or chunked -- must first name a caller
+    ``security.authenticate`` accepts. The ROLE stays the route's to decide: a readonly key can
+    make an admin upload route read its body before the 403, within the caps and the rate
+    limit. Then the body is held to its limit: ``max_upload_mb`` for a multipart upload,
+    ``max_json_mb`` for anything else, on the declared size before a byte is read, and on
+    the bytes as they arrive, which is what bounds a chunked body.
+
+    Pure ASGI rather than ``@app.middleware`` like the others: only here can the body be seen
+    arriving, piece by piece, instead of after the route has read it.
+    """
+
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+        self.app = app
+        self.settings = settings
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        declared = headers.get("content-length")
+        if not headers.get("transfer-encoding") and (declared or "0") == "0":
+            await self.app(scope, receive, send)
+            return
+        try:
+            authenticate(Request(scope), headers.get("x-api-key"), self.settings)
+        except HTTPException as refusal:
+            await _refusal(refusal.status_code, refusal.detail, refusal.headers)(scope, receive, send)
+            return
+        upload = headers.get("content-type", "").lower().startswith("multipart/form-data")
+        limit_mb = self.settings.max_upload_mb if upload else self.settings.max_json_mb
+        too_large = f"Request body exceeds the {limit_mb} MB limit{'' if upload else ' for a JSON body'}."
+        if declared and declared.isdigit() and int(declared) > limit_mb * MiB:
+            await _refusal(413, too_large)(scope, receive, send)
+            return
+        received = 0
+
+        async def counted() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit_mb * MiB:
+                    # Raised into whoever is reading, before a route runs: FastAPI lets an
+                    # HTTPException from the body read through (it wraps everything else into
+                    # a 400), and Starlette's multipart parser closes its temp files first.
+                    raise HTTPException(status_code=413, detail=too_large)
+            return message
+
+        await self.app(scope, counted, send)
+
+
+def _refusal(status: int, detail: str, headers: Mapping[str, str] | None = None) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"detail": detail}, headers=headers)
 
 
 def install(app: FastAPI, settings: Settings) -> None:
-    """Register the body-size ceiling, the request counters, the security headers and the
+    """Register the body guard, the request counters, the security headers and the
     correlation id, in that order.
 
     Starlette runs middleware in REVERSE registration order, so the last registered is the
-    outermost. Both orderings here are load-bearing: the headers wrap the body check, so an
-    oversized-body 413 still carries them; and the correlation id wraps everything, so every
-    response has an id — including that 413 and the 500 the error handler builds — and the
+    outermost. Both orderings here are load-bearing: the headers wrap the body guard, so its
+    401 or 413 still carries them; and the correlation id wraps everything, so every
+    response has an id — including those and the 500 the error handler builds — and the
     id is bound before any other layer can log.
     """
-    @app.middleware("http")
-    async def refuse_oversized_bodies(request: Request, call_next):
-        """Refuse a body larger than the upload cap on its DECLARED size, before it
-        is read.
-
-        The per-route caps run too late to bound what reaches disk: FastAPI resolves
-        ``UploadFile`` during dependency injection, so Starlette has already streamed the
-        whole part into a spooled temp file by the time a route body runs — and it
-        enforces ``max_part_size`` only for non-file parts. Under the chart's read-only
-        root filesystem that spill lands in an emptyDir on node ephemeral storage, and
-        ``POST /predict/csv`` needs only a readonly key.
-
-        Content-Length is client-supplied and a chunked body carries none, so this is a
-        cheap ceiling rather than the whole answer — the streaming caps in ``security``
-        stay where they are and remain the real enforcement.
-        """
-        declared = request.headers.get("content-length")
-        if declared and declared.isdigit():
-            limit = settings.max_upload_mb * 1024 * 1024
-            if int(declared) > limit:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": f"Request body exceeds {settings.max_upload_mb} MB limit."},
-                )
-        return await call_next(request)
+    app.add_middleware(BodyGuard, settings=settings)
 
     @app.middleware("http")
     async def count_requests(request: Request, call_next):
@@ -100,7 +149,7 @@ def install(app: FastAPI, settings: Settings) -> None:
         return response
 
     # Registered last, so it is the OUTERMOST: every response gets an id, including the
-    # 413 the body check short-circuits and the 500 the error handler builds — and the id
+    # refusals the body guard short-circuits and the 500 the error handler builds — and the id
     # is bound before anything else runs, so every log line written while handling this
     # request carries it (audit OPS-8).
     @app.middleware("http")

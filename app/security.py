@@ -61,6 +61,32 @@ _KEYLESS_FROM_THE_NETWORK = (
 )
 
 
+def authenticate(request: Request, key: str | None, settings: Settings) -> str:
+    """The caller's role -- or the refusal: 401 without a valid key, 403 for a caller from
+    the network in keyless mode.
+
+    One rule for the two places that ask: ``require_role`` (per route, with the role the
+    route needs) and the body guard in ``middleware``, which asks before a request body is
+    read (audit 2026-09-30, S01) -- a dependency runs only after FastAPI has parsed it.
+    """
+    if not settings.auth_enabled:
+        # Local use only, as the docs have always said. With no key there is nothing that
+        # tells the operator apart from anyone else who can reach the port, so one variable
+        # plus a `-p 8000:8000` or the chart's ingress was an open admin API (audit
+        # 2026-09-27, S-1).
+        if _is_loopback_client(request):
+            return "admin"
+        raise HTTPException(status_code=403, detail=_KEYLESS_FROM_THE_NETWORK)
+    role = _role_for_key(key, settings)
+    if role is None:
+        raise HTTPException(
+            status_code=401,
+            detail="API key required. Provide the X-API-Key header.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    return role
+
+
 def require_role(required: str = "readonly"):
     """Build a FastAPI dependency enforcing a minimum role.
 
@@ -72,21 +98,7 @@ def require_role(required: str = "readonly"):
         key: str | None = Security(api_key_header),
         settings: Settings = Depends(get_settings),
     ) -> str:
-        if not settings.auth_enabled:
-            # Local use only, as the docs have always said. With no key there is nothing that
-            # tells the operator apart from anyone else who can reach the port, so one variable
-            # plus a `-p 8000:8000` or the chart's ingress was an open admin API (audit
-            # 2026-09-27, S-1).
-            if _is_loopback_client(request):
-                return "admin"
-            raise HTTPException(status_code=403, detail=_KEYLESS_FROM_THE_NETWORK)
-        role = _role_for_key(key, settings)
-        if role is None:
-            raise HTTPException(
-                status_code=401,
-                detail="API key required. Provide the X-API-Key header.",
-                headers={"WWW-Authenticate": "ApiKey"},
-            )
+        role = authenticate(request, key, settings)
         if required == "admin" and role != "admin":
             raise HTTPException(status_code=403, detail="Admin API key required for this endpoint.")
         return role

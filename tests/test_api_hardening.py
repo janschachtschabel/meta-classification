@@ -334,6 +334,15 @@ def test_config_endpoint_exposes_safe_fields_without_secrets(monkeypatch, tmp_pa
     assert "admin-key" not in resp.text and "ro-key" not in resp.text
 
 
+def test_config_reports_both_body_limits(monkeypatch, tmp_path):
+    """A client sizing a /predict batch needs the JSON cap as much as an uploader needs the
+    upload cap (audit 2026-09-30, S01 gave JSON its own)."""
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_MAX_JSON_MB="7")
+    body = client.get("/config", headers=RO).json()
+
+    assert (body["max_upload_mb"], body["max_json_mb"]) == (200, 7)
+
+
 def test_config_reports_the_training_memory_budget_it_resolved(monkeypatch, tmp_path):
     """Next to effective_n_jobs: the other number that decides how a run is shaped."""
     client = _fresh_client(monkeypatch, tmp_path, APIV3_TRAIN_MEMORY_MB="2048")
@@ -391,7 +400,7 @@ def test_health_and_config_response_models_preserve_exact_keys(monkeypatch, tmp_
         "train_memory_mb", "effective_train_memory_mb", "training_isolation",
         "tfidf_max_word_features", "tfidf_max_char_features", "max_models_in_memory",
         "effective_max_models_in_memory",
-        "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb",
+        "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb", "max_json_mb",
     }
     # The response model must never leak a configured key.
     assert "admin-key" not in config.text and "ro-key" not in config.text

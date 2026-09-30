@@ -30,6 +30,7 @@ data:
 
   # ---- Limits ----
   APIV3_MAX_UPLOAD_MB: {{ .Values.config.limits.maxUploadMb | quote }}
+  APIV3_MAX_JSON_MB: {{ .Values.config.limits.maxJsonMb | quote }}
   APIV3_MAX_MODELS_IN_MEMORY: {{ .Values.config.limits.maxModelsInMemory | quote }}
   APIV3_WARMUP_MODELS: {{ .Values.config.limits.warmupModels | quote }}
   APIV3_WARMUP_METADATA: {{ .Values.config.limits.warmupMetadata | quote }}

@@ -120,6 +120,13 @@ class ConfigResponse(BaseModel):
             "or a CSV to classify; a bigger one is refused with 413."
         ),
     )
+    max_json_mb: int = Field(
+        ...,
+        description=(
+            "Largest accepted request body in MiB for everything but an upload "
+            "(`APIV3_MAX_JSON_MB`) — a /predict batch, a /metadata request; bigger is 413."
+        ),
+    )
 
 
 class TrainStartedResponse(BaseModel):
