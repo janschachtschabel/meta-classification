@@ -231,14 +231,26 @@ def _is_hard_wrapped(lines: list[str]) -> bool:
     return len(pairs) >= 4 and inside >= 0.15 * len(pairs)
 
 
-def _join(joined: str, line: str) -> str:
-    if _WRAP_HYPHEN_RE.search(joined):
+def _continue(pieces: list[str], line: str) -> None:
+    """Append ``line`` to the joined line held as ``pieces`` (joined once, at the end).
+
+    Only the end of the last piece is read and only that piece is copied: searching the whole
+    joined text for its final hyphen and copying it once per line made this quadratic -- lines
+    that start in lower case all join, and 100k characters of them took 4 s (audit 2026-09-30,
+    M01). The hyphen belongs to the last line, so its last two characters decide.
+    """
+    tail = pieces[-1]
+    if _WRAP_HYPHEN_RE.search(tail[-2:]):
         next_word = line.split(maxsplit=1)[0].rstrip(".,")
         if line[0].islower() and next_word not in _SUSPENDED_HYPHEN_NEXT:
-            return joined[:-1] + line  # "Er-" + "lebnis"
+            pieces[-1] = tail[:-1]  # "Er-" + "lebnis"
+            pieces.append(line)
+            return
         if line[0].isupper():
-            return joined + line  # "Nord-" + "Süd-Dialog"
-    return f"{joined} {line}"
+            pieces.append(line)  # "Nord-" + "Süd-Dialog"
+            return
+    pieces.append(" ")
+    pieces.append(line)
 
 
 def join_wrapped_lines(lines: list[str]) -> list[str]:
@@ -252,18 +264,18 @@ def join_wrapped_lines(lines: list[str]) -> list[str]:
     wrapped = _is_hard_wrapped(lines)
     widths = [len(line) for line in lines if len(line) >= 20]
     full_width = 0.8 * statistics.median(widths) if widths else float("inf")
-    joined: list[str] = []
+    joined: list[list[str]] = []  # each output line as the pieces it is joined from
     last = ""  # the previous line as it was, before joining
     for line in lines:
         if (
             joined and last and line and not is_list_item(line) and not _SENTENCE_END_RE.search(last)
             and (_breaks_sentence(last, line) or (wrapped and len(last) >= full_width))
         ):
-            joined[-1] = _join(joined[-1], line)
+            _continue(joined[-1], line)
         else:
-            joined.append(line)
+            joined.append([line])
         last = line
-    return joined
+    return ["".join(pieces) for pieces in joined]
 
 
 def clean_text(raw: str) -> str:

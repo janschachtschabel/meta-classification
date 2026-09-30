@@ -18,6 +18,12 @@ brackets are its finding numbers.
   counts the bytes as they arrive, chunked included: uploads against `APIV3_MAX_UPLOAD_MB`,
   every other body against the new `APIV3_MAX_JSON_MB` (default 10; Helm
   `config.limits.maxJsonMb`; reported by `GET /config`). (S01)
+- **`/metadata` joins wrapped lines in linear time.** Joining a line to the one before
+  searched the whole text joined so far for a final hyphen and copied it, once per line; lines
+  that start in lower case (vocabulary lists, "der … und die …") all join, so 100k characters
+  took 4.0 s and a request at the documented caps 13–60 CPU-minutes, with a readonly key. Only
+  the end of the last line is read now, and the pieces are joined once: 0.06 s. The joined
+  text is unchanged, checked against the old code on 20,000 generated inputs. (M01)
 
 ### Fixed
 
