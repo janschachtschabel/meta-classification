@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -119,8 +120,27 @@ def heuristic_candidates(doc: Document, max_len: int = 3) -> list[Candidate]:
     return doc.cache[cache_key]
 
 
+# wordfreq loads its German table on first use behind an lru_cache, which is thread-safe but
+# not single-flight: eight simultaneous first requests each read it -- 3.3 s and a 554 MB peak
+# against 0.3 s and 101 MB for one load (audit 2026-09-30, M07). The first use is serialised;
+# after it, the flag is all anyone reads.
+_table_lock = threading.Lock()
+_table_loaded = False
+
+
+def _load_table_once() -> None:
+    global _table_loaded
+    if _table_loaded:
+        return
+    with _table_lock:
+        if not _table_loaded:
+            zipf_frequency("und", "de")
+            _table_loaded = True
+
+
 @lru_cache(maxsize=100_000)
 def _idf(token: str) -> float:
+    _load_table_once()
     # Zipf 7 ≈ "der", 3 ≈ rare word, 0 = unknown word: rare words weigh more, never below 0.5.
     return max(0.5, 7.5 - zipf_frequency(token, "de"))
 

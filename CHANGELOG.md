@@ -42,6 +42,10 @@ brackets are its finding numbers.
   training's budget does not see. Such a 4,000-character fragment could also come back as a
   keyword. Past 64 characters a token now ends a phrase like a stopword and is stemmed
   without being remembered. (M04; the keyword half of M06)
+- **The word-frequency table is loaded once, however many first requests arrive together.**
+  wordfreq's cache is thread-safe but not single-flight: eight simultaneous first `/metadata`
+  requests read the German table eight times — 3.3 s and a 554 MB peak instead of 0.3 s and
+  101 MB. The first load is serialised now. (M07)
 
 ### Fixed
 

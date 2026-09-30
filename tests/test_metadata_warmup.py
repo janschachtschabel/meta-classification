@@ -91,3 +91,40 @@ def test_the_lifespan_only_warms_metadata_when_the_setting_is_on():
     ]
 
     assert guarded, "lifespan must call _warmup_metadata() only under settings.warmup_metadata"
+
+
+
+def test_simultaneous_first_requests_load_the_frequency_table_once(monkeypatch):
+    """M07 (audit 2026-09-30): wordfreq loads its German table behind an lru_cache, which is
+    thread-safe but not single-flight -- eight simultaneous first requests each read it: 3.3 s
+    and a 554 MB peak, against 0.3 s and 101 MB for one load."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import wordfreq
+
+    from app.metadata import phrases
+
+    wordfreq.get_frequency_dict.cache_clear()
+    wordfreq.get_frequency_list.cache_clear()
+    wordfreq._wf_cache.clear()
+    phrases._idf.cache_clear()
+    monkeypatch.setattr(phrases, "_table_loaded", False)
+    reads: list[str] = []
+    real_read = wordfreq.read_cBpack
+
+    def counting_read(filename):
+        reads.append(filename)
+        return real_read(filename)
+
+    monkeypatch.setattr(wordfreq, "read_cBpack", counting_read)
+    start = threading.Barrier(8)
+
+    def first_request(index: int) -> float:
+        start.wait()
+        return phrases._idf(f"Unterrichtswort{index}")
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(first_request, range(8)))
+
+    assert len(reads) == 1, f"the table was read {len(reads)} times"
