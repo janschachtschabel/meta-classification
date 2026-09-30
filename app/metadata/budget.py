@@ -7,8 +7,6 @@ description method this port deliberately leaves out.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 _CLAUSE_BREAKS = (", ", "; ", ": ", " – ", " - ")
 _QUOTES = "\"'„“”‚‘’»«"
 
@@ -34,18 +32,43 @@ def clean_title(text: str, max_chars: int) -> str:
     return shorten(title.rstrip(".:;,"), max_chars)
 
 
-def select_sentences(sentences: list[str], scores: Sequence[float], max_chars: int) -> str:
-    """Greedily take the best-scored sentences that still fit; output keeps document order."""
+# Sentence openers that point back at the sentence before: personal and demonstrative pronouns,
+# pronominal adverbs, and connectives that presuppose what came first. Not the articles --
+# "Das kleinste gemeinsame Vielfache ..." stands on its own, and that is how "Das" mostly opens.
+_BACK_REFERENCES = frozenset({
+    "er", "sie", "es", "ihm", "ihn", "ihr", "ihre", "ihnen", "sein", "seine", "dessen", "deren",
+    "dies", "diese", "dieser", "dieses", "diesen", "diesem", "jene", "jener", "jenes",
+    "damit", "dabei", "dadurch", "dafür", "dagegen", "daher", "darum", "deshalb", "deswegen",
+    "davon", "darauf", "daraus", "darin", "dazu", "danach", "davor", "dort", "somit", "folglich",
+    "außerdem", "zudem", "trotzdem", "dennoch", "allerdings", "jedoch",
+})
+
+
+def _points_back(sentence: str) -> bool:
+    opener = sentence.lstrip(_QUOTES + " ").split(maxsplit=1)
+    return bool(opener) and opener[0].rstrip(",:;").lower() in _BACK_REFERENCES
+
+
+def lead(sentences: list[str], max_chars: int) -> str:
+    """The first sentences, in order, as many as fit.
+
+    A sentence too long for what is left of the budget is skipped and later ones may still
+    come, as in the source app, whose quality numbers are those of that behaviour (the parity
+    fixture holds two descriptions built that way). But once one was skipped, a sentence that
+    opens by pointing back ("Sie", "Dies", "Damit") is not taken: its reference would be the
+    skipped sentence (audit 2026-09-30, M06). When not even the first fits, it is shortened at
+    a clause boundary.
+    """
     if not sentences:
         return ""
-    order = sorted(range(len(sentences)), key=lambda i: -scores[i])  # stable: ties keep position
-    chosen: list[int] = []
+    chosen: list[str] = []
     total = 0
-    for i in order:
-        extra = len(sentences[i]) + (1 if chosen else 0)
-        if total + extra <= max_chars:
-            chosen.append(i)
-            total += extra
-    if not chosen:
-        return shorten(sentences[order[0]], max_chars)
-    return " ".join(sentences[i] for i in sorted(chosen))
+    skipped = False
+    for sentence in sentences:
+        extra = len(sentence) + (1 if chosen else 0)
+        if total + extra > max_chars or (skipped and _points_back(sentence)):
+            skipped = True
+            continue
+        chosen.append(sentence)
+        total += extra
+    return " ".join(chosen) if chosen else shorten(sentences[0], max_chars)

@@ -55,6 +55,16 @@ brackets are its finding numbers.
   drops comments, drops non-prose bodies only with their closing tag, takes as a tag only `<`
   plus a letter, `/`, `!` or `?`, removes inline tags without a space, and decodes entities
   last. The classification path's cleaning is untouched: it feeds fitted vectorizers. (M05)
+- **`/metadata` proposals keep closer to the text.** A keyword no longer runs across
+  punctuation ("Mathematik, Physik, Chemie" gave the keyword "Mathematik Physik Chemie"); a
+  PDF ligature is read as its letters ("FLüssige Phase" becomes "Flüssige Phase"); the title
+  template joins with "und" only where the text has the word, else with a comma — it was the
+  one word the endpoint returned that the input lacked, English texts included; after a
+  sentence too long for the budget is skipped, a following one that opens by pointing back
+  ("Er", "Dies", "Damit") is not taken; and the boilerplate phrases mark only lines short
+  enough to be page chrome, so a paragraph about data protection is no longer dropped for
+  saying "Datenschutzerklärung". The source pipeline's five reference documents come out
+  unchanged. (M06)
 
 ### Fixed
 

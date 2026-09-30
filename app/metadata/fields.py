@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from .budget import clean_title, select_sentences
+from .budget import clean_title, lead
 from .phrases import finalize_keywords, scored_tfidf
 from .textprep import (
     GENERIC_TERMS,
@@ -28,6 +28,7 @@ from .types import Document, MetadataSettings
 _FORM_FIELD_RE = re.compile(r"^(?:Name|Datum|Klasse)\s*:", re.IGNORECASE)
 _DATE_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{2,4}$")
 _WEB_ADDRESS_RE = re.compile(r"^(?:https?://|www\.)\S+$", re.IGNORECASE)
+_UND_RE = re.compile(r"\bund\b")
 
 
 def keywords(doc: Document, settings: MetadataSettings) -> list[str]:
@@ -43,15 +44,13 @@ def keywords(doc: Document, settings: MetadataSettings) -> list[str]:
 def description(doc: Document, settings: MetadataSettings) -> str:
     """`description.lead` — the first usable sentences, up to the character budget.
 
-    Sentences are scored by position, so "best first" means "earliest", and the budget fitting
-    then takes as many as fit. `description_candidates` is what makes this more than a prefix:
-    headings, list items, task instructions and page chrome are not candidates, so the
-    description starts at the first real sentence.
+    As many as fit, in order; after one that does not, none that points back at it
+    (`budget.lead`).
+    `description_candidates` is what makes this more than a prefix: headings, list items, task
+    instructions and page chrome are not candidates, so the description starts at the first
+    real sentence.
     """
-    sentences = description_candidates(doc)
-    return select_sentences(
-        sentences, [-float(i) for i in range(len(sentences))], settings.desc_max
-    )
+    return lead(description_candidates(doc), settings.desc_max)
 
 
 def _is_title_like(line: str) -> bool:
@@ -72,11 +71,16 @@ def _detected_heading(doc: Document) -> str | None:
     return next((line for line in doc.lines[:5] if _is_title_like(line)), None)
 
 
-def _keyphrase_title(phrases: list[str]) -> str:
-    """Title template from ranked keyphrases: "K1: K2 und K3", "K1 und K2" or "K1"."""
+def _keyphrase_title(phrases: list[str], joiner: str) -> str:
+    """Title template from ranked keyphrases: "K1: K2 und K3", "K1 und K2" or "K1".
+
+    ``joiner`` is " und " only where the text itself has the word: every word this endpoint
+    returns occurs in the input, and the template's "und" was the one exception -- in English
+    texts too, "Photosynthesis und Chlorophyll" (audit 2026-09-30, M06). Elsewhere a comma.
+    """
     if len(phrases) >= 3:
-        return f"{phrases[0]}: {phrases[1]} und {phrases[2]}"
-    return " und ".join(phrases)
+        return f"{phrases[0]}: {phrases[1]}{joiner}{phrases[2]}"
+    return joiner.join(phrases)
 
 
 def title(doc: Document, settings: MetadataSettings) -> str:
@@ -92,7 +96,8 @@ def title(doc: Document, settings: MetadataSettings) -> str:
     if found:
         return clean_title(found, settings.title_max)
     template = _keyphrase_title(
-        finalize_keywords([c.text for c, _ in scored_tfidf(doc)], 3)
+        finalize_keywords([c.text for c, _ in scored_tfidf(doc)], 3),
+        " und " if _UND_RE.search(doc.text) else ", ",
     )
     if template:
         return clean_title(template, settings.title_max)

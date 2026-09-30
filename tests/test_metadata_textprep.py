@@ -183,3 +183,79 @@ def test_a_token_longer_than_any_word_is_no_keyword():
 
     assert keywords, "the ordinary keywords are still found"
     assert all(len(word) <= textprep.MAX_TOKEN_CHARS for k in keywords for word in k.split()), keywords
+
+
+
+# --- M06 (audit 2026-09-30): the proposals themselves --------------------------------------------
+
+
+def _occurs(keyword: str, text: str) -> bool:
+    """Does the keyword occur in the text as written (its first letter may be capitalised)?"""
+    flat = " ".join(text.split()).lower()
+    return keyword.lower() in flat
+
+
+def test_a_keyword_never_runs_across_punctuation():
+    """`Mathematik, Physik, Chemie` came back as the keyword "Mathematik Physik Chemie": each
+    word occurs in the text, the phrase does not."""
+    text = ("Mathematik, Physik, Chemie gehören zu den MINT-Fächern. Mathematik, Physik und "
+            "Chemie werden oft gemeinsam unterrichtet. Die Fächer ergänzen sich im Unterricht.")
+
+    keywords = generate(text).keywords
+
+    assert keywords
+    assert all(_occurs(k, text) for k in keywords), keywords
+
+
+def test_a_ligature_is_read_as_its_letters():
+    """A PDF writes "ﬂüssige" with one ligature character, whose capital is two letters: the
+    keyword came back as "FLüssige Phase"."""
+    text = ("Die ﬂüssige Phase entsteht beim Schmelzen. Die ﬂüssige Phase hat kein festes "
+            "Volumen und keine feste Form. Beim Erhitzen verdampft die ﬂüssige Phase.")
+
+    keywords = generate(text).keywords
+
+    assert "Flüssige Phase" in keywords, keywords
+    assert not any("FL" in k for k in keywords), keywords
+
+
+def test_the_title_template_adds_no_word_the_text_does_not_have():
+    """Every word the endpoint returns occurs in the input -- except the "und" the keyword
+    template inserted, in English texts too."""
+    text = ("Photosynthesis converts light energy into chemical energy. Chlorophyll absorbs "
+            "light in the leaves. Photosynthesis produces oxygen and glucose from carbon dioxide "
+            "and water. Chlorophyll gives leaves their green colour.")
+
+    title = generate(text).title
+
+    assert " und " not in title, title
+
+
+def test_the_description_takes_no_sentence_whose_reference_was_skipped():
+    """The sentence introducing Napoleon does not fit the 500-character budget and is skipped;
+    the one after it opens with "Er" -- which then pointed at the Revolution."""
+    first = "Die Französische Revolution begann im Jahr 1789 mit dem Sturm auf die Bastille in Paris."
+    second = ("Sie veränderte die politische Ordnung Europas, beendete die absolute Monarchie in "
+              "Frankreich, die über Jahrhunderte bestanden hatte, und brachte neue Ideen von "
+              "Freiheit und Gleichheit hervor.")
+    napoleon = ("Napoleon Bonaparte, ein junger Offizier aus Korsika, nutzte die unruhigen Jahre "
+                "nach der Revolution geschickt für seinen Aufstieg, gewann zahlreiche Schlachten "
+                "in Italien und Ägypten, stürzte im Jahr 1799 das Direktorium in einem "
+                "Staatsstreich und übernahm als Erster Konsul die Macht in der Republik.")
+    crowned = "Er krönte sich im Jahr 1804 selbst zum Kaiser der Franzosen."
+
+    description = generate(" ".join([first, second, napoleon, crowned])).description
+
+    assert description.startswith(first), description
+    assert napoleon not in description, "test setup: the Napoleon sentence has to be skipped"
+    assert crowned not in description, description
+
+
+def test_a_boilerplate_phrase_inside_a_paragraph_does_not_drop_the_paragraph():
+    """"Datenschutzerklärung" in a sentence ABOUT data protection is content, not chrome; the
+    phrases now mark only lines short enough to be chrome."""
+    paragraph = ("Jede Website, die personenbezogene Daten verarbeitet, braucht eine "
+                 "Datenschutzerklärung, in der steht, welche Daten erhoben werden, wozu sie "
+                 "verwendet werden und wie lange sie gespeichert bleiben. Das verlangt die DSGVO.")
+
+    assert "Datenschutzerklärung" in textprep.clean_text(paragraph)

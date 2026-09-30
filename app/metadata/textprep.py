@@ -214,9 +214,17 @@ def letter_ratio(s: str) -> float:
     return sum(c.isalpha() for c in visible) / len(visible) if visible else 0.0
 
 
+# The phrases mark page chrome, and chrome is short -- a footer, a banner, a menu line. Matched
+# anywhere, they dropped whole paragraphs: one ABOUT data protection says "Datenschutzerklärung"
+# (audit 2026-09-30, M06). A cookie notice runs to about 150 characters.
+_CHROME_MAX_CHARS = 200
+
+
 def is_boilerplate(s: str) -> bool:
     lowered = s.lower()
-    if any(phrase in lowered for phrase in _BOILERPLATE_PHRASES) or _REFERENCE_RE.search(s):
+    if len(s) <= _CHROME_MAX_CHARS and any(phrase in lowered for phrase in _BOILERPLATE_PHRASES):
+        return True
+    if _REFERENCE_RE.search(s):
         return True
     tokens = [t.lower() for t in tokenize(s)]
     # Some menu words ("startseite") are themselves in the stopword list, so test both sets.
@@ -313,8 +321,17 @@ def join_wrapped_lines(lines: list[str]) -> list[str]:
     return ["".join(pieces) for pieces in joined]
 
 
+# The Latin ligatures a PDF writes as one character. Their capital is two letters, so a
+# keyword starting with one came back as "FLüssige Phase" (audit 2026-09-30, M06). Only these:
+# full NFKC would also rewrite superscripts, fractions and full-width forms the text meant.
+_LIGATURES = {ord(lig): letters for lig, letters in zip(
+    "\ufb00\ufb01\ufb02\ufb03\ufb04\ufb05\ufb06", ["ff", "fi", "fl", "ffi", "ffl", "st", "st"],
+    strict=True)}
+
+
 def _normalise(text: str) -> str:
-    return unicodedata.normalize("NFC", text).translate(_ZERO_WIDTH).replace("\xa0", " ")
+    return (unicodedata.normalize("NFC", text).translate(_ZERO_WIDTH).translate(_LIGATURES)
+            .replace("\xa0", " "))
 
 
 def clean_text(raw: str) -> str:
