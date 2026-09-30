@@ -74,6 +74,10 @@ def _training_section(metadata: dict) -> list[str]:
     ]
     if metadata.get("label_filter"):
         lines.insert(-1, _row("Label filter", f"`{metadata['label_filter']}`"))
+    ubiquitous = as_names(metadata.get("ubiquitous_labels"))
+    if ubiquitous:
+        lines.insert(-1, _row("Not trained (on nearly every row)",
+                              ", ".join(f"`{uri}`" for uri in ubiquitous)))
     if weights:
         lines += [
             "",

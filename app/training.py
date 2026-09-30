@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 
 from .classifier import ClassifierModel
 from .deploy import Fitted, fit_evaluate_deploy
-from .errors import TrainingInputError
+from .errors import TrainingInputError, UnsafeModelError
 from .memory import MiB, PeakSampler, held_bytes
 from .prepare import Prepared, prepare_data
 from .profiles import Profile, TrainingConfig
@@ -136,6 +136,9 @@ def _build_metadata(
             uri: int(count)
             for uri, count in zip(prep.classes, prep.y_all.sum(axis=0), strict=True)
         },
+        # Labels the dataset had enough rows of that were NOT trained: too few rows lack them
+        # to learn anything from (prepare). Omitted when there are none.
+        **({"ubiquitous_labels": list(prep.ubiquitous_labels)} if prep.ubiquitous_labels else {}),
         "metrics": fitted.metrics,
         "training_time_seconds": round(elapsed, 1),
         # What the run needed, so the next run of this size can be sized before it
@@ -227,8 +230,17 @@ def run_training(
         )
         # Bundle sub-steps feed the job heartbeat: a big skops dump can crawl for
         # many minutes under memory pressure, and phase/progress stay frozen then.
-        registry.save(req["model_name"], model, metadata,
-                      on_step=lambda detail: report(phase_detail=detail))
+        try:
+            registry.save(req["model_name"], model, metadata,
+                          on_step=lambda detail: report(phase_detail=detail))
+        except UnsafeModelError as exc:
+            # The staged bundle failed the load check (Registry.stage). Said as it is:
+            # the message names a file and a type, and "see server logs" would leave the
+            # operator with a run that failed for no visible reason.
+            raise TrainingInputError(
+                f"The trained model could not be saved in a form this server loads ({exc}); "
+                "nothing was published."
+            ) from exc
     logger.info("Training done: %s f1_macro=%.4f in %.1fs",
                 req["model_name"], fitted.metrics["f1_macro"], elapsed)
 

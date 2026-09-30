@@ -26,7 +26,14 @@ from typing import BinaryIO
 
 from . import model_archive, model_report
 from .classifier import ClassifierModel
-from .model_io import CARD_FILE, MANIFEST_FILE, UnsafeModelError, _read_bundle, _write_bundle
+from .model_io import (
+    CARD_FILE,
+    MANIFEST_FILE,
+    UnsafeModelError,
+    _read_bundle,
+    _write_bundle,
+    check_loadable,
+)
 from .settings import get_settings
 
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
@@ -166,6 +173,13 @@ class Registry:
         if tmp.exists():
             shutil.rmtree(tmp)  # leftover from a previous crash
         _write_bundle(tmp, model, metadata, on_step)
+        try:
+            # Before anything can publish it: a bundle the loader would refuse must not
+            # become a model (audit 2026-09-30, T01).
+            check_loadable(tmp)
+        except UnsafeModelError:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
         return tmp
 
     def publish(

@@ -368,6 +368,17 @@ Older bundles still carry such a class — loading one logs a warning, and
 `scripts/prune_bundle_labels.py --apply` removes it without retraining (it drops the matching
 estimator too and verifies the remaining probabilities are bit-identical).
 
+### A label on (nearly) every row is dropped, not learned
+
+A label is learned from the rows without it as much as from the rows with it, so it needs
+`min_samples_per_label` of each. One that (almost) every row carries — a parent subject in a
+hierarchical vocabulary, a constant in a filtered export — teaches nothing and would lift the
+macro F1 for free. Worse, scikit-learn fits it as a constant, a type the pickle-free loader
+refuses: until 4.0.1 such a run reported `completed` and its model answered every request
+with 422. It is now left out, logged, and listed in the bundle as `ubiquitous_labels` (and on
+the model card); if nothing else is left, the run stops and says why. Every bundle is also
+checked against the loader's type allowlist before it is published.
+
 ## Profiles (`config.yaml`)
 
 Three rungs, strictly ordered by cost — the name is a truthful price tag:

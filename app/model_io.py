@@ -121,7 +121,9 @@ def verify_digests(manifest: object, digests: dict[str, str]) -> None:
         raise UnsafeModelError(f"{MANIFEST_FILE} lists files the archive lacks: {missing}")
 
 
-def _safe_skops_load(path: Path):
+def _refuse_untrusted_types(path: Path) -> None:
+    """Refuse a skops container declaring a type outside the allowlist -- without loading it
+    (skops reads the schema, not the arrays)."""
     try:
         untrusted = get_untrusted_types(file=str(path))
     except Exception as exc:  # noqa: BLE001 - corrupt/non-skops container -> uniform load error
@@ -129,6 +131,23 @@ def _safe_skops_load(path: Path):
     disallowed = [t for t in untrusted if t not in _ALLOWED_EXTRA_TYPES]
     if disallowed:
         raise UnsafeModelError(f"Refusing to load {path.name}: untrusted types {disallowed}")
+
+
+def check_loadable(directory: Path) -> None:
+    """Refuse a freshly written bundle whose skops files ``_read_bundle`` would refuse.
+
+    The cheap half of loading it, run before publishing: a training that produced a type the
+    guard does not allow fails there, instead of being reported `completed` and answering
+    every request with 422 (audit 2026-09-30, T01 -- a label on every row made sklearn store a
+    `_ConstantPredictor`). A full load would also parse the arrays, i.e. hold a second copy of
+    the head at the end of the run that peaks highest.
+    """
+    for member in ("head.skops", "vectorizer.skops"):
+        _refuse_untrusted_types(directory / member)
+
+
+def _safe_skops_load(path: Path):
+    _refuse_untrusted_types(path)
     # Trust ONLY the explicit allowlist, never the discovered `untrusted` set
     # (which is [] here anyway). Identical behaviour today, but stays safe if
     # _ALLOWED_EXTRA_TYPES is ever populated -- otherwise we would trust exactly

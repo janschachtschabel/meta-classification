@@ -852,22 +852,25 @@ def test_drop_unlearnable_removes_orphaned_rows_and_remaps_split():
     from app.prepare import _drop_unlearnable
 
     texts = np.array([f"text {i}" for i in range(6)], dtype=object)
+    # Label "c" gives "a" a train negative: a label on every train row is dropped too
+    # (audit 2026-09-30, T01), which the old two-label fixture would now test instead.
     y = np.array([
-        [1, 0], [1, 0], [1, 0],  # rows 0-2 (train): only label "a" has positives here
-        [0, 1],                  # row 3 (val): label "b" exists ONLY outside train
-        [1, 0], [0, 1],          # rows 4 (val) / 5 (test)
+        [1, 0, 0], [1, 0, 0],    # rows 0-1 (train)
+        [0, 0, 1],               # row 2 (train): "a" is not on every train row
+        [0, 1, 0],               # row 3 (val): label "b" exists ONLY outside train
+        [1, 0, 0], [0, 1, 0],    # rows 4 (val) / 5 (test)
     ])
     splits = (np.array([0, 1, 2]), np.array([3, 4]), np.array([5]))
 
     marks = np.array([0, 1, 0, 2, 4, 0], dtype=np.int8)
 
     texts2, y2, classes2, (tr2, va2, te2), marks2 = _drop_unlearnable(
-        texts, y, ["a", "b"], splits, marks)
+        texts, y, ["a", "b", "c"], splits, marks)
 
     assert marks2.tolist() == [0, 1, 0, 4], "the provenance marks follow their rows"
-    assert classes2 == ["a"]
+    assert classes2 == ["a", "c"]
     assert list(texts2) == ["text 0", "text 1", "text 2", "text 4"]
-    assert y2.shape == (4, 1)
+    assert y2.shape == (4, 2)
     assert (y2.sum(axis=1) > 0).all(), "orphaned all-zero rows must be dropped"
     assert tr2.tolist() == [0, 1, 2]
     assert va2.tolist() == [3]  # old row 4 -> new position 3

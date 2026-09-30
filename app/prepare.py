@@ -66,32 +66,38 @@ def _drop_unlearnable(
     marks: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str], tuple[np.ndarray, np.ndarray, np.ndarray],
            np.ndarray | None]:
-    """Drop label columns without positives in the TRAIN split, then the rows
-    those drops orphaned (all-zero targets), remapping the split indices. ``marks``
-    (provenance, one per row) follows the rows.
+    """Drop label columns the TRAIN split cannot teach -- no positive there, or no
+    negative -- then the rows those drops orphaned (all-zero targets), remapping the split
+    indices. ``marks`` (provenance, one per row) follows the rows.
 
-    A head needs positives to learn, so a label present only in val/test cannot
-    be trained. Rows whose ONLY labels were dropped mirror ``prepare_targets``'s
-    row_keep contract: kept, they would score guaranteed misses in the metrics
-    (fatal under the argmax rule for single-label tasks) and dilute
-    ``avg_labels``.
+    A head needs both classes in the rows it is fitted on: a label present only in
+    val/test cannot be trained, and one on every train row is fitted as a constant (the
+    type the skops guard refuses, audit 2026-09-30 T01 -- the deploy fit runs on train
+    and val, so both classes in train is what keeps it loadable). Rows whose ONLY labels
+    were dropped mirror ``prepare_targets``'s row_keep contract: kept, they would score
+    guaranteed misses in the metrics (fatal under the argmax rule for single-label tasks)
+    and dilute ``avg_labels``. Repeated until stable, for the reason ``prepare_targets``
+    gives: an orphaned TRAIN row was a negative of every label that stays.
     """
     train_idx, val_idx, test_idx = splits
-    learnable = y_all[train_idx].sum(axis=0) > 0
-    if bool(learnable.all()):
-        return texts, y_all, classes, splits, marks
-    y_all = y_all[:, learnable]
-    classes = [c for c, keep in zip(classes, learnable, strict=True) if keep]
-    keep = y_all.sum(axis=1) > 0
-    if bool(keep.all()):
-        return texts, y_all, classes, splits, marks
-    new_pos = np.cumsum(keep) - 1
+    while True:
+        positives = y_all[train_idx].sum(axis=0)
+        learnable = (positives > 0) & (positives < len(train_idx))
+        if bool(learnable.all()):
+            return texts, y_all, classes, (train_idx, val_idx, test_idx), marks
+        y_all = y_all[:, learnable]
+        classes = [c for c, keep in zip(classes, learnable, strict=True) if keep]
+        keep = y_all.sum(axis=1) > 0
+        if bool(keep.all()):
+            continue
+        new_pos = np.cumsum(keep) - 1
 
-    def remap(idx: np.ndarray) -> np.ndarray:
-        return new_pos[idx[keep[idx]]]
+        def remap(idx: np.ndarray, keep: np.ndarray = keep, new_pos: np.ndarray = new_pos) -> np.ndarray:
+            return new_pos[idx[keep[idx]]]
 
-    return (texts[keep], y_all[keep], classes, (remap(train_idx), remap(val_idx), remap(test_idx)),
-            None if marks is None else marks[keep])
+        texts, y_all = texts[keep], y_all[keep]
+        train_idx, val_idx, test_idx = remap(train_idx), remap(val_idx), remap(test_idx)
+        marks = None if marks is None else marks[keep]
 
 
 @dataclass
@@ -114,6 +120,9 @@ class Prepared:
     # Which rows an LLM wrote or touched and what that decided (``provenance``); None for
     # a dataset without marks.
     provenance: RowProvenance | None = None
+    # Labels with enough rows that were not trained, because too few rows lack them
+    # (``prepare_targets``) -- recorded, so the bundle says what it left out and why.
+    ubiquitous_labels: tuple[str, ...] = ()
 
 
 def prepare_data(
@@ -175,10 +184,24 @@ def prepare_data(
     override_min = req_min if req_min is not None else training_cfg.min_samples_per_label
     min_samples = data_mod.auto_min_samples(n_texts, override_min)
     y_all, classes, row_keep = data_mod.prepare_targets(loaded.label_lists, min_samples)
+    counts = Counter(label for labels in loaded.label_lists for label in set(labels))
+    # A label with enough rows that did not survive failed the other half of the rule: too
+    # few rows WITHOUT it (prepare_targets). Positive counts never shrink there -- only rows
+    # left without any label are dropped -- so this is exactly the set it removed for that.
+    kept = set(classes)
+    ubiquitous = sorted(label for label, n in counts.items() if n >= min_samples and label not in kept)
+    if ubiquitous:
+        logger.warning("Not trained, on (nearly) every row: %s", ", ".join(ubiquitous))
+    if not classes and ubiquitous:
+        raise TrainingInputError(
+            f"Nothing to learn: every label with enough rows is on every row, or missing from "
+            f"fewer than min_samples_per_label={min_samples} of them ({', '.join(ubiquitous[:5])}"
+            f"{', ...' if len(ubiquitous) > 5 else ''}). A classifier learns a label from the "
+            "rows without it as much as from the rows with it."
+        )
     if not classes:
         # Name the gap, not just the rule: "no label has >= 20" leaves the user
         # guessing whether they are one row short or need a different dataset.
-        counts = Counter(label for labels in loaded.label_lists for label in labels)
         best = max(counts.values(), default=0)
         raise TrainingInputError(
             f"Not enough data to train: of {len(counts)} labels the most frequent one has "
@@ -194,8 +217,9 @@ def prepare_data(
     n_kept = len(texts)
     if n_kept < 10:
         raise TrainingInputError(
-            f"Too few rows left after dropping labels below {min_samples} samples "
-            f"({n_kept} of {n_texts}). Lower min_samples_per_label or add more data."
+            f"Too few rows left after dropping the labels with fewer than {min_samples} rows "
+            f"with them or without them ({n_kept} of {n_texts}). Lower min_samples_per_label "
+            "or add more data."
         )
     forced = req.get("task_type")
     if forced in ("multilabel", "multiclass", "binary"):
@@ -255,4 +279,5 @@ def prepare_data(
                                   evaluated=test_idx if cv_folds < 2 else None,
                                   min_samples=min_samples,
                                   thin_mode=req.get("thin_label_threshold", "own")),
+        ubiquitous_labels=tuple(ubiquitous),
     )

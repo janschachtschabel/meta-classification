@@ -128,11 +128,14 @@ def test_prepare_targets_uses_a_compact_dtype():
 
 
 def test_prepare_targets_drops_rare_labels_and_empty_rows():
-    labels = [["a"], ["a"], ["a"], ["b"]]  # 'b' occurs only once
+    # 'b' occurs only once. 'c' is there so that 'a' is not on every row left once 'b's row
+    # goes: a label needs rows without it too (audit 2026-09-30, T01), and the old fixture
+    # -- 'a' alone -- asserted exactly the constant column that made bundles unloadable.
+    labels = [["a"], ["a"], ["a"], ["c"], ["c"], ["b"]]
     matrix, classes, row_keep = data.prepare_targets(labels, min_samples=2)
-    assert classes == ["a"]
-    assert matrix.shape == (3, 1)
-    assert row_keep.tolist() == [True, True, True, False]
+    assert classes == ["a", "c"]
+    assert matrix.shape == (5, 2)
+    assert row_keep.tolist() == [True, True, True, True, True, False]
 
 
 def test_preparing_targets_costs_what_survives_not_what_arrived():

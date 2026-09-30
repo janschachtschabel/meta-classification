@@ -18,6 +18,14 @@ brackets are its finding numbers.
   GitLab's `pytest` job had no helm: eight render tests failed in every pipeline, so neither
   image nor chart ever reached the company registry, not even for `v4.0.1`. The job installs
   helm 3.16.4, verified against its published checksum. (B01)
+- **A label on every row no longer produces a model that cannot be loaded.** scikit-learn fits
+  such a label as a `_ConstantPredictor`, which the skops guard refuses: the run reported
+  `completed` and every `/predict` answered 422 — realistic for a parent subject in a
+  hierarchical vocabulary. A label now needs `min_samples_per_label` rows without it as well
+  as with it (in the train split, for a holdout run); the ones that fail are listed in the
+  bundle as `ubiquitous_labels` and on the model card, and a run with nothing else left stops
+  and says why. Every staged bundle is checked against the loader's type allowlist before it
+  is published. (T01)
 
 ## [4.0.1] — 2026-09-27
 

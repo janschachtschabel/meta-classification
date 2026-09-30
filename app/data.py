@@ -184,10 +184,19 @@ def auto_min_samples(n_samples: int, override: int | None = None) -> int:
 def prepare_targets(
     label_lists: list[list[str]], min_samples: int
 ) -> tuple[np.ndarray, list[str], np.ndarray]:
-    """Binarize labels, drop rare label columns and now-empty rows.
+    """Binarize labels, drop the label columns there is nothing to learn from, and the
+    rows that leaves without a label.
 
     Returns ``(Y, classes, row_keep_mask)``. Apply ``row_keep_mask`` to the
     texts to keep them aligned with ``Y``.
+
+    A label needs ``min_samples`` rows WITH it and as many WITHOUT it. The second half is
+    the mirror of the first: a label on every row teaches nothing, and sklearn fits it as a
+    `_ConstantPredictor` -- a type the skops guard rightly refuses, so the run reported
+    `completed` and its model could never be loaded (audit 2026-09-30, T01). Repeated until
+    nothing changes, because dropping the rows a drop left empty takes negatives away from
+    the labels that stay: a label missing only from rows whose labels are all too rare is,
+    once those rows are gone, on every row that is left.
 
     Binarized SPARSE, filtered there, and densified only once the rare columns are
     gone — because the cost has to follow the labels that survive, not the ones that
@@ -204,12 +213,20 @@ def prepare_targets(
     """
     mlb = MultiLabelBinarizer(sparse_output=True)
     matrix = mlb.fit_transform(label_lists)
-    col_counts = np.asarray(matrix.sum(axis=0)).ravel()
-    col_keep = col_counts >= min_samples
-    matrix = matrix[:, col_keep]
-    classes = [c for c, keep in zip(mlb.classes_, col_keep, strict=False) if keep]
-    row_keep = np.asarray(matrix.sum(axis=1)).ravel() > 0
-    return matrix[row_keep].astype(np.int8).toarray(), classes, row_keep
+    classes = list(mlb.classes_)
+    rows = np.arange(matrix.shape[0])
+    while True:
+        positives = np.asarray(matrix.sum(axis=0)).ravel()
+        col_keep = (positives >= min_samples) & (len(rows) - positives >= min_samples)
+        matrix = matrix[:, col_keep]
+        classes = [c for c, keep in zip(classes, col_keep, strict=True) if keep]
+        labelled = np.asarray(matrix.sum(axis=1)).ravel() > 0
+        matrix, rows = matrix[labelled], rows[labelled]
+        if col_keep.all() and labelled.all():
+            break
+    row_keep = np.zeros(len(label_lists), dtype=bool)
+    row_keep[rows] = True
+    return matrix.astype(np.int8).toarray(), classes, row_keep
 
 
 def three_way_split(
