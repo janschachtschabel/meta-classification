@@ -72,6 +72,8 @@ const STRINGS_EN = {
   "query.correctButton": "Correct",
   "query.csv.done": "Done: {name} downloaded.",
   "query.csv.heading": "{name} downloaded",
+  "query.csv.incomplete": "Incomplete: the answer covers only {covered} of {expected} input rows — the transfer was cut short. The file was saved anyway; please run the classification again.",
+  "query.csv.cutShort": "Cut short: {name} is incomplete.",
   "query.csv.inputRows": {"one": "{count} input row", "other": "{count} input rows"},
   "query.csv.note": "Each line carries the number of the input row it came from, so the answers join back onto your own file. Rows the model asserted nothing for are in there too, with the prediction fields empty.",
   "query.csv.progress": "Classifying the file — the answer downloads when it is done …",

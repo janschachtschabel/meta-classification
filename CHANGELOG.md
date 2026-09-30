@@ -40,6 +40,9 @@ brackets are its finding numbers.
   success, the error only in the server log. The whole file is now parsed before the first
   byte — a broken row is a 400 naming it — and the response carries `X-Input-Rows`, the
   number of input rows the answer covers, exposed to cross-origin clients as well. (V06)
+- **The admin UI no longer reports a CSV answer cut short as done.** It compares the rows
+  the answer covers with `X-Input-Rows` and says "incomplete: N of M input rows" where it
+  used to say "Fertig … 500 Eingabezeilen" for a 700-row file. (U02)
 
 ## [4.0.1] — 2026-09-27
 

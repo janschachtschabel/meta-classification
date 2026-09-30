@@ -73,6 +73,8 @@ const STRINGS_DE = {
   "query.correctButton": "Korrigieren",
   "query.csv.done": "Fertig: {name} heruntergeladen.",
   "query.csv.heading": "{name} heruntergeladen",
+  "query.csv.incomplete": "Unvollständig: Die Antwort deckt nur {covered} von {expected} Eingabezeilen ab — die Übertragung ist abgebrochen. Die Datei wurde trotzdem gespeichert; bitte die Klassifizierung wiederholen.",
+  "query.csv.cutShort": "Abgebrochen: {name} ist unvollständig.",
   "query.csv.inputRows": {"one": "{count} Eingabezeile", "other": "{count} Eingabezeilen"},
   "query.csv.note": "Jede Zeile trägt die Nummer der Eingabezeile, aus der sie stammt — so lassen sich die Antworten wieder an die eigene Datei anfügen. Zeilen, zu denen das Modell nichts behauptet hat, stehen ebenfalls darin, mit leeren Vorhersagefeldern.",
   "query.csv.progress": "Die Datei wird klassifiziert — die Antwort wird heruntergeladen, sobald sie fertig ist …",

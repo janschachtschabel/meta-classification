@@ -93,12 +93,14 @@ const Api = (() => {
     saveBlob(await (await request(path, { method: "POST" })).blob(), filename);
   }
 
-  /* The same, for endpoints that answer a multipart upload with a file. */
+  /* The same, for endpoints that answer a multipart upload with a file. The headers come
+     back with the blob: whether a streamed answer is complete is only readable there
+     (`X-Input-Rows` on /predict/csv) -- a stream cut short ends like a finished one. */
   async function downloadForm(path, form, filename) {
     const res = await request(path, { method: "POST", form });
     const blob = await res.blob();
     saveBlob(blob, filename);
-    return blob;
+    return { blob, headers: res.headers };
   }
 
   return {

@@ -369,18 +369,29 @@ async function runManyTexts(models, plan, out) {
 
 /* ---------- a CSV file ---------- */
 
-function csvSummary(text, filename) {
-  const lines = text.split("\n").slice(1).filter(Boolean);
-  // Only the row number is read out of the raw line, and that field is always a bare
-  // integer — quoting can affect the label and nothing before it. The file itself is
-  // what the user works with; this is the receipt.
-  const covered = new Set(lines.map((line) => line.slice(0, line.indexOf(","))));
+const answerLines = (text) => text.split("\n").slice(1).filter(Boolean);
+
+/* The input rows an answer covers. Every input row gets at least one line -- a refused
+   one with empty fields -- so the distinct row numbers ARE the rows that made it into the
+   file. Only the row number is read out of the raw line, and that field is always a bare
+   integer: quoting can affect the label and nothing before it. */
+const rowsCovered = (lines) => new Set(lines.map((line) => line.slice(0, line.indexOf(",")))).size;
+
+/* `expected` is the server's X-Input-Rows, null where it sent none. A stream cut short ends
+   like a finished one, so fewer rows than that is said where the success would have been
+   (audit 2026-09-30, U02: "Fertig … 500 Eingabezeilen" for a 700-row file). */
+function csvSummary(text, filename, expected = null) {
+  const lines = answerLines(text);
+  // The file itself is what the user works with; this is the receipt.
+  const covered = rowsCovered(lines);
   const refused = lines.filter((line) => /^\d+,,,,\r?$/.test(line)).length;
-  const counted = [t("query.csv.inputRows", { count: covered.size }),
+  const counted = [t("query.csv.inputRows", { count: covered }),
                    t("query.bulk.labelsAssigned", { count: lines.length - refused })];
   if (refused) counted.push(`<strong>${t("query.csv.rowsWithoutLabel", { count: refused })}</strong>`);
+  const cutShort = expected !== null && covered < expected
+    ? `<p class="error" role="alert">${t("query.csv.incomplete", { covered, expected })}</p>` : "";
   return `<div class="card">
-    <h3>${t("query.csv.heading", { name: esc(filename) })}</h3>
+    <h3>${t("query.csv.heading", { name: esc(filename) })}</h3>${cutShort}
     <p>${counted.join(" · ")}.</p>
     <p class="muted">${t("query.csv.note")}</p></div>`;
 }
@@ -400,10 +411,14 @@ async function runCsvFile(model, out) {
 
   const name = input.files[0].name.replace(/\.csv$/i, "") + "-predictions.csv";
   $("#query-status").textContent = t("query.csv.progress");
-  const blob = await Api.downloadForm("/predict/csv", form, name);
+  const { blob, headers } = await Api.downloadForm("/predict/csv", form, name);
   const text = await blob.text();
-  out.innerHTML = csvSummary(text, name);
-  return t("query.csv.done", { name });   // textContent: the caller does not re-escape
+  const sent = Number.parseInt(headers.get("X-Input-Rows") ?? "", 10);
+  const expected = Number.isInteger(sent) ? sent : null;
+  out.innerHTML = csvSummary(text, name, expected);
+  const complete = expected === null || rowsCovered(answerLines(text)) >= expected;
+  // textContent: the caller does not re-escape
+  return t(complete ? "query.csv.done" : "query.csv.cutShort", { name });
 }
 
 /* ---------- submit ---------- */
