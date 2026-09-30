@@ -145,12 +145,41 @@ def test_parallel_requests_get_what_sequential_ones_get():
     ("Nährstoff" -> "franzos"). The stem cache is cleared before each round, or it would
     hide the stemmer's half of the race."""
     texts = _distinct_texts(64)
-    textprep.stem.cache_clear()
+    textprep.cached_stem.cache_clear()
     sequential = [generate(text) for text in texts]
 
     with ThreadPoolExecutor(8) as pool:
         for _ in range(3):
-            textprep.stem.cache_clear()
+            textprep.cached_stem.cache_clear()
             parallel = list(pool.map(generate, texts))
             wrong = sum(p != s for p, s in zip(parallel, sequential, strict=True))
             assert wrong == 0, f"{wrong} of {len(texts)} parallel results differ"
+
+
+
+# --- M04: what the caches may hold ---------------------------------------------------------------
+
+_LONG = "Donaudampfschifffahrtsgesellschaftskapitaensmuetze" * 40  # 2,000 characters, one token
+
+
+def test_a_token_longer_than_any_word_is_not_cached():
+    """M04 (audit 2026-09-30): the stem cache counts ENTRIES (200,000), and a token can be as
+    long as a text line -- 25 long tokens in each of 200 texts added 55 MiB for 5,000 entries,
+    over 2 GB at the cap, none of it visible to the training's memory budget."""
+    textprep.cached_stem.cache_clear()
+    before = textprep.cached_stem.cache_info().currsize
+
+    assert textprep.stem(_LONG)  # still stemmed -- just not remembered
+
+    assert textprep.cached_stem.cache_info().currsize == before
+
+
+def test_a_token_longer_than_any_word_is_no_keyword():
+    """Nor a candidate: a 2,000-character "keyword" is a fragment, not a term (M04, M06)."""
+    text = (f"Die {_LONG} ist ein Beispiel. Die Französische Revolution veränderte Europa. "
+            "Die Französische Revolution begann 1789 in Paris.")
+
+    keywords = generate(text).keywords
+
+    assert keywords, "the ordinary keywords are still found"
+    assert all(len(word) <= textprep.MAX_TOKEN_CHARS for k in keywords for word in k.split()), keywords

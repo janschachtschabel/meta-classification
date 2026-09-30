@@ -53,6 +53,11 @@ GENERIC_TERMS = _load_wordlist("generic_terms_de.txt")
 
 # A token starts with a letter; hyphenated compounds such as "Calvin-Zyklus" stay one token.
 _TOKEN_RE = re.compile(r"[^\W\d_]\w*(?:-\w+)*")
+# Longer than any German word (the longest compounds in use run to ~40 characters), so a token
+# past this is a fragment -- letters without a space, a mangled URL -- and never a keyword
+# candidate (phrases._tag). It stays out of the stem cache as well: that one counts entries,
+# and a fragment held 11 KB where a word holds a few dozen bytes (audit 2026-09-30, M04).
+MAX_TOKEN_CHARS = 64
 _ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍⁠﻿­"), None)
 _SENTENCE_END_RE = re.compile(r"[.!?][\"'“”„»«)]?$")
 _LIST_MARKER_RE = re.compile(r"^(?:[-–•*·▪►]|\d{1,2}[.)]|[a-zA-Z][.)])\s")
@@ -190,9 +195,18 @@ def is_stopword(word: str) -> bool:
 
 
 @lru_cache(maxsize=200_000)
-def stem(word: str) -> str:
-    """Snowball stem of the lower-cased word; umlauts are folded, so "Brüche" == "Bruch"."""
+def cached_stem(word: str) -> str:
     return _stemmer().stemWord(word.lower())
+
+
+def stem(word: str) -> str:
+    """Snowball stem of the lower-cased word; umlauts are folded, so "Brüche" == "Bruch".
+
+    Cached per word -- unless it is longer than any word (``MAX_TOKEN_CHARS``).
+    """
+    if len(word) > MAX_TOKEN_CHARS:
+        return _stemmer().stemWord(word.lower())
+    return cached_stem(word)
 
 
 def letter_ratio(s: str) -> float:

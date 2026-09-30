@@ -22,7 +22,7 @@ from functools import lru_cache
 
 from wordfreq import zipf_frequency
 
-from .textprep import GENERIC_TERMS, is_stopword, is_task_verb, stem, tokenize
+from .textprep import GENERIC_TERMS, MAX_TOKEN_CHARS, is_stopword, is_task_verb, stem, tokenize
 from .types import Document
 
 # Attributive adjectives carry a derivational suffix plus an inflection ending ("chemische").
@@ -42,7 +42,9 @@ class Candidate:
 
 
 def _tag(token: str, index: int, lowercase_forms: set[str]) -> str:
-    if is_stopword(token):
+    # A fragment longer than any word ends a phrase like a stopword: never part of a keyword,
+    # never in the caches behind stem() and _idf() (audit 2026-09-30, M04).
+    if len(token) > MAX_TOKEN_CHARS or is_stopword(token):
         return _STOP
     if token[0].isupper():
         # A capitalised sentence opener that also occurs in lower case is no noun ("Besonders").

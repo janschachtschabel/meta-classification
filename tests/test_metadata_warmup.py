@@ -17,7 +17,8 @@ import ast
 import logging
 from pathlib import Path
 
-from app.metadata.textprep import stem
+# The cache behind textprep.stem (split out so a fragment longer than any word stays out of it).
+from app.metadata.textprep import cached_stem as stem
 from app.settings import Settings
 
 # `app.lifecycle` is imported inside each test rather than here on purpose. Several test

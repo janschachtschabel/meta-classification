@@ -36,6 +36,12 @@ brackets are its finding numbers.
   request now carries at most 1,000,000 characters across its texts (422 beyond), and at most
   `APIV3_MAX_CONCURRENT_METADATA` (default 2) batches run at once — the next gets 503 with
   `Retry-After`, like `/predict/csv`. (M03)
+- **A token longer than any word is neither a keyword nor cached.** The stem and word-rarity
+  caches count entries, not bytes, and a token could be as long as a text line: 25 such
+  tokens in each of 200 texts added 55 MiB, over 2 GB at the caches' caps — memory the
+  training's budget does not see. Such a 4,000-character fragment could also come back as a
+  keyword. Past 64 characters a token now ends a phrase like a stopword and is stemmed
+  without being remembered. (M04; the keyword half of M06)
 
 ### Fixed
 
