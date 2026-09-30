@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import statistics
+import threading
 import unicodedata
 import warnings
 from functools import lru_cache
@@ -125,8 +126,28 @@ _TASK_VERBS = frozenset({
     "vergleicht", "zeichne", "zeichnet",
 })
 
-_segmenter = pysbd.Segmenter(language="de", clean=False)
-_stemmer = snowballstemmer.stemmer("german")
+# pysbd keeps the text it segments on the Segmenter, and the pure-Python Snowball stemmer keeps
+# the word it stems on the stemmer, so neither may be shared by the threads that serve requests:
+# parallel requests got each other's sentences, 500s from an IndexError inside the stemmer, and
+# wrong stems that then stayed in the cache for good (audit 2026-09-30, M02). One of each per
+# thread, built on first use -- both take microseconds.
+_per_thread = threading.local()
+
+
+def _segmenter() -> pysbd.Segmenter:
+    try:
+        return _per_thread.segmenter
+    except AttributeError:
+        _per_thread.segmenter = pysbd.Segmenter(language="de", clean=False)
+        return _per_thread.segmenter
+
+
+def _stemmer():  # noqa: ANN202 - snowballstemmer is untyped
+    try:
+        return _per_thread.stemmer
+    except AttributeError:
+        _per_thread.stemmer = snowballstemmer.stemmer("german")
+        return _per_thread.stemmer
 
 # pysbd's German abbreviation pass runs one whole-string re.sub per abbreviation candidate,
 # so a single call costs candidates x length: 25k -> 100k characters of prose on one line
@@ -171,7 +192,7 @@ def is_stopword(word: str) -> bool:
 @lru_cache(maxsize=200_000)
 def stem(word: str) -> str:
     """Snowball stem of the lower-cased word; umlauts are folded, so "Brüche" == "Bruch"."""
-    return _stemmer.stemWord(word.lower())
+    return _stemmer().stemWord(word.lower())
 
 
 def letter_ratio(s: str) -> float:
@@ -300,7 +321,7 @@ def split_sentences(text: str) -> list[str]:
         # Per LINE, not per piece: the comma repair below may join across a piece boundary.
         start = len(sentences)
         for piece in _bounded(line):
-            for segment in (s.strip() for s in _segmenter.segment(piece)):
+            for segment in (s.strip() for s in _segmenter().segment(piece)):
                 if not segment:
                     continue
                 # pysbd also ends a sentence at "Ludwig XVI., der …"; no sentence starts with

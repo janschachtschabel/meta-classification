@@ -24,6 +24,12 @@ brackets are its finding numbers.
   took 4.0 s and a request at the documented caps 13–60 CPU-minutes, with a readonly key. Only
   the end of the last line is read now, and the pieces are joined once: 0.06 s. The joined
   text is unchanged, checked against the old code on 20,000 generated inputs. (M01)
+- **Parallel `/metadata` requests no longer corrupt each other.** pysbd keeps the text it is
+  segmenting on the segmenter object, and the Snowball stemmer keeps its word on the stemmer,
+  and each existed once for every request thread: in parallel, results differed from the
+  sequential ones, descriptions held sentences the input did not contain, some requests
+  answered 500 (an `IndexError` inside the stemmer), and a stem computed mid-race stayed in
+  the cache. Each thread now has its own. (M02)
 
 ### Fixed
 

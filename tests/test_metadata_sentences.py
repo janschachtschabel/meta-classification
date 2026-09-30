@@ -84,8 +84,9 @@ class _Spy:
 @pytest.mark.parametrize("shape", [_prose_line, _unpunctuated_line])
 def test_pysbd_is_never_handed_a_whole_long_line(shape, monkeypatch):
     """The mechanism, checked without a clock: what bounds the cost is the length of each call."""
-    spy = _Spy(textprep._segmenter)
-    monkeypatch.setattr(textprep, "_segmenter", spy)
+    # The segmenter is per thread (audit 2026-09-30, M02), so the accessor is what is replaced.
+    spy = _Spy(textprep._segmenter())
+    monkeypatch.setattr(textprep, "_segmenter", lambda: spy)
 
     textprep.split_sentences(shape(100_000))
 

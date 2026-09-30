@@ -7,12 +7,15 @@ lists, "der ... und die ..." -- all join, so the cost grew with the square of th
 caps came to 13-60 CPU-minutes. No scaling test reached this path.
 """
 
+import json
 import random
 import re
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-from app.metadata import textprep
+from app.metadata import generate, textprep
 
 
 def _wrapped(chars: int) -> str:
@@ -118,3 +121,36 @@ def test_joining_gives_exactly_what_it_gave_before():
     for _ in range(20_000):
         lines = _random_lines(rng)
         assert textprep.join_wrapped_lines(lines) == _reference_join_wrapped_lines(lines), lines
+
+
+
+# --- M02: parallel requests ------------------------------------------------------------------
+
+
+def _distinct_texts(count: int) -> list[str]:
+    """Real prose, recombined: the parity fixture's sentences, shuffled into ``count`` texts."""
+    fixture = Path(__file__).parent / "fixtures" / "metadata_parity.json"
+    documents = json.loads(fixture.read_text(encoding="utf-8"))["documents"]
+    sentences = [s for doc in documents for s in textprep.split_sentences(doc["text"]) if len(s) > 40]
+    rng = random.Random(64)
+    return ["\n".join(rng.sample(sentences, 12)) for _ in range(count)]
+
+
+def test_parallel_requests_get_what_sequential_ones_get():
+    """M02 (audit 2026-09-30): pysbd keeps the text it is segmenting on the segmenter, and the
+    pure-Python Snowball stemmer keeps its word on the stemmer -- one instance of each, shared
+    by every request thread. In parallel, all 64 results differed from the sequential ones,
+    18 descriptions held sentences the input does not contain, 24 parallel HTTP requests got
+    6-10 answers of 500, and a stem computed mid-race stayed in the cache for good
+    ("Nährstoff" -> "franzos"). The stem cache is cleared before each round, or it would
+    hide the stemmer's half of the race."""
+    texts = _distinct_texts(64)
+    textprep.stem.cache_clear()
+    sequential = [generate(text) for text in texts]
+
+    with ThreadPoolExecutor(8) as pool:
+        for _ in range(3):
+            textprep.stem.cache_clear()
+            parallel = list(pool.map(generate, texts))
+            wrong = sum(p != s for p, s in zip(parallel, sequential, strict=True))
+            assert wrong == 0, f"{wrong} of {len(texts)} parallel results differ"
