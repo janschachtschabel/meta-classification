@@ -139,6 +139,9 @@ def create_app() -> FastAPI:
             allow_credentials="*" not in origins,
             allow_methods=["*"],
             allow_headers=["*"],
+            # How many rows a /predict/csv answer must cover: a page on another origin
+            # cannot tell a stream cut short from a finished one without it.
+            expose_headers=["X-Input-Rows"],
         )
 
     # Self-hosted API docs (replaces the disabled CDN-backed /docs).

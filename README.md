@@ -518,10 +518,14 @@ forced ranking distinguishable from an asserted one.
 Neither side is materialised: the input is read in chunks and the answer leaves as it is
 produced. 🟢 Measured: 50 000 rows against the 59-label `faecher_300k_auto` produced
 4.1 MB of CSV in 54.6 s at a **2.2 MB peak heap** on a 6.5 MB input (`transfer-encoding:
-chunked`, no `content-length`). The upload obeys `max_upload_mb`; the header is checked
-before a byte is streamed, because once a streaming response starts the status line is
-already 200. A malformed row deep in the file therefore truncates the download — the row
-numbers say where it stopped.
+chunked`, no `content-length`). The upload obeys `max_upload_mb`. Before a byte is
+streamed the whole file is parsed once — header, every row, the encoding — because once a
+streaming response starts its status line is already 200, and a failure after that can only
+cut the answer short: until 4.0.1 a broken row past the first 500 did exactly that, with a
+clean end of transfer and no word of it. A file that does not parse is now a 400 naming the
+row. The response header **`X-Input-Rows`** says how many input rows the answer covers — its
+highest `row` + 1; a client comparing the two can tell a complete answer from one cut short
+for any other reason (a dropped connection, a restart).
 
 ### Descriptive metadata
 

@@ -7,7 +7,9 @@ leave to the caller. Here the columns and their weights come out of the bundle.
 
 Nothing is materialised: the CSV is read in chunks, each chunk is classified and
 written out, and the result leaves as it is produced. A 200 MB input therefore costs
-one chunk of rows, not the file.
+one chunk of rows, not the file. It is parsed once completely before the stream starts
+(``check_input``): a failure after the 200 can only cut the answer short, and it did,
+silently (audit 2026-09-30, V06).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -29,20 +32,34 @@ from .errors import TrainingInputError
 # faster and heavier; 500 keeps a chunk's feature matrix small enough to sit beside a
 # loaded model on a 2 GB container.
 CHUNK_ROWS = 500
+# Rows per step of the check's parse: nothing is predicted there, so the text columns of
+# this many rows are all it holds.
+CHECK_ROWS = 50_000
 OUTPUT_FIELDS = ("row", "uri", "label", "confidence", "above_threshold")
 
 
-def check_columns(path: Path, text_columns: list[str], *, separator: str) -> CsvEncoding:
-    """Refuse a CSV that lacks a required text column, before anything is streamed, and
-    return the encoding the whole file is read in.
+@dataclass(frozen=True)
+class CheckedInput:
+    """A CSV that will classify to its last row: how to decode it, and how many rows it has."""
+
+    encoding: CsvEncoding
+    rows: int
+
+
+def check_input(path: Path, text_columns: list[str], *, separator: str,
+                chunk_rows: int = CHECK_ROWS) -> CheckedInput:
+    """Refuse a CSV that cannot be classified to its end, before anything is streamed.
 
     Once a streaming response has started, the status line is already 200 and a failure
-    can only reach the caller as garbage appended to a half-written CSV. Reading just
-    the header settles it while a 400 is still possible. The encoding is decided here, on
-    the whole file (``csv_encoding``), because the stream cannot change its mind later.
+    can only cut the answer short. That is what a broken row past the first chunk did: the
+    parser failed mid-stream, and the caller got 500 of 700 rows, a clean end of transfer
+    and no word of it (audit 2026-09-30, V06). So the whole file is parsed here, once --
+    a fraction of what classifying it costs -- while a 400 is still possible, and the rows
+    are counted for the caller to check the answer against. The encoding is decided here
+    too, on the whole file (``csv_encoding``), because the stream cannot change its mind.
 
-    :raises TrainingInputError: naming the columns that are missing and what is there, or
-        why the file is neither UTF-8 nor Windows-1252.
+    :raises TrainingInputError: naming the columns that are missing and what is there, the
+        row where the file stops parsing, or why it is neither UTF-8 nor Windows-1252.
     """
     encoding = detect(path)
     header = read_csv(path, encoding, sep=separator, nrows=0)
@@ -52,7 +69,9 @@ def check_columns(path: Path, text_columns: list[str], *, separator: str) -> Csv
             f"The CSV has no column {missing}; it has {sorted(header.columns)}. "
             "The model was trained on the columns it names, so those have to be present."
         )
-    return encoding
+    rows = sum(len(chunk) for chunk in _read_chunks(
+        path, text_columns, separator=separator, chunk_rows=chunk_rows, encoding=encoding))
+    return CheckedInput(encoding, rows)
 
 
 def _row_cells(index: int, predictions: list) -> Iterator[list]:
@@ -91,7 +110,7 @@ def classify_csv(
     came from — that number is how a caller joins the answers back onto their own file.
     A row the model asserts nothing for still gets a line.
 
-    Call :func:`check_columns` first: a generator cannot report a bad header. Its
+    Call :func:`check_input` first: a generator cannot report a bad file. Its
     ``encoding`` is the one to pass here (decided again when omitted).
     """
     buffer = io.StringIO()
@@ -128,20 +147,15 @@ def _read_chunks(
     """The CSV in blocks of rows, holding only the text columns (low RAM).
 
     Goes to pandas directly rather than through ``data.read_csv``: with ``chunksize``
-    that call returns a reader, not a frame, and its encoding fallback works by parsing
-    the file a second time — which is precisely what a stream cannot do.
-
-    A malformed row deep in the file therefore aborts a download that has already
-    started. The row numbers in the output say where it stopped, which is the best a
-    stream can offer; the header, the part worth a clean 400, is checked before any of
-    this runs.
+    that call returns a reader, not a frame. pandas raises a parser error while the
+    reader is ITERATED, at the block that holds the broken row -- the conversion has to
+    cover the iteration, not just the call that makes the reader.
     """
     try:
-        reader = pd.read_csv(
+        with pd.read_csv(
             path, sep=separator, usecols=text_columns, dtype=str, chunksize=chunk_rows,
             encoding=encoding.name, encoding_errors=encoding.errors,
-        )
+        ) as reader:
+            yield from reader
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
         raise TrainingInputError(f"The CSV is empty or malformed: {exc}") from exc
-    with reader:
-        yield from reader

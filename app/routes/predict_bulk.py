@@ -108,7 +108,11 @@ async def predict_csv(
     readable off the result.
 
     Nothing is materialised on either side: the CSV is read in chunks and the answer
-    leaves as it is produced. Size limit and rate limit as for the other uploads.
+    leaves as it is produced. Before the first byte, the whole file is parsed once — a
+    broken row is a 400 naming it, not an answer silently cut short — and the response
+    header `X-Input-Rows` says how many input rows the answer covers (its highest `row`
+    + 1), so a client can tell a complete answer from a dropped connection. Size limit and
+    rate limit as for the other uploads.
     **Auth:** readonly.
     """
     if len(separator) != 1:
@@ -130,7 +134,7 @@ async def predict_csv(
         await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, path)
         # Before a byte is streamed: once the response starts, the status line is
         # already 200 and a bad header could only arrive as garbage in the body.
-        encoding = await asyncio.to_thread(predict_csv_mod.check_columns, path, columns, separator=separator)
+        checked = await asyncio.to_thread(predict_csv_mod.check_input, path, columns, separator=separator)
     except TrainingInputError as exc:
         path.unlink(missing_ok=True)
         raise HTTPException(400, str(exc)) from exc
@@ -155,7 +159,7 @@ async def predict_csv(
         try:
             yield from predict_csv_mod.classify_csv(
                 path, model, text_columns=columns, weights=weights,
-                separator=separator, threshold=threshold, top_k=top_k, encoding=encoding,
+                separator=separator, threshold=threshold, top_k=top_k, encoding=checked.encoding,
             )
         finally:
             slots.release()
@@ -164,6 +168,9 @@ async def predict_csv(
         released_stream(),
         media_type="text/csv",
         headers={"Content-Disposition":
-                 f'attachment; filename="{_download_name(file.filename, model_name)}"'},
+                 f'attachment; filename="{_download_name(file.filename, model_name)}"',
+                 # What the answer must account for: its highest `row` + 1. A stream cut
+                 # short ends like a finished one, so this is how a client can tell.
+                 "X-Input-Rows": str(checked.rows)},
         background=BackgroundTask(path.unlink, missing_ok=True),
     )

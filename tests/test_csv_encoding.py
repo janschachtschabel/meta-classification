@@ -139,8 +139,8 @@ def test_classifying_a_csv_reads_the_damaged_file_as_utf8(tmp_path):
     "".join(predict_csv.classify_csv(path, Recorder(), text_columns=["title"], separator=";"))
 
     assert seen[0].startswith("Übungen zur Bruchrechnung"), seen[0]
-    assert predict_csv.check_columns(path, ["title"], separator=";") == csv_encoding.CsvEncoding(
-        "utf-8", replaced=1), "the header check decides the encoding the stream is read in"
+    assert predict_csv.check_input(path, ["title"], separator=";").encoding == csv_encoding.CsvEncoding(
+        "utf-8", replaced=1), "the check decides the encoding the stream is read in"
 
 
 def test_the_bundle_records_how_its_dataset_was_decoded(tmp_path):

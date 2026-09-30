@@ -313,6 +313,16 @@ def test_cors_wildcard_origin_disables_credentials(monkeypatch, tmp_path):
     assert resp.headers.get("access-control-allow-credentials") is None
 
 
+def test_cors_lets_a_browser_client_read_the_input_row_count(monkeypatch, tmp_path):
+    """`/predict/csv` says in `X-Input-Rows` how many rows its answer must cover (V06); a
+    cross-origin page can read a response header only when CORS exposes it."""
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_CORS_ALLOW_ORIGINS="https://redaktion.example")
+    resp = client.get("/health", headers={"Origin": "https://redaktion.example"})
+
+    exposed = resp.headers.get("access-control-expose-headers", "").lower()
+    assert "x-input-rows" in exposed
+
+
 def test_config_endpoint_exposes_safe_fields_without_secrets(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path)
     resp = client.get("/config", headers=RO)

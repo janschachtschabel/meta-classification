@@ -34,6 +34,12 @@ brackets are its finding numbers.
   `/predict/csv` alike: up to 10 stray bytes in a UTF-8 file are read as `�`, a file with
   more or with both encodings mixed is refused with the offset of the first bad byte, and
   the bundle records the result as `csv_encoding`. (T02)
+- **`/predict/csv` no longer cuts its answer short on a broken row.** The input was parsed in
+  500-row chunks while the answer streamed, so a parser error past the first chunk ended the
+  stream after the 200: 500 of 700 rows, a clean end of transfer, `/metrics` counting a
+  success, the error only in the server log. The whole file is now parsed before the first
+  byte — a broken row is a 400 naming it — and the response carries `X-Input-Rows`, the
+  number of input rows the answer covers, exposed to cross-origin clients as well. (V06)
 
 ## [4.0.1] — 2026-09-27
 

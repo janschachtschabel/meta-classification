@@ -1409,6 +1409,31 @@ def test_a_whole_csv_can_be_classified_in_one_call(trained_model):
     assert 0.0 <= float(rows[1][3]) <= 1.0
 
 
+def test_classifying_a_csv_says_how_many_rows_it_answers_for(trained_model):
+    """V06 (audit 2026-09-30): the count a client checks the answer against."""
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    response = client.post("/predict/csv", files=files, data={"model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["x-input-rows"] == "3"
+
+
+def test_classifying_a_csv_with_a_broken_row_deep_inside_is_refused_not_cut_short(trained_model):
+    """V06 (audit 2026-09-30): row 651 opens a quote that never closes. The stream read
+    500-row chunks, so the parser failed on the second one after the 200 had gone out:
+    500 of 700 rows, curl exit 0, `/metrics` counting a 200, the error only in the log."""
+    lines = [b"properties.cclom:title;properties.cclom:general_keyword;other"]
+    lines += [b"Bruchrechnung Aufgabe %d;Mathematik Brueche;x" % i for i in range(700)]
+    lines[652] = b'"Offenes Anfuehrungszeichen;Mathematik;x'
+    files = {"file": ("items.csv", b"\n".join(lines) + b"\n", "text/csv")}
+
+    response = client.post("/predict/csv", files=files, data={"model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 400, f"{response.status_code}: {len(response.text.splitlines())} lines"
+    assert "malformed" in response.text
+    assert not list((_TMP / "data").glob(".predict-*")), "the spooled upload is cleaned up"
+
+
 def test_classifying_a_csv_refuses_a_multi_character_separator(trained_model):
     """pandas treats a multi-character `sep` as a REGEX and falls back to its python
     engine, so the separator becomes attacker-supplied pattern code running over the
