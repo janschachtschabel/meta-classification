@@ -248,6 +248,16 @@ Omitting `top_k` is the normal case: the model then returns every label above it
 tuned threshold. Pass `top_k: N` when you want a ranking of fixed length regardless of
 thresholds — each entry carries `above_threshold` so forced ones stay recognisable.
 
+### Which encoding a CSV is read in
+
+UTF-8 or Windows-1252, decided once per file from all of its bytes — for training, the
+dataset views and `/predict/csv` alike. A handful (up to 10) of bytes that are not UTF-8 in
+an otherwise UTF-8 file, such as a truncated umlaut, are read as `�`; more than that, or a
+file mixing both encodings, is refused with the byte offset of the first bad byte, because no
+reading of it is right. (Until 4.0.1 one such byte anywhere made the whole file cp1252, every
+`ä` became `Ã¤`, and the metrics could not show it: training and test saw the same text.) A
+bundle records what its dataset was read as, under `csv_encoding`.
+
 ### Weighting text fields (`text_column_weights`)
 
 Title and keywords carry far more signal per word than a long description, but a

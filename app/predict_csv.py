@@ -12,7 +12,6 @@ one chunk of rows, not the file.
 
 from __future__ import annotations
 
-import codecs
 import csv
 import io
 from collections.abc import Iterator
@@ -21,6 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 from .classifier import ClassifierModel
+from .csv_encoding import CsvEncoding, detect
 from .data import read_csv
 from .dataset_load import combine_text_columns
 from .errors import TrainingInputError
@@ -32,43 +32,27 @@ CHUNK_ROWS = 500
 OUTPUT_FIELDS = ("row", "uri", "label", "confidence", "above_threshold")
 
 
-def check_columns(path: Path, text_columns: list[str], *, separator: str) -> None:
-    """Refuse a CSV that lacks a required text column, before anything is streamed.
+def check_columns(path: Path, text_columns: list[str], *, separator: str) -> CsvEncoding:
+    """Refuse a CSV that lacks a required text column, before anything is streamed, and
+    return the encoding the whole file is read in.
 
     Once a streaming response has started, the status line is already 200 and a failure
     can only reach the caller as garbage appended to a half-written CSV. Reading just
-    the header settles it while a 400 is still possible.
+    the header settles it while a 400 is still possible. The encoding is decided here, on
+    the whole file (``csv_encoding``), because the stream cannot change its mind later.
 
-    :raises TrainingInputError: naming the columns that are missing and what is there.
+    :raises TrainingInputError: naming the columns that are missing and what is there, or
+        why the file is neither UTF-8 nor Windows-1252.
     """
-    # data.read_csv's own utf-8 -> cp1252 fallback settles the header; only the
-    # chunked body read needs the encoding decided in advance.
-    header = read_csv(path, sep=separator, nrows=0)
+    encoding = detect(path)
+    header = read_csv(path, encoding, sep=separator, nrows=0)
     missing = [column for column in text_columns if column not in header.columns]
     if missing:
         raise TrainingInputError(
             f"The CSV has no column {missing}; it has {sorted(header.columns)}. "
             "The model was trained on the columns it names, so those have to be present."
         )
-
-
-def csv_encoding(path: Path) -> str:
-    """``utf-8`` if the whole file decodes as it, else ``cp1252``.
-
-    ``data.read_csv`` decides this by parsing the file twice. A chunked reader cannot:
-    the second attempt would come after bytes had already been streamed to the caller.
-    One incremental pass settles it up front, reading blocks and keeping none — and
-    German metadata exports really are commonly cp1252, so guessing is not an option.
-    """
-    decoder = codecs.getincrementaldecoder("utf-8")()
-    with path.open("rb") as handle:
-        try:
-            for block in iter(lambda: handle.read(1024 * 1024), b""):
-                decoder.decode(block)
-            decoder.decode(b"", final=True)
-        except UnicodeDecodeError:
-            return "cp1252"
-    return "utf-8"
+    return encoding
 
 
 def _row_cells(index: int, predictions: list) -> Iterator[list]:
@@ -99,6 +83,7 @@ def classify_csv(
     threshold: float | None = None,
     top_k: int | None = None,
     chunk_rows: int = CHUNK_ROWS,
+    encoding: CsvEncoding | None = None,
 ) -> Iterator[str]:
     """Yield the result CSV in pieces: a header, then one piece per chunk of input rows.
 
@@ -106,7 +91,8 @@ def classify_csv(
     came from — that number is how a caller joins the answers back onto their own file.
     A row the model asserts nothing for still gets a line.
 
-    Call :func:`check_columns` first: a generator cannot report a bad header.
+    Call :func:`check_columns` first: a generator cannot report a bad header. Its
+    ``encoding`` is the one to pass here (decided again when omitted).
     """
     buffer = io.StringIO()
     # csv.writer, not string joining: a display name like 'Politik, "Wirtschaft"' is
@@ -124,7 +110,8 @@ def classify_csv(
     yield flush()
 
     offset = 0
-    for chunk in _read_chunks(path, text_columns, separator=separator, chunk_rows=chunk_rows):
+    for chunk in _read_chunks(path, text_columns, separator=separator, chunk_rows=chunk_rows,
+                              encoding=encoding or detect(path)):
         # The raw assembly goes to the model, which cleans its own input — the same
         # single cleaning step training applied to the same combined string.
         texts = combine_text_columns(chunk, text_columns, weights).tolist()
@@ -136,7 +123,7 @@ def classify_csv(
 
 
 def _read_chunks(
-    path: Path, text_columns: list[str], *, separator: str, chunk_rows: int
+    path: Path, text_columns: list[str], *, separator: str, chunk_rows: int, encoding: CsvEncoding,
 ) -> Iterator[pd.DataFrame]:
     """The CSV in blocks of rows, holding only the text columns (low RAM).
 
@@ -152,7 +139,7 @@ def _read_chunks(
     try:
         reader = pd.read_csv(
             path, sep=separator, usecols=text_columns, dtype=str, chunksize=chunk_rows,
-            encoding=csv_encoding(path),
+            encoding=encoding.name, encoding_errors=encoding.errors,
         )
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
         raise TrainingInputError(f"The CSV is empty or malformed: {exc}") from exc

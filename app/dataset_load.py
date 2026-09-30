@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .csv_encoding import CsvEncoding, detect
 from .data import clean_text, read_csv, split_labels
 from .errors import TrainingInputError
 from .label_names import pair_names
@@ -43,6 +44,8 @@ class LoadedData:
     # Every generated row "exclude" dropped, copies included: whether it dropped any,
     # which makes the run a marked one even when all it dropped were copies.
     excluded_rows: int = 0
+    # How the file was decoded (``csv_encoding``) -- a bundle records it.
+    encoding: CsvEncoding = field(default_factory=lambda: CsvEncoding("utf-8"))
 
 
 def combine_text_columns(
@@ -102,16 +105,15 @@ def load_dataset(
     duplicate — is marked ``SAME_TEXT``: the same text on both sides of a split would
     carry the LLM's text into the validation.
 
-    UTF-8 first; a file that turns out not to be UTF-8 anywhere is read again from the
-    start as cp1252 (common for German metadata exports), whatever was read before is
-    discarded — the whole-file reader behaved the same way. The blocks before the first
-    non-UTF-8 byte have been cleaned by then, so such a file costs up to one extra
-    cleaning pass; resuming mid-file instead would mix two decodings of one file.
+    The encoding is decided once, from the whole file's bytes, before a row is read
+    (``csv_encoding.detect``): one pass of reading, no cleaning, where a first undecodable
+    byte used to make the whole file cp1252 (audit 2026-09-30, T02).
     """
     if synthetic_rows not in SYNTHETIC_MODES:
         raise ValueError(f"synthetic_rows must be one of {SYNTHETIC_MODES}, got {synthetic_rows!r}")
     path = Path(path)
-    header = read_csv(path, sep=separator, nrows=0)
+    encoding = detect(path)
+    header = read_csv(path, encoding, sep=separator, nrows=0)
     available = set(header.columns)
 
     text_cols = [c for c in text_columns if c in available]
@@ -133,29 +135,21 @@ def load_dataset(
             on_progress(msg)
 
     emit("Reading CSV file …")
-    for encoding in ("utf-8", "cp1252"):
-        collector = _Collector(
-            text_cols=text_cols, label_column=label_column, dn_col=dn_col if has_dn else None,
-            label_separator=label_separator, label_filter=label_filter,
-            min_text_length=min_text_length, drop_duplicates=drop_duplicates,
-            weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
-        )
-        try:
-            for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
-                                      chunk_rows=chunk_rows, verbatim=mark_cols):
-                collector.add(block)
-                emit(f"Reading and cleaning … {collector.rows_read:,} rows")
-        except UnicodeDecodeError:
-            if encoding == "cp1252":
-                raise
-            emit("Not UTF-8 — reading the file again as Windows-1252 …")
-            continue
-        return collector.result(label_names)
-    raise AssertionError("unreachable: the cp1252 attempt returns or raises")
+    collector = _Collector(
+        text_cols=text_cols, label_column=label_column, dn_col=dn_col if has_dn else None,
+        label_separator=label_separator, label_filter=label_filter,
+        min_text_length=min_text_length, drop_duplicates=drop_duplicates,
+        weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
+    )
+    for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
+                              chunk_rows=chunk_rows, verbatim=mark_cols):
+        collector.add(block)
+        emit(f"Reading and cleaning … {collector.rows_read:,} rows")
+    return collector.result(label_names, encoding)
 
 
 def _read_blocks(
-    path: Path, encoding: str, *, separator: str, usecols: list[str], chunk_rows: int,
+    path: Path, encoding: CsvEncoding, *, separator: str, usecols: list[str], chunk_rows: int,
     verbatim: list[str] | None = None,
 ) -> Iterator[pd.DataFrame]:
     """The CSV in blocks of rows, only the needed columns, every cell as text. Empty or
@@ -172,7 +166,8 @@ def _read_blocks(
     """
     raw = verbatim or []
     try:
-        with pd.read_csv(path, sep=separator, usecols=usecols, encoding=encoding,
+        with pd.read_csv(path, sep=separator, usecols=usecols, encoding=encoding.name,
+                         encoding_errors=encoding.errors,
                          dtype={c: str for c in usecols if c not in raw},
                          converters={c: str for c in raw},
                          chunksize=chunk_rows, engine="c") as reader:
@@ -259,7 +254,7 @@ class _Collector:
                 self.marks.append(mark)
         self.rows_read += len(frame)
 
-    def result(self, label_names: dict[str, str] | None) -> LoadedData:
+    def result(self, label_names: dict[str, str] | None, encoding: CsvEncoding) -> LoadedData:
         if label_names:
             # An external vocabulary is authoritative: it overrides CSV-derived names and
             # fills the ones no row could attribute. Narrowed to labels this dataset uses,
@@ -274,4 +269,4 @@ class _Collector:
         return LoadedData(texts=self.texts, label_lists=self.label_lists,
                           uri_to_label=self.uri_to_label, marks=marks,
                           excluded_generated=self.excluded_generated,
-                          excluded_rows=self.excluded_rows)
+                          excluded_rows=self.excluded_rows, encoding=encoding)

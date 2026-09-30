@@ -26,6 +26,14 @@ brackets are its finding numbers.
   bundle as `ubiquitous_labels` and on the model card, and a run with nothing else left stops
   and says why. Every staged bundle is checked against the loader's type allowlist before it
   is published. (T01)
+- **One broken byte no longer turns a UTF-8 dataset into cp1252 garbage.** Every reader tried
+  UTF-8 and, on the first undecodable byte anywhere, read the whole file as cp1252: one
+  truncated umlaut made every `ä` of every row `Ã¤`, invisibly to the metrics, and with a
+  curly quote in the file the run failed with "see server logs". The encoding is now decided
+  once per file from its bytes (`app/csv_encoding.py`) by training, the dataset views and
+  `/predict/csv` alike: up to 10 stray bytes in a UTF-8 file are read as `�`, a file with
+  more or with both encodings mixed is refused with the offset of the first bad byte, and
+  the bundle records the result as `csv_encoding`. (T02)
 
 ## [4.0.1] — 2026-09-27
 

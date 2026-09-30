@@ -93,6 +93,9 @@ def _build_metadata(
         "created_at": datetime.now(UTC).isoformat(),
         "evaluation": evaluation,
         "dataset": req["dataset_name"],
+        # How its bytes were read: an encoding decided wrongly is invisible in the metrics
+        # (training and test see the same text), so the bundle says what it was.
+        "csv_encoding": prep.csv_encoding.describe(),
         "text_columns": req["text_columns"],
         # Anchored in the bundle: the model was fit on text where these fields are
         # repeated, so a caller who wants matching behaviour has to know about it.

@@ -130,7 +130,7 @@ async def predict_csv(
         await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, path)
         # Before a byte is streamed: once the response starts, the status line is
         # already 200 and a bad header could only arrive as garbage in the body.
-        await asyncio.to_thread(predict_csv_mod.check_columns, path, columns, separator=separator)
+        encoding = await asyncio.to_thread(predict_csv_mod.check_columns, path, columns, separator=separator)
     except TrainingInputError as exc:
         path.unlink(missing_ok=True)
         raise HTTPException(400, str(exc)) from exc
@@ -155,7 +155,7 @@ async def predict_csv(
         try:
             yield from predict_csv_mod.classify_csv(
                 path, model, text_columns=columns, weights=weights,
-                separator=separator, threshold=threshold, top_k=top_k,
+                separator=separator, threshold=threshold, top_k=top_k, encoding=encoding,
             )
         finally:
             slots.release()

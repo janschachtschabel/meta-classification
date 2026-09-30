@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from . import data as data_mod
+from .csv_encoding import CsvEncoding
 from .dataset_load import load_dataset
 from .errors import TrainingInputError
 from .profiles import TrainingConfig
@@ -123,6 +124,8 @@ class Prepared:
     # Labels with enough rows that were not trained, because too few rows lack them
     # (``prepare_targets``) -- recorded, so the bundle says what it left out and why.
     ubiquitous_labels: tuple[str, ...] = ()
+    # How the dataset file was decoded (``csv_encoding``); the bundle records it.
+    csv_encoding: CsvEncoding = CsvEncoding("utf-8")
 
 
 def prepare_data(
@@ -280,4 +283,5 @@ def prepare_data(
                                   min_samples=min_samples,
                                   thin_mode=req.get("thin_label_threshold", "own")),
         ubiquitous_labels=tuple(ubiquitous),
+        csv_encoding=loaded.encoding,
     )

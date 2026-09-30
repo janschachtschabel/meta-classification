@@ -101,19 +101,23 @@ def test_a_gzipped_csv_reads_in_blocks_too(tmp_path, chunk_rows):
                         **kwargs), expected)
 
 
-def test_a_cp1252_byte_deep_in_the_file_restarts_the_whole_read(tmp_path):
+def test_a_cp1252_file_is_decoded_as_cp1252_from_its_first_row(tmp_path):
     """German metadata exports are commonly Windows-1252. When the first non-UTF-8 byte
-    sits blocks into the file, everything read as UTF-8 must be thrown away and the file
-    read again from its start — not kept, not read twice into the result, and not resumed
-    in the other encoding: the whole-file loader decoded ALL of such a file as cp1252."""
+    sits blocks into the file, the rows before it must still be decoded as cp1252 — not
+    kept from a UTF-8 reading, not read twice into the result: one decoding for the whole
+    file. (The loader used to get there by reading again from the start; since audit
+    2026-09-30, T02, it decides from the whole file's bytes before reading a row.)"""
     # Row 0 holds what cp1252 writes for "Ã¤" (bytes C3 A4), which UTF-8 happily reads as
-    # "ä" — the double-encoded text such exports carry. Only a read that started over
-    # returns it as cp1252, in the text and in the display name. The other rows are ASCII,
-    # the same in both encodings, so the UTF-8 attempt runs 39 blocks before it fails.
+    # "ä" — the double-encoded text such exports carry. Only a whole-file cp1252 decoding
+    # returns it as cp1252, in the text and in the display name. The other early rows are
+    # ASCII, the same in both encodings, so a UTF-8 read runs 39 blocks before it fails.
+    # A hundred rows of real umlauts make the file unambiguous: with as many valid UTF-8
+    # pairs as cp1252 bytes, it is refused as mixed (tests/test_csv_encoding.py).
     rows = [f'"Eintrag {i} zu Themen";"uri:topic{i % 5}";"Thema {i % 5}"\n'
             for i in range(40_000)]
     rows[0] = '"Ã¤rger mit Umlauten";"uri:first";"Ã¤rger"\n'
-    rows[39_000] = '"Die Größe der Flächen";"uri:math";"Mathematik"\n'
+    for i in range(39_000, 39_100):
+        rows[i] = f'"Die Größe der Flächen {i}";"uri:math";"Mathematik"\n'
     path = tmp_path / "export.csv"
     path.write_bytes(("title;labels;labels_DISPLAYNAME\n" + "".join(rows)).encode("cp1252"))
 
@@ -131,7 +135,7 @@ def test_a_cp1252_byte_deep_in_the_file_restarts_the_whole_read(tmp_path):
     assert len(loaded.texts) == 40_000, "rows read before the restart must not stay"
     assert loaded.texts[0] == "Ã¤rger mit Umlauten", "the first block, decoded again"
     assert loaded.uri_to_label["uri:first"] == "Ã¤rger", "its display name too"
-    assert loaded.texts[39_000] == "Die Größe der Flächen"
+    assert loaded.texts[39_000] == "Die Größe der Flächen 39000"
     # And with it on: texts the UTF-8 attempt had already seen must not count as seen.
     assert len(load_dataset(path, ["title"], "labels", chunk_rows=1000).texts) == 40_000
 

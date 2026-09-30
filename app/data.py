@@ -1,8 +1,9 @@
 """CSV reading, text cleaning, label preparation and train/val/test splitting.
 
 Kept deliberately free of heavy ML imports so it loads fast and is easy to test.
-The pieces here are what reads a CSV at all (``read_csv``: UTF-8 with a cp1252
-fallback, empty/malformed files as ``TrainingInputError``) and what a row becomes.
+The pieces here are what reads a CSV at all (``read_csv``: in the encoding the file's
+bytes call for, see ``csv_encoding``; empty/malformed files as ``TrainingInputError``) and
+what a row becomes.
 Assembling a training dataset out of them — in blocks of rows, the one step that
 holds a whole dataset — is ``dataset_load``; read-only inspection/statistics for the
 API live in ``dataset_stats``. Both consume this module, never the reverse.
@@ -20,21 +21,30 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
 
 from . import stratify
+from .csv_encoding import CsvEncoding, detect, is_gzipped
 from .errors import TrainingInputError
 from .label_names import is_container_label
 from .markup import CONTROL_RE, MD_LINK_RE, MD_MARK_RE, strip_tags
 
+# What a read of a few rows (``nrows``) judges the encoding on: a preview must not scan a
+# whole export first, and the header plus a handful of rows sit well inside this.
+PREVIEW_BYTES = 4 << 20
 
-def read_csv(path: str | Path, **kwargs: object) -> pd.DataFrame:
-    """Read a CSV as UTF-8, falling back to cp1252 (Windows-1252) — common for
-    German metadata exports — so a legitimate non-UTF-8 file is not an opaque
-    failure. Empty/malformed CSVs surface as ``TrainingInputError`` (→ 400)
-    rather than a raw pandas error (→ 500)."""
+
+def read_csv(path: str | Path, encoding: CsvEncoding | None = None, **kwargs: object) -> pd.DataFrame:
+    """Read a CSV in ``encoding``, or in the one its bytes call for (``csv_encoding.detect``;
+    judged on the first ``PREVIEW_BYTES`` when only ``nrows`` rows are read).
+
+    Empty/malformed CSVs, and one that is neither UTF-8 nor Windows-1252, surface as
+    ``TrainingInputError`` (→ 400) rather than a raw pandas error (→ 500).
+    """
+    if encoding is None:
+        encoding = detect(path, limit=PREVIEW_BYTES if kwargs.get("nrows") is not None else None)
     try:
-        try:
-            return pd.read_csv(path, encoding="utf-8", **kwargs)
-        except UnicodeDecodeError:
-            return pd.read_csv(path, encoding="cp1252", **kwargs)
+        return pd.read_csv(path, encoding=encoding.name, encoding_errors=encoding.errors, **kwargs)
+    except UnicodeDecodeError as exc:
+        # Only a preview can get here: its rows ran past the part the decision was made on.
+        raise TrainingInputError(f"The CSV is not valid {encoding.name} at byte {exc.start}.") from exc
     except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
         raise TrainingInputError(f"The CSV is empty or malformed: {exc}") from exc
 
@@ -112,15 +122,6 @@ def resolve_dataset(data_dir: Path, name: str) -> Path:
 # path -> (mtime_ns, size, rows). Bounded: cleared beyond 256 entries (the data
 # dir holds a handful of CSVs; stale keys from deleted files are harmless).
 _ROW_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
-
-
-def is_gzipped(path: str | Path) -> bool:
-    """Does this dataset path denote a gzip-compressed CSV?
-
-    Keyed off the name, exactly like pandas' own ``compression="infer"``, so what the reader
-    and the row counter consider compressed can never disagree.
-    """
-    return str(path).lower().endswith(".gz")
 
 
 def count_rows(path: str | Path) -> int:
