@@ -313,9 +313,18 @@ def join_wrapped_lines(lines: list[str]) -> list[str]:
     return ["".join(pieces) for pieces in joined]
 
 
+def _normalise(text: str) -> str:
+    return unicodedata.normalize("NFC", text).translate(_ZERO_WIDTH).replace("\xa0", " ")
+
+
 def clean_text(raw: str) -> str:
-    """Normalise the text, drop table rows, page chrome and repeated lines, undo hard line wraps."""
-    text = unicodedata.normalize("NFC", strip_markup_preserving_lines(raw)).translate(_ZERO_WIDTH).replace(" ", " ")
+    """Normalise the text, drop table rows, page chrome and repeated lines, undo hard line wraps.
+
+    Normalised before the markup rules as well as after: a no-break space after `#` kept a
+    heading from being one, and decoded entities (`&nbsp;`) need it again (audit 2026-09-30,
+    M05).
+    """
+    text = _normalise(strip_markup_preserving_lines(_normalise(raw)))
     lines: list[str] = []
     seen: set[str] = set()
     for line in text.splitlines():

@@ -46,6 +46,15 @@ brackets are its finding numbers.
   wordfreq's cache is thread-safe but not single-flight: eight simultaneous first `/metadata`
   requests read the German table eight times — 3.3 s and a 554 MB peak instead of 0.3 s and
   101 MB. The first load is serialised now. (M07)
+- **`/metadata` no longer invents sentences or splits words out of markup.** Entities were
+  decoded before tags were removed, so `x &lt; 5 … y &gt; 3` became a tag that swallowed the
+  prose between it — and the description was a sentence the text does not have. A literal
+  `<script>`, `<nav>` or `<footer>` in running text deleted the rest of the document; a
+  commented-out banner became the title; `<b>Bruch</b>rechnung` came back as "Bruch rechnung";
+  a `\r\n` kept `###` in a heading. The metadata path now normalises line endings first,
+  drops comments, drops non-prose bodies only with their closing tag, takes as a tag only `<`
+  plus a letter, `/`, `!` or `?`, removes inline tags without a space, and decodes entities
+  last. The classification path's cleaning is untouched: it feeds fitted vectorizers. (M05)
 
 ### Fixed
 
