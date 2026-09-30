@@ -13,9 +13,11 @@ per fit, though (~2.5x the matrix each), so the thread count is also a memory
 multiplier: a ``memory.ThreadBudget`` sizes every fit to the run's memory budget.
 
 The memory feasibility check lived here until it outgrew the 35 lines this paragraph once
-gave as the reason to keep it; it is :mod:`app.feasibility` now (audit 2026-09-27, M-2),
-called at the one point it matters, just before the fit. That leaves the module at the
-~300-line guide, holding one thing: the fit itself.
+gave as the reason to keep it; it is :mod:`app.feasibility` now (audit 2026-09-27, M-2).
+What stays is WHEN it is asked, which only the pipeline knows: before each selection fit
+(the first of them also weighing the deploy fit, projected), and before the deploy fit,
+without the out-of-fold buffers that are gone by then (audit 2026-09-30, T06). That keeps
+the module a little past the ~300-line guide, holding one thing: the fit itself.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from joblib import parallel_backend
 from sklearn.multiclass import OneVsRestClassifier
 
 from .classifier import make_head
-from .feasibility import refuse_if_the_run_cannot_fit
+from .feasibility import projected, refuse_if_the_run_cannot_fit
 from .memory import (
     MiB,
     ThreadBudget,
@@ -215,15 +217,32 @@ def fit_evaluate_deploy(
     # against 72 MB of targets. The holdout path allocates none.
     oof_rows = len(y_all) if validate is None else int(validate.sum())
     oof_bytes = oof_rows * y_all.shape[1] * 4 * len(profile.c_grid) if cv_folds >= 2 else 0
+
+    def weigh(matrix: object, oof: int) -> None:
+        refuse_if_the_run_cannot_fit(n_labels=y_all.shape[1], targets_bytes=y_all.nbytes,
+                                     matrix=matrix, budget_bytes=budget_bytes, oof_bytes=oof)
+
+    # The deploy fit comes LAST and has the most rows: all of them under k-fold, train + val
+    # on the holdout path. Weighed only when it came, a run that could never finish ran every
+    # selection fit first -- hours near the budget -- and was refused at the end (audit
+    # 2026-09-30, T06). So the first selection fit weighs it too, projected from its own
+    # matrix, before anything is fitted.
+    deploy_rows = len(texts) if cv_folds >= 2 else len(prep.train_idx) + len(prep.val_idx)
+    first = [True]
+
+    def before_selection_fit(matrix: object) -> None:
+        if first[0]:
+            first[0] = False
+            weigh(projected(matrix, deploy_rows), 0)
+        weigh(matrix, oof_bytes)
+
     thread_budget = ThreadBudget(
         requested=n_jobs, budget_bytes=budget_bytes,
         on_choice=lambda threads: on_progress(head_fit_threads=threads, threads_requested=n_jobs),
         # Every fit asks the budget for its thread count first, whichever path built its
         # matrix — so this is where a run too big to finish gets stopped, with the width
         # the vocabulary actually reached and the targets it actually built.
-        before_fit=lambda matrix: refuse_if_the_run_cannot_fit(
-            n_labels=y_all.shape[1], targets_bytes=y_all.nbytes, matrix=matrix,
-            budget_bytes=budget_bytes, oof_bytes=oof_bytes),
+        before_fit=before_selection_fit,
     )
 
     with parallel_backend(settings.parallel_backend, n_jobs=n_jobs):
@@ -285,6 +304,8 @@ def fit_evaluate_deploy(
         vectorizer = new_vectorizer()
         on_progress(phase_detail="Computing deploy TF-IDF features...")
         x_deploy = vectorizer.fit_transform(texts[deploy_idx].tolist())
+        # The out-of-fold buffers went with cross_val_evaluate: this fit holds none (T06).
+        thread_budget.before_fit = lambda matrix: weigh(matrix, 0)
         final_head = make_head(best_c, n_jobs=thread_budget.for_matrix(x_deploy),
                                solver=settings.solver)
         on_progress(phase_detail="Fitting the final model on all deploy rows"

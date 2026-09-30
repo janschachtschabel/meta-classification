@@ -75,6 +75,14 @@ brackets are its finding numbers.
   cut has F1 0 at every cut, and the argmax then chose that lowest cut, 0.05: in the audit's
   runs 20 of 379 per-label thresholds sat there and fired on 12.8 % of test rows for labels
   on 0.7 %. (T05)
+- **A training run that cannot finish is stopped before its first fit, not after the last.**
+  The deploy fit comes last and has the most rows, and the memory check weighed it only
+  when it came — and weighed it with the out-of-fold buffers the cross-validation had
+  already released (858 MB of phantom demand at 250,000 rows × 300 labels × 3 C
+  candidates). A run near the budget computed every k × C-grid fit and was then refused,
+  with advice (shorten the C grid) that no longer helped. The first fit now weighs the
+  deploy fit too, projected from its own matrix, and the deploy fit is weighed without the
+  buffers. (T06)
 
 ### Fixed
 

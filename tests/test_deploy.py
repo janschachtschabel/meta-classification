@@ -260,26 +260,58 @@ def test_a_cross_validation_run_is_weighed_with_the_buffers_it_holds():
     assert "cv_folds" in message, "and the lever that removes it"
 
 
+def _eight_rows() -> Prepared:
+    y = np.array([[1, 0], [0, 1]] * 4, dtype=np.int8)
+    return replace(_prepared(y), texts=np.array(
+        [f"bruchrechnung zahlen teilen aufgabe {i // 2}" if i % 2 == 0
+         else f"wiener kongress geschichte quelle {i // 2}" for i in range(8)]))
+
+
 @pytest.mark.parametrize(("cv_folds", "expected"), [(3, 8 * 2 * 4 * 2), (0, 0)])
 def test_the_gate_learns_the_buffer_size_from_the_run_that_will_allocate_it(
         monkeypatch, cv_folds, expected):
     """A gate that counts a term nobody hands it is still blind, so this checks the wiring
     rather than the arithmetic: eight rows, two labels, a two-value C grid. The holdout
-    path allocates no out-of-fold buffers at all and must be weighed without them."""
+    path allocates no out-of-fold buffers at all and must be weighed without them.
+
+    Only the SELECTION fits hold the buffers. The deploy fit comes after
+    `cross_val_evaluate` has returned them, and it used to be weighed with them anyway --
+    858 MB of phantom demand at 250k rows x 300 labels x 3 candidates, refusing a run at its
+    end that its own folds had fit (audit 2026-09-30, T06). That fit is weighed twice: first,
+    projected from the first matrix, before any fit runs; last, for real."""
     seen = []
     monkeypatch.setattr(deploy, "refuse_if_the_run_cannot_fit",
                         lambda **kwargs: seen.append(kwargs))
 
-    y = np.array([[1, 0], [0, 1]] * 4, dtype=np.int8)
-    prep = replace(_prepared(y), texts=np.array(
-        [f"bruchrechnung zahlen teilen aufgabe {i // 2}" if i % 2 == 0
-         else f"wiener kongress geschichte quelle {i // 2}" for i in range(8)]))
     deploy.fit_evaluate_deploy(
-        prep, Settings(), Profile("t", c_grid=[2.0, 1.0]), cv_folds=cv_folds,
+        _eight_rows(), Settings(), Profile("t", c_grid=[2.0, 1.0]), cv_folds=cv_folds,
         on_progress=lambda **kwargs: None, should_stop=lambda: False)
 
-    assert seen, "the gate runs before every fit"
-    assert {call["oof_bytes"] for call in seen} == {expected}
+    assert len(seen) >= 3, "the projection, the selection fits and the deploy fit"
+    projection, *selection, final = seen
+    assert projection["oof_bytes"] == final["oof_bytes"] == 0, "the deploy fit holds no buffers"
+    assert {call["oof_bytes"] for call in selection} == {expected}
+
+
+def test_a_run_whose_deploy_fit_cannot_fit_stops_before_its_first_fit(monkeypatch):
+    """T06: the deploy fit has the most rows and comes last, so a run that could never finish
+    ran all k x |C grid| selection fits first -- hours near the budget -- and was refused at
+    the end, with advice (shorten the C grid) that no longer helped anyone."""
+    seen = []
+
+    def gate(**kwargs):
+        seen.append(kwargs["matrix"].shape[0])
+        if kwargs["matrix"].shape[0] == 8:  # the deploy fit's rows: every one of them
+            raise TrainingInputError("the deploy fit does not fit")
+
+    monkeypatch.setattr(deploy, "refuse_if_the_run_cannot_fit", gate)
+
+    with pytest.raises(TrainingInputError):
+        deploy.fit_evaluate_deploy(
+            _eight_rows(), Settings(), Profile("t", c_grid=[2.0, 1.0]), cv_folds=3,
+            on_progress=lambda **kwargs: None, should_stop=lambda: False)
+
+    assert seen == [8], f"refused after {len(seen) - 1} selection fits"
 
 
 def test_a_run_that_fits_at_one_thread_is_not_refused():
