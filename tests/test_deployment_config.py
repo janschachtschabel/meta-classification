@@ -131,6 +131,32 @@ def test_the_push_gate_also_runs_on_tags():
     assert triggers["push"].get("tags"), "ci.yml does not trigger on tags"
 
 
+# --- B01 (audit 2026-09-30): the GitLab suite can pass the chart's render gate -------------
+
+
+def _gitlab() -> dict:
+    return yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+
+
+def test_the_gitlab_suite_job_brings_the_helm_its_render_tests_demand():
+    """`tests/test_helm_chart.py` refuses to skip wherever `CI` is set, and GitLab always
+    sets it. The job running the suite had no helm, so eight render tests failed in every
+    pipeline, and the build and deploy stages behind them never ran -- not even for the
+    `v4.0.1` tag. The job brings its own helm, verified against the release checksum like
+    everything else this pipeline pulls by hand."""
+    suite_jobs = [
+        job for job in _gitlab().values()
+        if isinstance(job, dict) and "pytest tests" in " ".join(job.get("script", []))
+    ]
+    assert suite_jobs, "no GitLab job runs the test suite"
+    for job in suite_jobs:
+        setup = " ".join(job.get("before_script", []))
+        assert "get.helm.sh" in setup, (
+            "the GitLab suite job installs no helm, so the chart's render tests fail under CI"
+        )
+        assert "sha256sum -c" in setup, "the helm the suite job installs is not checksum-verified"
+
+
 # --- DEP-5: licences are an invariant, not a one-time assessment ---------------------------
 
 

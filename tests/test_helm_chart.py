@@ -5,8 +5,10 @@ A substring survives an inverted condition: the word is present either way, so t
 stay green while the logic is wrong, and the audit rows they back said "verified" on the
 strength of a grep. Only the template engine answers what a given set of values produces.
 
-GitHub's ubuntu runners ship helm, so this is a real gate in CI; elsewhere it skips and says
-so. The substring tests stay where they are — they cost nothing and still hold without helm.
+GitHub's ubuntu runners ship helm, and GitLab's suite job installs a checksum-pinned one
+(`.gitlab-ci.yml`, pinned by `tests/test_deployment_config.py`), so this is a real gate in both
+CIs; elsewhere it skips and says so. The substring tests stay where they are — they cost
+nothing and still hold without helm.
 """
 
 import os

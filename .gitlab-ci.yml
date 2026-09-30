@@ -108,6 +108,15 @@ pytest:
   image: python:3.11-slim-bookworm
   before_script:
     - cd "$CI_PROJECT_DIR"
+    # tests/test_helm_chart.py refuses to skip where CI is set -- and GitLab always sets it --
+    # so this job needs a helm, or its render tests fail and nothing behind this stage ever
+    # runs (audit 2026-09-30, B01). Same version as the chart's lint and package jobs below,
+    # verified against the release's published checksum (get.helm.sh/<file>.sha256sum).
+    - python -c "import urllib.request; urllib.request.urlretrieve('https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz', '/tmp/helm.tgz')"
+    - echo "fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179  /tmp/helm.tgz" | sha256sum -c -
+    - tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+    - mv /tmp/linux-amd64/helm /usr/local/bin/helm
+    - helm version
     - python -m pip install --upgrade pip
     # Same fully-hashed transitive tree the Docker image ships.
     - pip install --require-hashes -r requirements-hashes.lock
