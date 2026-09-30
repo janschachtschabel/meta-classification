@@ -256,3 +256,29 @@ def test_the_bundle_reports_duplicates_whose_labels_disagreed(tmp_path):
 
     _model, metadata = Registry(settings.models_dir, 2).load_fresh("m")
     assert metadata["conflicting_duplicates"] == 1
+
+
+
+# --- T08: labels pandas would call missing -------------------------------------------------------
+
+
+def test_a_label_called_na_is_a_label(tmp_path):
+    """T08: pandas reads "NA", "None", "null" and "nan" as missing values, and the rows
+    carrying such a label vanished. The mark columns were already read as written."""
+    rows = ["Erster Text über Mathe;NA", "Zweiter Text über Mathe;None",
+            "Dritter Text über Mathe;null", "Vierter Text über Mathe;nan",
+            "Fünfter Text ohne Label;"]
+
+    loaded = _loaded(tmp_path, rows)
+
+    assert loaded.label_lists == [["NA"], ["None"], ["null"], ["nan"]]
+
+
+def test_validation_does_not_count_a_label_called_na_as_missing(tmp_path):
+    from app.dataset_stats import validate_dataset
+
+    _dataset(tmp_path, ["Erster Text über Mathe;NA", "Zweiter Text über Mathe;uri:math"])
+
+    report = validate_dataset(tmp_path / "set.csv", ["title"], "labels")
+
+    assert not any("without labels" in warning for warning in report["warnings"]), report

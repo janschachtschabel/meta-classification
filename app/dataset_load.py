@@ -192,8 +192,12 @@ def load_dataset(
         min_text_length=min_text_length, drop_duplicates=drop_duplicates,
         weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
     )
+    # The label column, its display names and the marks are read as written: a label may be
+    # called "NA", "None" or "null", which pandas reads as a missing cell -- and the rows
+    # carrying it vanished (audit 2026-09-30, T08).
+    verbatim = [label_column, *([dn_col] if has_dn else []), *mark_cols]
     for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
-                              chunk_rows=chunk_rows, verbatim=mark_cols):
+                              chunk_rows=chunk_rows, verbatim=verbatim):
         collector.add(block)
         emit(f"Reading and cleaning … {collector.rows_read:,} rows")
     return collector.result(label_names, encoding)
@@ -210,10 +214,10 @@ def _read_blocks(
     to its python engine and be read as a regular expression. The API allows one
     character; this refuses the rest (ValueError), as the whole-file read did.
 
-    ``verbatim`` columns are read as written, empty as "": a mark names a label, and a
-    label may be called "NA", "None" or "null", which pandas would read as a missing
-    cell. The C engine gives a column with a converter no missing-value reading; the
-    other columns keep it, as before.
+    ``verbatim`` columns are read as written, empty as "": a label -- or a mark, which names
+    one -- may be called "NA", "None" or "null", which pandas would read as a missing cell.
+    The C engine gives a column with a converter no missing-value reading; the other
+    columns keep it, as before.
     """
     raw = verbatim or []
     try:

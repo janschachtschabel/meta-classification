@@ -91,6 +91,9 @@ brackets are its finding numbers.
   wins (merging would turn a single-label dataset multilabel for a few noisy copies), but the
   number of copies whose labels disagreed is logged and recorded in the bundle as
   `conflicting_duplicates`. (T10)
+- **A label called "NA", "None" or "null" is a label.** pandas read such cells as missing,
+  and their rows vanished from training; the label column is now read as written, like the
+  provenance marks already were. (T08)
 
 ### Fixed
 

@@ -142,7 +142,9 @@ def validate_dataset(
         warnings.append(f"{len(rare)} labels with fewer than 10 samples")
     # load_dataset silently DROPS unlabeled rows, so data.label_lists can never
     # contain an empty list — count them from the raw label column instead.
-    label_only = read_csv(path, data.encoding, sep=separator, usecols=[label_column], dtype=str)
+    # As written, like the loader reads it: "NA" is a label, not a missing cell (T08).
+    label_only = read_csv(path, data.encoding, sep=separator, usecols=[label_column], dtype=str,
+                          keep_default_na=False)
     empty = int(sum(1 for cell in label_only[label_column]
                     if not split_labels(cell, label_separator)))
     if empty:
