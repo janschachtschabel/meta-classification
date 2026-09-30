@@ -392,20 +392,24 @@ def test_text_column_weights_repeat_a_field_in_the_combined_text(tmp_path):
     assert weighted.texts == ["Bruch Bruch Bruch lange Beschreibung"]
 
 
-def test_text_column_weights_ignore_columns_absent_from_the_csv(tmp_path):
-    """load_dataset already skips requested columns the CSV lacks; a weight for such
-    a column must not resurrect it or shift the others."""
+def test_a_weighted_text_column_the_csv_lacks_is_refused_with_its_name(tmp_path):
+    """This test used to pin the opposite: load_dataset skipped requested columns the CSV
+    lacked, and a weight for one must not resurrect it. The skipping was the bug (audit
+    2026-09-30, T03 -- the bundle recorded a column it never saw), so a missing column is
+    refused now, weighted or not, and the caller learns which one."""
+    from app.errors import TrainingInputError
+
     csv = tmp_path / "w2.csv"
     csv.write_text(
         "properties.cclom:title;properties.ccm:taxonid\nBruch;math\n", encoding="utf-8"
     )
-    loaded = dataset_load.load_dataset(
-        csv,
-        ["properties.cclom:title", "properties.cclom:general_description"],
-        LABEL_COL,
-        text_column_weights={"properties.cclom:general_description": 5},
-    )
-    assert loaded.texts == ["Bruch"]
+    with pytest.raises(TrainingInputError, match="properties.cclom:general_description"):
+        dataset_load.load_dataset(
+            csv,
+            ["properties.cclom:title", "properties.cclom:general_description"],
+            LABEL_COL,
+            text_column_weights={"properties.cclom:general_description": 5},
+        )
 
 
 def test_validate_dataset_warns_about_rows_without_labels(tmp_path):

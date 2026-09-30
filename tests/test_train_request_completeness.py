@@ -34,7 +34,9 @@ def submitted(monkeypatch, tmp_path):
 
     data = tmp_path / "data"
     data.mkdir(parents=True)
-    (data / "d.csv").write_text("text,label\nein Satz,http://x/1\n", encoding="utf-8")
+    # Separated like the request says (the default ";"): /train reads the header now, so a
+    # dataset that does not match its own request is refused before submit (T03).
+    (data / "d.csv").write_text("text;label\nein Satz;http://x/1\n", encoding="utf-8")
 
     from app.registry import get_registry
     from app.settings import get_settings
