@@ -1,20 +1,20 @@
-"""German text preparation: cleaning, sentence splitting, tokens, stopwords and stemming.
+"""German text preparation: cleaning, tokens, stopwords and stemming.
 
 Ported from `static-metadata-generators` (`metagen/text.py`) with two substitutions, both
 argued in `docs/plans/2026-09-26-descriptive-metadata.md`: the stemmer comes from
 `snowballstemmer` rather than nltk, whose import pulls `urllib.request` and `ssl` into a
 process that must not be able to fetch a URL; and pysbd is imported under a scoped warning
-filter, because its 0.3.4 regexes raise a SyntaxWarning that this project's
-warnings-as-errors gate would otherwise turn into an import failure.
+filter (now in `sentences`, where the splitter went).
 
 This is a separate concern from `app.data.clean_text`, which normalises the text a model is
 trained and predicted on. That one has to produce exactly the features the vectorizer saw;
 this one has to recover the sentences and headings a human would read, which is why it
 undoes PDF line wrapping and drops page chrome instead of flattening everything.
 
-A little past the ~300-line guide since the sentence splitter gained its length bound
-(audit 2026-09-27, S-2). If it grows again, the splitter is the seam — ``split_sentences``,
-``_bounded`` and the segmenter, with a test file of their own already.
+The sentence splitter moved to `sentences` when this module passed the ~300-line guide a
+second time (the seam this docstring had named). What is left is one job -- turning raw text
+into the lines, tokens and stems the generators read -- and stays a little past the guide:
+the line judgements (chrome, lists, task instructions) are what cleaning consists of here.
 """
 
 from __future__ import annotations
@@ -23,22 +23,14 @@ import re
 import statistics
 import threading
 import unicodedata
-import warnings
 from functools import lru_cache
 from pathlib import Path
 
 import snowballstemmer
 
 from ..markup import strip_markup_preserving_lines
+from .sentences import split_sentences
 from .types import Document
-
-with warnings.catch_warnings():
-    # pysbd 0.3.4 writes '\s' in plain strings, so importing it raises SyntaxWarning while its
-    # bytecode is compiled — once, on a cold cache, which is the worst kind of intermittent.
-    # Scoped to this import: the project's global "warnings are errors" gate stays armed, and
-    # a SyntaxWarning in our own code still fails the suite.
-    warnings.simplefilter("ignore", SyntaxWarning)
-    import pysbd
 
 _RESOURCES = Path(__file__).parent / "resources"
 
@@ -131,20 +123,12 @@ _TASK_VERBS = frozenset({
     "vergleicht", "zeichne", "zeichnet",
 })
 
-# pysbd keeps the text it segments on the Segmenter, and the pure-Python Snowball stemmer keeps
-# the word it stems on the stemmer, so neither may be shared by the threads that serve requests:
-# parallel requests got each other's sentences, 500s from an IndexError inside the stemmer, and
-# wrong stems that then stayed in the cache for good (audit 2026-09-30, M02). One of each per
-# thread, built on first use -- both take microseconds.
+# The pure-Python Snowball stemmer keeps the word it stems on the stemmer, so one may not be
+# shared by the threads that serve requests: parallel requests got 500s from an IndexError
+# inside it, and wrong stems that then stayed in the cache for good (audit 2026-09-30, M02).
+# One per thread, built on first use -- it takes microseconds. (The segmenter's twin of this
+# is in `sentences`.)
 _per_thread = threading.local()
-
-
-def _segmenter() -> pysbd.Segmenter:
-    try:
-        return _per_thread.segmenter
-    except AttributeError:
-        _per_thread.segmenter = pysbd.Segmenter(language="de", clean=False)
-        return _per_thread.segmenter
 
 
 def _stemmer():  # noqa: ANN202 - snowballstemmer is untyped
@@ -153,37 +137,6 @@ def _stemmer():  # noqa: ANN202 - snowballstemmer is untyped
     except AttributeError:
         _per_thread.stemmer = snowballstemmer.stemmer("german")
         return _per_thread.stemmer
-
-# pysbd's German abbreviation pass runs one whole-string re.sub per abbreviation candidate,
-# so a single call costs candidates x length: 25k -> 100k characters of prose on one line
-# took 0.23 s -> 2.94 s, while the same text as short lines stayed linear (audit 2026-09-27,
-# S-2). A line longer than this is handed over in pieces. Far above any real paragraph — the
-# parity fixture's longest line is 648 characters — and deep inside the range where pysbd
-# measured linear (up to ~25k per call).
-MAX_SEGMENT_CHARS = 4_000
-# Where a piece may end: sentence-final punctuation, an optional closing quote, whitespace.
-_PIECE_END_RE = re.compile(r"[.!?][\"'“”„»«)]?\s")
-
-
-def _bounded(line: str) -> list[str]:
-    """``line`` in pieces of at most ``MAX_SEGMENT_CHARS``, cut where a sentence ends if possible.
-
-    Cutting after the last sentence-final punctuation before the bound leaves pysbd's answer
-    unchanged for ordinary prose; failing that, after the last space; failing even that, at the
-    bound itself. A cut can land after an abbreviation ("z. B. ") and end a sentence pysbd
-    would have continued — only on a line over the bound, where the alternative was minutes of
-    CPU. Every cut advances by at least one character, so the loop always ends.
-    """
-    pieces: list[str] = []
-    start = 0
-    while len(line) - start > MAX_SEGMENT_CHARS:
-        window = line[start : start + MAX_SEGMENT_CHARS]
-        ends = [match.end() for match in _PIECE_END_RE.finditer(window)]
-        cut = ends[-1] if ends else (window.rfind(" ") + 1 or MAX_SEGMENT_CHARS)
-        pieces.append(window[:cut])
-        start += cut
-    pieces.append(line[start:])
-    return pieces
 
 
 def tokenize(s: str) -> list[str]:
@@ -352,25 +305,6 @@ def clean_text(raw: str) -> str:
             seen.add(line)
             lines.append(line)
     return "\n".join(line for line in join_wrapped_lines(lines) if line)
-
-
-def split_sentences(text: str) -> list[str]:
-    """Split into sentences; every line break is a hard boundary (headings, list items)."""
-    sentences: list[str] = []
-    for line in text.splitlines():
-        # Per LINE, not per piece: the comma repair below may join across a piece boundary.
-        start = len(sentences)
-        for piece in _bounded(line):
-            for segment in (s.strip() for s in _segmenter().segment(piece)):
-                if not segment:
-                    continue
-                # pysbd also ends a sentence at "Ludwig XVI., der …"; no sentence starts with
-                # "," or ";".
-                if len(sentences) > start and segment[0] in ",;":
-                    sentences[-1] += segment
-                else:
-                    sentences.append(segment)
-    return sentences
 
 
 def _is_question_heading(sentence: str, lines: set[str]) -> bool:
