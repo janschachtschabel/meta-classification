@@ -205,6 +205,9 @@ class Settings(BaseSettings):
     # small editorial team run bulk jobs side by side; over it, the answer is 503 with
     # Retry-After rather than a queued connection holding an uploaded temp file (audit PERF-2).
     max_concurrent_csv: int = 4
+    # /metadata batches at once: each holds a worker thread for its whole run, which is seconds
+    # for long texts (audit 2026-09-30, M03). A caller over it gets 503 + Retry-After.
+    max_concurrent_metadata: int = Field(2, ge=1)
 
     rate_limit_enabled: bool = True
     rate_limit_predict: str = "300/minute"

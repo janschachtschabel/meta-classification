@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ..concurrency import metadata_slots
 from ..limiter import limiter, predict_limit
 from ..metadata import MetadataSettings, generate
 from ..schemas import MetadataRequest
@@ -82,6 +83,17 @@ async def describe(
 
     **Auth:** readonly.
     """
-    # CPU-bound (12-22 ms per text, up to 100 of them) in a single-worker process: on the
-    # event loop that is seconds in which nothing else, /health included, gets answered.
-    return await asyncio.to_thread(_generate_all, body)
+    # CPU-bound (12-22 ms per ordinary text, seconds for long ones) in a single-worker
+    # process: on the event loop that is time in which nothing else, /health included, gets
+    # answered -- and in the worker pool, a thread every other route shares.
+    slots = metadata_slots()
+    if not slots.try_acquire():
+        raise HTTPException(
+            503,
+            f"Too many metadata requests running ({slots.capacity}). Retry shortly.",
+            headers={"Retry-After": "10"},
+        )
+    try:
+        return await asyncio.to_thread(_generate_all, body)
+    finally:
+        slots.release()

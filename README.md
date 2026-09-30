@@ -557,7 +557,9 @@ curl -X POST http://localhost:8000/metadata -H "X-API-Key: $KEY" \
   comparison these methods come from found that small generative models were no better at
   the job and did invent facts.
 - **Budgets** come with the request: `title_max` (default 90), `desc_max` (500),
-  `n_keywords` (8). Up to 100 texts per call; each is answered independently.
+  `n_keywords` (8). Up to 100 texts per call, 1,000,000 characters in all; each is answered
+  independently. Two batches run at once (`APIV3_MAX_CONCURRENT_METADATA`); a third gets `503`
+  with `Retry-After`, because each holds a worker thread for as long as its texts take.
 - **Empty fields are an answer.** A text that yields nothing — blank, or only boilerplate —
   comes back with empty strings and an empty list rather than an error.
 - **German.** The stopwords, the noun-phrase rules and the word frequencies are German;

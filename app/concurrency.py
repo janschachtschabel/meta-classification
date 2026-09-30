@@ -1,4 +1,4 @@
-"""How many long streaming responses may run at once (audit PERF-2).
+"""How many long streaming responses -- and /metadata batches -- may run at once (audit PERF-2).
 
 `POST /predict/csv` returns a `StreamingResponse` wrapping a **sync** generator, so Starlette
 iterates it through `iterate_in_threadpool` — one anyio worker held for the whole
@@ -15,6 +15,9 @@ release from wherever the release happens.
 Rejecting rather than queueing is the point. A queued request holds its connection, its
 uploaded temp file and the client's patience while waiting for work that has not started; a
 503 with `Retry-After` lets the caller decide.
+
+`POST /metadata` holds a worker the same way, for as long as its batch takes -- seconds for
+long texts -- and eight long ones made `GET /models` wait 21 s (audit 2026-09-30, M03).
 """
 
 from __future__ import annotations
@@ -54,25 +57,30 @@ class Slots:
 
 
 # Process-local, like the rate limiter, the model cache and the job runner — the chart pins one
-# replica. Sized on first use from the configured maximum, so `get_settings()` is not read at
+# replica. Each is sized on first use from its setting, so `get_settings()` is not read at
 # import time.
-_csv_slots: Slots | None = None
-_csv_lock = threading.Lock()
+_slots: dict[str, Slots] = {}
+_slots_lock = threading.Lock()
+
+
+def _sized(setting: str) -> Slots:
+    with _slots_lock:
+        if setting not in _slots:
+            from .settings import get_settings
+
+            _slots[setting] = Slots(getattr(get_settings(), setting))
+        return _slots[setting]
 
 
 def csv_slots() -> Slots:
-    global _csv_slots
-    if _csv_slots is None:
-        with _csv_lock:
-            if _csv_slots is None:
-                from .settings import get_settings
-
-                _csv_slots = Slots(get_settings().max_concurrent_csv)
-    return _csv_slots
+    return _sized("max_concurrent_csv")
 
 
-def reset_csv_slots() -> None:
-    """Drop the sized limiter so the next call re-reads the settings. For tests."""
-    global _csv_slots
-    with _csv_lock:
-        _csv_slots = None
+def metadata_slots() -> Slots:
+    return _sized("max_concurrent_metadata")
+
+
+def reset_slots() -> None:
+    """Drop the sized limiters so the next call re-reads the settings. For tests."""
+    with _slots_lock:
+        _slots.clear()

@@ -30,6 +30,12 @@ brackets are its finding numbers.
   sequential ones, descriptions held sentences the input did not contain, some requests
   answered 500 (an `IndexError` inside the stemmer), and a stem computed mid-race stayed in
   the cache. Each thread now has its own. (M02)
+- **What one `/metadata` request may cost is bounded.** The per-text caps allowed 100 texts of
+  100,000 characters, about eight CPU-minutes in the shapes the sentence splitter is slowest
+  on, and nothing bounded how many ran at once in the worker pool every route shares. A
+  request now carries at most 1,000,000 characters across its texts (422 beyond), and at most
+  `APIV3_MAX_CONCURRENT_METADATA` (default 2) batches run at once — the next gets 503 with
+  `Retry-After`, like `/predict/csv`. (M03)
 
 ### Fixed
 
