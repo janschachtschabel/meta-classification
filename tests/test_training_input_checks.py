@@ -160,3 +160,20 @@ def test_a_bundle_the_server_would_refuse_is_never_published(tmp_path):
 
     assert not registry.exists("broken")
     assert not any((tmp_path / "models").iterdir()), "the staging directory stays behind"
+
+
+
+# --- T03: a text column the CSV does not have -------------------------------------------------
+
+
+def test_a_text_column_the_csv_lacks_is_refused_not_skipped(tmp_path):
+    """T03: the loader skipped it, the run completed, and the bundle recorded the column
+    anyway. `/predict/csv` then refused a CSV in the training data's own format, and a
+    later export that has the column would feed the model text it never saw."""
+    from app.dataset_load import load_dataset
+
+    rows = [f"{text} Teil {i};{uri}" for uri, text in SUBJECTS.items() for i in range(5)]
+    _dataset(tmp_path, rows)
+
+    with pytest.raises(ValueError, match="beschreibung"):
+        load_dataset(tmp_path / "set.csv", ["title", "beschreibung"], "labels", separator=";")

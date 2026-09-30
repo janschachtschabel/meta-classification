@@ -43,6 +43,11 @@ brackets are its finding numbers.
 - **The admin UI no longer reports a CSV answer cut short as done.** It compares the rows
   the answer covers with `X-Input-Rows` and says "incomplete: N of M input rows" where it
   used to say "Fertig … 500 Eingabezeilen" for a 700-row file. (U02)
+- **A text column the dataset lacks is refused, not skipped.** The loader dropped it without a
+  word and the bundle recorded it anyway: `/predict/csv` then refused CSVs in the training
+  data's own format, and a later export that has the column would feed the model a field it
+  never saw. `/train` now answers 400 naming the column before the run can queue, and the
+  loader refuses it for queued runs and evaluations too. (T03)
 
 ## [4.0.1] — 2026-09-27
 

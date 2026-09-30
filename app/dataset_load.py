@@ -71,6 +71,33 @@ def combine_text_columns(
     return combined
 
 
+def require_columns(
+    path: str | Path, text_columns: list[str], label_column: str, *, separator: str,
+    encoding: CsvEncoding | None = None,
+) -> list[str]:
+    """The CSV's columns -- after refusing a request that names one it does not have.
+
+    Every text column, not just one of them: a missing one used to be skipped without a
+    word, while the bundle recorded it as trained on. `/predict/csv` then refused a CSV in
+    the training data's own format, and a later export that HAS the column would feed the
+    model text from a field it never saw (audit 2026-09-30, T03). Cheap -- the header only
+    -- so ``/train`` asks it before a run can queue.
+
+    :raises TrainingInputError: naming what is missing and what the CSV has.
+    """
+    header = read_csv(path, encoding, sep=separator, nrows=0)
+    available = list(header.columns)
+    missing = [column for column in text_columns if column not in available]
+    if missing:
+        raise TrainingInputError(
+            f"Text column(s) {missing} not found; the CSV has {sorted(available)}. A model is "
+            "trained on every column it records, so each has to be present."
+        )
+    if label_column not in available:
+        raise TrainingInputError(f"Label column {label_column!r} not found in {sorted(available)}")
+    return available
+
+
 def load_dataset(
     path: str | Path,
     text_columns: list[str],
@@ -95,8 +122,8 @@ def load_dataset(
     label mapping.
 
     ``text_column_weights`` maps a column to how often its text is repeated in the
-    combined training text (default 1) — see :func:`combine_text_columns`. Weights for
-    columns the CSV does not have are ignored, exactly like the columns themselves.
+    combined training text (default 1) — see :func:`combine_text_columns`. Every text
+    column has to be in the CSV (:func:`require_columns`).
 
     data-prep's provenance columns (``provenance.MARK_COLUMNS``) are read when present and
     come back as ``marks``, one per kept row. ``synthetic_rows="exclude"`` leaves the
@@ -113,16 +140,9 @@ def load_dataset(
         raise ValueError(f"synthetic_rows must be one of {SYNTHETIC_MODES}, got {synthetic_rows!r}")
     path = Path(path)
     encoding = detect(path)
-    header = read_csv(path, encoding, sep=separator, nrows=0)
-    available = set(header.columns)
-
-    text_cols = [c for c in text_columns if c in available]
-    if not text_cols:
-        raise TrainingInputError(
-            f"No valid text columns. Requested {text_columns}; available {sorted(available)}"
-        )
-    if label_column not in available:
-        raise TrainingInputError(f"Label column {label_column!r} not found in {sorted(available)}")
+    available = set(require_columns(path, text_columns, label_column, separator=separator,
+                                    encoding=encoding))
+    text_cols = list(text_columns)
 
     dn_col = displayname_column or f"{label_column}_DISPLAYNAME"
     has_dn = dn_col in available

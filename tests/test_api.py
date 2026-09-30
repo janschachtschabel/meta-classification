@@ -1409,6 +1409,18 @@ def test_a_whole_csv_can_be_classified_in_one_call(trained_model):
     assert 0.0 <= float(rows[1][3]) <= 1.0
 
 
+def test_training_on_a_text_column_the_dataset_lacks_is_refused_before_it_queues():
+    """T03 (audit 2026-09-30): a missing text column was skipped without a word, and the
+    bundle claimed it. Refused at submission, where the caller can still fix the request."""
+    body = {**TRAIN_BODY, "model_name": "missing_column",
+            "text_columns": [*TRAIN_BODY["text_columns"], "properties.cclom:description"]}
+
+    response = client.post("/train", json=body, headers=ADMIN)
+
+    assert response.status_code == 400, response.text
+    assert "properties.cclom:description" in response.text
+
+
 def test_classifying_a_csv_says_how_many_rows_it_answers_for(trained_model):
     """V06 (audit 2026-09-30): the count a client checks the answer against."""
     files = {"file": ("items.csv", CSV_BODY, "text/csv")}
