@@ -70,6 +70,11 @@ brackets are its finding numbers.
   train: one such row made a single-label dataset "multilabel", decided by thresholds instead
   of argmax, and a nonsense text then got every label. It is now read off the target matrix
   after every drop, and a label named twice in one cell counts once. (T04)
+- **A label no threshold can hit keeps the global threshold.** The guard looked only at
+  whether a label had validation positives. One whose positives all score below the lowest
+  cut has F1 0 at every cut, and the argmax then chose that lowest cut, 0.05: in the audit's
+  runs 20 of 379 per-label thresholds sat there and fired on 12.8 % of test rows for labels
+  on 0.7 %. (T05)
 
 ### Fixed
 

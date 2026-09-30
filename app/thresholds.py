@@ -132,11 +132,14 @@ def tune_threshold_columns(
         if shrink_k is not None:
             trust = positives / (positives + shrink_k)
             own = trust * own + (1 - trust) * best_global
-        # No positives to tune on: every threshold scores f1=0, and the argmax would hand
-        # the label the grid MINIMUM (0.05) — a near-zero threshold that fires on
-        # everything. Keep the global. Under ``shrink_k`` this is the same rule at weight
-        # 0, not a second case. A column the caller pinned keeps the global cut too.
-        chosen = positives > 0
+        # Nothing to tune on -- no positives, or positives no cut reaches: every threshold
+        # scores f1=0, and the argmax would hand the label the grid MINIMUM (0.05), a
+        # near-zero threshold that fires on everything. Keep the global. The second half was
+        # missing: 20 of 379 label cuts in the audit's runs sat at 0.05 and fired on 12.8 %
+        # of test rows for a label on 0.7 % (audit 2026-09-30, T05). Under ``shrink_k`` this
+        # is the same rule at weight 0, not a second case. A column the caller pinned keeps
+        # the global cut too.
+        chosen = (positives > 0) & (cut_f1.max(axis=1) > 0)
         if keep_global is not None:
             chosen &= ~np.asarray(keep_global, dtype=bool)
         columns[chosen] = own[chosen]
