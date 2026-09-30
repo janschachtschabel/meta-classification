@@ -126,6 +126,8 @@ class Prepared:
     ubiquitous_labels: tuple[str, ...] = ()
     # How the dataset file was decoded (``csv_encoding``); the bundle records it.
     csv_encoding: CsvEncoding = CsvEncoding("utf-8")
+    # Copies of a text dropped although their labels differed (``dataset_load``, T10).
+    conflicting_duplicates: int = 0
 
 
 def prepare_data(
@@ -195,6 +197,9 @@ def prepare_data(
     ubiquitous = sorted(label for label, n in counts.items() if n >= min_samples and label not in kept)
     if ubiquitous:
         logger.warning("Not trained, on (nearly) every row: %s", ", ".join(ubiquitous))
+    if loaded.conflicting_duplicates:
+        logger.warning("%d duplicate rows dropped whose labels differed from the kept copy's",
+                       loaded.conflicting_duplicates)
     if not classes and ubiquitous:
         raise TrainingInputError(
             f"Nothing to learn: every label with enough rows is on every row, or missing from "
@@ -281,4 +286,5 @@ def prepare_data(
                                   thin_mode=req.get("thin_label_threshold", "own")),
         ubiquitous_labels=tuple(ubiquitous),
         csv_encoding=loaded.encoding,
+        conflicting_duplicates=loaded.conflicting_duplicates,
     )

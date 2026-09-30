@@ -211,3 +211,48 @@ def test_the_task_type_follows_the_target_matrix():
     assert data.detect_task_type(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])) == "multiclass"
     assert data.detect_task_type(np.array([[1, 0], [0, 1]])) == "binary"
     assert data.detect_task_type(np.array([[1, 1], [1, 0]])) == "multilabel"
+
+
+
+# --- T07, T10: duplicates ----------------------------------------------------------------------
+
+
+def _loaded(tmp_path, rows, **kwargs):
+    from app.dataset_load import load_dataset
+
+    _dataset(tmp_path, rows)
+    return load_dataset(tmp_path / "set.csv", ["title"], "labels", separator=";", **kwargs)
+
+
+def test_a_duplicate_is_what_the_vectorizer_cannot_tell_apart(tmp_path):
+    """T07: the dedupe compared exactly, while the vectorizer lower-cases and strips accents
+    -- so "BRUCHRECHNUNG" stayed beside "Bruchrechnung", one could land in train and its twin
+    in test, and the metrics looked better than the model is."""
+    rows = ["Bruchrechnung für Einsteiger;uri:math", "BRUCHRECHNUNG FÜR EINSTEIGER;uri:math",
+            "Bruchrechnung fur Einsteiger;uri:math", "Photosynthese im Blatt;uri:bio"]
+
+    assert _loaded(tmp_path, rows).texts == ["Bruchrechnung für Einsteiger", "Photosynthese im Blatt"]
+    assert len(_loaded(tmp_path, rows, drop_duplicates=False).texts) == 4
+
+
+def test_a_duplicate_with_other_labels_is_counted_not_lost_in_silence(tmp_path):
+    """T10: the first row wins -- merging would make a single-label dataset multilabel for a
+    few noisy copies -- but the copies whose labels differ are counted and reported."""
+    rows = ["Bruchrechnung für Einsteiger;uri:math", "Bruchrechnung für Einsteiger;uri:bio",
+            "Photosynthese im Blatt;uri:bio", "Photosynthese im Blatt;uri:bio"]
+
+    loaded = _loaded(tmp_path, rows)
+
+    assert loaded.texts == ["Bruchrechnung für Einsteiger", "Photosynthese im Blatt"]
+    assert loaded.conflicting_duplicates == 1
+
+
+def test_the_bundle_reports_duplicates_whose_labels_disagreed(tmp_path):
+    rows = [f"{text} Teil {i};{uri}" for uri, text in SUBJECTS.items() for i in range(20)]
+    rows.append(rows[0].replace(";uri:math", ";uri:bio"))
+    settings = _dataset(tmp_path, rows)
+
+    _train(settings)
+
+    _model, metadata = Registry(settings.models_dir, 2).load_fresh("m")
+    assert metadata["conflicting_duplicates"] == 1

@@ -83,6 +83,14 @@ brackets are its finding numbers.
   with advice (shorten the C grid) that no longer helped. The first fit now weighs the
   deploy fit too, projected from its own matrix, and the deploy fit is weighed without the
   buffers. (T06)
+- **A duplicate is what the vectorizer cannot tell apart.** The dedupe compared texts
+  exactly while the vectorizer lower-cases and strips accents, so "BRUCHRECHNUNG" stayed
+  beside "Bruchrechnung" and could land in the test split while its twin trained — flattering
+  the metrics. Texts are now compared the way the vectorizer sees them. (T07)
+- **A duplicate whose labels differ is counted, not dropped in silence.** The first row still
+  wins (merging would turn a single-label dataset multilabel for a few noisy copies), but the
+  number of copies whose labels disagreed is logged and recorded in the bundle as
+  `conflicting_duplicates`. (T10)
 
 ### Fixed
 

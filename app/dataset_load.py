@@ -8,10 +8,19 @@ The CSV is read in blocks of rows. Read whole, the file sat in memory three time
 — the frame, the combined text, the cleaned text: +1.5 GB for a 558 MB export
 (docs/plans/2026-09-11-training-memory.md). In blocks, each of those is one block long,
 and only what the dataset keeps accumulates.
+
+A little past the ~300-line guide since the audit of 2026-09-30 gave it the column check
+(T03), the vectorizer's notion of a duplicate (T07) and the count of duplicates whose labels
+disagreed (T10). Every part still answers one question -- which rows, with which text and
+labels, a training reads from this file -- and a split would put the dedupe in one module
+and the rows it decides about in another.
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
+import unicodedata
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +35,25 @@ from .provenance import GENERATED, MARK_COLUMNS, SAME_TEXT, SYNTHETIC_MODES, blo
 
 # Rows per block: the step the loader already reported its cleaning progress in.
 CHUNK_ROWS = 50_000
+# The Combining Diacritical Marks block: every Latin accent decomposes (NFKD) into its letter
+# plus one of these, which is what the vectorizer's strip_accents="unicode" removes.
+_COMBINING_MARKS_RE = re.compile("[\u0300-\u036f]+")
+
+
+def dedupe_key(text: str) -> bytes:
+    """Two texts are duplicates when the vectorizer cannot tell them apart: it lower-cases
+    and strips accents. Compared exactly, "BRUCHRECHNUNG" stayed beside "Bruchrechnung", one
+    could land in train and its twin in test, and the metrics looked better than the model
+    is (audit 2026-09-30, T07).
+
+    A 16-byte digest rather than the normalised text: loading holds the whole dataset, and a
+    second copy of every text would double that. Measured ~12 M characters/s; accents
+    outside the Latin block (other scripts' marks) stay, so such variants are kept as before.
+    """
+    lowered = text.lower()
+    if not lowered.isascii():
+        lowered = _COMBINING_MARKS_RE.sub("", unicodedata.normalize("NFKD", lowered))
+    return hashlib.blake2b(lowered.encode("utf-8"), digest_size=16).digest()
 
 
 @dataclass
@@ -46,6 +74,9 @@ class LoadedData:
     excluded_rows: int = 0
     # How the file was decoded (``csv_encoding``) -- a bundle records it.
     encoding: CsvEncoding = field(default_factory=lambda: CsvEncoding("utf-8"))
+    # Rows dropped as a duplicate although their labels differed from the kept row's: the
+    # first row wins, and this says how often another row's labels went with it (T10).
+    conflicting_duplicates: int = 0
 
 
 def combine_text_columns(
@@ -220,17 +251,20 @@ class _Collector:
     label_lists: list[list[str]] = field(default_factory=list)
     uri_to_label: dict[str, str] = field(default_factory=dict)
     used: set[str] = field(default_factory=set)
-    seen: set[str] = field(default_factory=set)
+    # dedupe_key -> the kept row with that text, whose labels a later copy is compared to.
+    seen: dict[bytes, int] = field(default_factory=dict)
     rows_read: int = 0
     marks: list[int] = field(default_factory=list)
-    # Texts of marked rows, the dedupe's dropped copies included: a kept row with such a
-    # text is train-only too. The strings are the ones kept anyway, so this costs a set
-    # entry per marked row -- small, unless a pure Runs export marks every row.
-    marked_texts: set[str] = field(default_factory=set)
+    # The keys of the kept rows, for the SAME_TEXT marks (only when the CSV has marks).
+    kept_keys: list[bytes] = field(default_factory=list)
+    # Keys of marked rows, the dedupe's dropped copies included: a kept row with such a
+    # text is train-only too.
+    marked_texts: set[bytes] = field(default_factory=set)
     excluded_generated: int = 0
     # Texts "exclude" left out, under the dedupe: a second copy is not counted again.
-    left_out: set[str] = field(default_factory=set)
+    left_out: set[bytes] = field(default_factory=set)
     excluded_rows: int = 0
+    conflicting_duplicates: int = 0
 
     def add(self, frame: pd.DataFrame) -> None:
         cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
@@ -256,27 +290,32 @@ class _Collector:
         for text, labels, mark in zip(cleaned.tolist(), label_lists, marks, strict=False):
             if len(text) < self.min_text_length or not labels:
                 continue
+            key = dedupe_key(text) if self.drop_duplicates or self.has_marks else b""
             # Still before the dedupe: a generated first occurrence must not take a real
             # twin's place. After the check above: a row too short to train on anyway
             # was not left out by this -- nor, under the dedupe, a copy of a text that
             # was kept or left out already.
             if mark & GENERATED and self.mode == "exclude":
                 self.excluded_rows += 1
-                if not (self.drop_duplicates and (text in self.seen or text in self.left_out)):
+                if not (self.drop_duplicates and (key in self.seen or key in self.left_out)):
                     self.excluded_generated += 1
                     if self.drop_duplicates:
-                        self.left_out.add(text)
+                        self.left_out.add(key)
                 continue
             if mark:
-                self.marked_texts.add(text)
+                self.marked_texts.add(key)
             if self.drop_duplicates:
-                if text in self.seen:
+                kept = self.seen.get(key)
+                if kept is not None:
+                    if set(labels) != set(self.label_lists[kept]):
+                        self.conflicting_duplicates += 1
                     continue
-                self.seen.add(text)
+                self.seen[key] = len(self.texts)
             self.texts.append(text)
             self.label_lists.append(labels)
             if self.has_marks:
                 self.marks.append(mark)
+                self.kept_keys.append(key)
         self.rows_read += len(frame)
 
     def result(self, label_names: dict[str, str] | None, encoding: CsvEncoding) -> LoadedData:
@@ -289,9 +328,10 @@ class _Collector:
             )
         marks = None
         if self.has_marks:
-            marks = [mark or (SAME_TEXT if text in self.marked_texts else 0)
-                     for text, mark in zip(self.texts, self.marks, strict=True)]
+            marks = [mark or (SAME_TEXT if key in self.marked_texts else 0)
+                     for key, mark in zip(self.kept_keys, self.marks, strict=True)]
         return LoadedData(texts=self.texts, label_lists=self.label_lists,
                           uri_to_label=self.uri_to_label, marks=marks,
                           excluded_generated=self.excluded_generated,
-                          excluded_rows=self.excluded_rows, encoding=encoding)
+                          excluded_rows=self.excluded_rows, encoding=encoding,
+                          conflicting_duplicates=self.conflicting_duplicates)

@@ -142,6 +142,10 @@ def _build_metadata(
         # Labels the dataset had enough rows of that were NOT trained: too few rows lack them
         # to learn anything from (prepare). Omitted when there are none.
         **({"ubiquitous_labels": list(prep.ubiquitous_labels)} if prep.ubiquitous_labels else {}),
+        # Copies of a text dropped although their labels differed: the first row's labels
+        # were trained, the others' were not (T10). Omitted when there were none.
+        **({"conflicting_duplicates": prep.conflicting_duplicates}
+           if prep.conflicting_duplicates else {}),
         "metrics": fitted.metrics,
         "training_time_seconds": round(elapsed, 1),
         # What the run needed, so the next run of this size can be sized before it
