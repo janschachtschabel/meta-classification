@@ -104,15 +104,20 @@ async function copyText(text, confirmation) {
    hands the work an `isCurrent()` predicate. The work awaits and reports its own failures —
    which is why the token is a predicate rather than this helper awaiting the promise: the
    error belongs in the caller's own error element, and swallowing it here to keep the
-   wrapper tidy would be the same silent failure FE-12 is about. */
+   wrapper tidy would be the same silent failure FE-12 is about.
+
+   The predicate is the work's ONLY argument, whatever the wrapper is called with. It is
+   bound as a listener, and forwarding the listener's event made the event the handler's
+   `isCurrent`: the first call threw, and the Training tab could not load a single column
+   (audit 2026-09-30, U01). The work reads its input from the page, never from the event. */
 function latestOnly(work, waitMs = 150) {
   let seq = 0;
   let pending;
-  return (...args) => {
+  return () => {
     clearTimeout(pending);
     pending = setTimeout(() => {
       const mine = ++seq;
-      work(...args, () => mine === seq);
+      work(() => mine === seq);
     }, waitMs);
   };
 }
