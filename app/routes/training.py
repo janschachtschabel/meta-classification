@@ -175,6 +175,11 @@ async def train(
         raise HTTPException(400, str(exc)) from exc
     if get_registry().exists(body.model_name):
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
+    # An import uploading under this name would publish first or last -- and the run, after
+    # minutes of work, would fail at the very end if the import won (audit 2026-09-30, R01).
+    if get_registry().is_importing(body.model_name):
+        raise HTTPException(409, f"An import of model '{body.model_name}' is in progress; train under "
+                                 "another name, or retry once it is done.")
 
     req = body.model_dump(exclude=_REQ_EXCLUDED)
     # Left out, it is the server's default -- config.yaml's, else 20 -- and the run records

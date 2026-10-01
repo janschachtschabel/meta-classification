@@ -150,3 +150,21 @@ def test_two_stagings_of_one_name_get_two_directories(tmp_path):
     with pytest.raises(FileExistsError):
         registry.publish("m", second)
     assert not second.exists(), "the refused one's staging is removed"
+
+
+
+def test_an_import_reserves_its_name_until_it_is_done(tmp_path):
+    """R01's other half: an import's upload takes minutes, and nothing else could see it
+    coming -- a training of the same name was accepted meanwhile, and whichever published
+    second failed after all its work. The name is reserved for the import's whole length."""
+    registry = Registry(tmp_path / "models", 2)
+
+    with registry.importing("m"):
+        assert registry.is_importing("m")
+        with pytest.raises(FileExistsError), registry.importing("m"):
+            pass
+    assert not registry.is_importing("m"), "released however the import ended"
+
+    with pytest.raises(RuntimeError), registry.importing("m"):
+        raise RuntimeError("the upload broke off")
+    assert not registry.is_importing("m")

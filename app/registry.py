@@ -21,7 +21,8 @@ import shutil
 import tempfile
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
@@ -68,6 +69,8 @@ class Registry:
         self._disk_lock = threading.Lock()
         # Taken only while `_disk_lock` is held, never the other way round (see stage_export).
         self._staged = StagedArchives(self.dir)
+        # Names an import holds from before its upload until it is installed (`importing`).
+        self._importing: set[str] = set()
 
     def _path(self, name: str) -> Path:
         return self.dir / name
@@ -240,6 +243,30 @@ class Registry:
                 self._cache[name] = model
                 self._cache.move_to_end(name)
                 self._evict()
+
+    @contextmanager
+    def importing(self, name: str) -> Iterator[None]:
+        """Hold ``name`` for one import, from before its upload until it is installed or failed.
+
+        An upload takes minutes, and nothing else could see it coming: a training of the same
+        name was accepted meanwhile, and whichever published second failed after all its work
+        (audit 2026-09-30, R01). A second import of the name is refused at once
+        (``FileExistsError``); ``/train`` asks :meth:`is_importing`. Under ``_lock`` -- a set,
+        no I/O -- so the lock order (``_disk_lock`` before ``_lock``) is untouched.
+        """
+        with self._lock:
+            if name in self._importing:
+                raise FileExistsError(name)
+            self._importing.add(name)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._importing.discard(name)
+
+    def is_importing(self, name: str) -> bool:
+        with self._lock:
+            return name in self._importing
 
     def discard_staged(self, staged: Path) -> None:
         """Remove a staged bundle that will not be published (a stopped or killed run)."""

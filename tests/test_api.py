@@ -599,6 +599,22 @@ def test_import_rejected_while_training_same_name():
         job_runner.update(status="idle", model_name=None)
 
 
+def test_a_name_an_import_is_installing_is_refused_to_training_and_to_another_import(trained_model):
+    """R01 (audit 2026-09-30): an import's upload takes minutes. A training under the same
+    name was accepted meanwhile -- and whichever published second failed at the very end."""
+    from app.registry import get_registry
+
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    with get_registry().importing("in_flight"):
+        training = client.post("/train", headers=ADMIN, json={**TRAIN_BODY, "model_name": "in_flight"})
+        importing = client.post("/models/import", headers=ADMIN, data={"new_name": "in_flight"},
+                                files={"file": ("b.zip", bundle, "application/zip")})
+
+    assert (training.status_code, importing.status_code) == (409, 409), (training.text, importing.text)
+    assert "import" in training.json()["detail"]
+    assert "in_flight" not in client.get("/models", headers=RO).json()
+
+
 def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
     """The running check above missed the queue: an import under a name that a
     queued training will save was accepted (reproduced before this change), and

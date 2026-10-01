@@ -346,7 +346,9 @@ brackets are its finding numbers.
   overlapped published a mix that answered every prediction with a 500. Every write now
   stages in a directory of its own (a training in a child process writes into the one its
   parent made); whichever publishes second is refused, its staging removed, and leftovers of
-  a crash are the startup sweep's. (R01)
+  a crash are the startup sweep's. An import also holds its model's name from before its
+  upload until it is installed: a training — or a second import — of that name is refused
+  with 409 at once, not after minutes of work. (R01)
 
 ## [4.0.1] — 2026-09-27
 

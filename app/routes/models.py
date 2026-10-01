@@ -9,6 +9,7 @@ the model endpoints; what several route modules share already lives in ``routes/
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -234,39 +235,47 @@ async def import_model(
         raise HTTPException(400, "File must be a .zip model bundle.")
     name = new_name or Path(file.filename).stem
     safe_name(name, "model name")
-    # A training still writing this name would race the import on the same
-    # staging dir (mutual clobber / franken-bundle). Two independent signals:
-    # the job STATUS (normal runs), and THREAD liveness — after stop(hard=true)
-    # the status lies ("idle") while the abandoned thread keeps saving its bundle.
-    status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
-    if status_busy or job_runner.active_model_name() == name:
-        raise HTTPException(409, f"A training for model '{name}' is currently running; retry after it finishes.")
-    # A QUEUED run holds the name too: it was accepted first, and the import
-    # would make it fail when its turn comes.
-    if name in job_runner.queued_names():
-        raise HTTPException(409, f"A training for model '{name}' is queued; retry after it finishes, "
-                                 "or import under another name.")
-    # Spooled to disk rather than joined in memory: `read_upload_capped` holds the chunks
-    # AND the joined copy, i.e. twice the 200 MB cap, before a byte lands — and the import
-    # only ever moves those bytes onto disk anyway (audit API-5). Beside the bundles, under
-    # the hidden `.*.tmp` name the startup sweep already cleans.
     registry = get_registry()
-    registry.dir.mkdir(parents=True, exist_ok=True)
-    handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".zip.tmp", dir=registry.dir)
-    os.close(handle)
-    archive_path = Path(staged)
-    try:
-        await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, archive_path)
-        # Validation loads both skops files — seconds of CPU; off the event loop.
-        info = await asyncio.to_thread(registry.import_archive, name, archive_path)
-    except FileExistsError as exc:
-        raise HTTPException(409, f"Model '{name}' already exists.") from exc
-    except (UnsafeModelError, ValueError) as exc:
-        raise HTTPException(400, f"Invalid or unsafe model archive: {exc}") from exc
-    finally:
-        # The install copies what it keeps into the bundle dir, so the staged archive is
-        # never needed again — on success or on any failure.
-        archive_path.unlink(missing_ok=True)
+    with contextlib.ExitStack() as held:
+        # Held from before the upload until the bundle is installed, so a training (or a
+        # second import) of this name is refused now, not after minutes of work (R01).
+        try:
+            held.enter_context(registry.importing(name))
+        except FileExistsError as exc:
+            raise HTTPException(409, f"An import of model '{name}' is already in progress.") from exc
+        # A training of this name would publish under it too, and whichever came second
+        # would fail at the very end. Two independent signals: the job STATUS (normal
+        # runs), and THREAD liveness — after stop(hard=true) the status lies ("idle")
+        # while the abandoned thread keeps saving its bundle.
+        status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
+        if status_busy or job_runner.active_model_name() == name:
+            raise HTTPException(
+                409, f"A training for model '{name}' is currently running; retry after it finishes.")
+        # A QUEUED run holds the name too: it was accepted first, and the import
+        # would make it fail when its turn comes.
+        if name in job_runner.queued_names():
+            raise HTTPException(409, f"A training for model '{name}' is queued; retry after it finishes, "
+                                     "or import under another name.")
+        # Spooled to disk rather than joined in memory: `read_upload_capped` holds the chunks
+        # AND the joined copy, i.e. twice the 200 MB cap, before a byte lands — and the import
+        # only ever moves those bytes onto disk anyway (audit API-5). Beside the bundles, under
+        # the hidden `.*.tmp` name the startup sweep already cleans.
+        registry.dir.mkdir(parents=True, exist_ok=True)
+        handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".zip.tmp", dir=registry.dir)
+        os.close(handle)
+        archive_path = Path(staged)
+        try:
+            await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, archive_path)
+            # Validation loads both skops files — seconds of CPU; off the event loop.
+            info = await asyncio.to_thread(registry.import_archive, name, archive_path)
+        except FileExistsError as exc:
+            raise HTTPException(409, f"Model '{name}' already exists.") from exc
+        except (UnsafeModelError, ValueError) as exc:
+            raise HTTPException(400, f"Invalid or unsafe model archive: {exc}") from exc
+        finally:
+            # The install copies what it keeps into the bundle dir, so the staged archive is
+            # never needed again — on success or on any failure.
+            archive_path.unlink(missing_ok=True)
     return {"status": "imported", **info}
 
 
