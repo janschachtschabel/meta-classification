@@ -40,4 +40,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # client IP, not the reverse proxy's. Set FORWARDED_ALLOW_IPS (env, uvicorn reads
 # it) to the proxy's source address/range — the default 127.0.0.1 trusts nothing
 # from a pod-network proxy.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# --workers 1: the training job, model cache, rate limits and share links live in ONE
+# process, and without the flag uvicorn takes its worker count from WEB_CONCURRENCY --
+# with several, share links made in one worker were unknown to the next (audit
+# 2026-09-30, R07). Scale this app with CPU and memory, not processes.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--workers", "1"]

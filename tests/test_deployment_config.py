@@ -199,3 +199,31 @@ def test_both_secret_wiring_points_name_the_external_secret():
         "statefulset.yaml does not read config.auth.existingSecret, so the pod still mounts "
         "the chart's own Secret"
     )
+
+
+
+# --- R07: one worker, whatever the environment says ----------------------------------------------
+
+
+def _image_command() -> list[str]:
+    """The image's CMD, in its exec form."""
+    import json
+
+    line = next(line for line in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
+                if line.startswith("CMD ["))
+    return json.loads(line[len("CMD "):])
+
+
+def test_the_image_runs_one_worker_even_when_the_environment_asks_for_more(monkeypatch):
+    """R07 (audit 2026-09-30): uvicorn takes its worker count from WEB_CONCURRENCY unless the
+    command names one, and the training job, model cache, rate limits and share links live in
+    ONE process -- with several workers, 9 of 20 share links created in one were unknown to
+    the next. Read through uvicorn's own rule, as the image starts it."""
+    import uvicorn
+
+    command = _image_command()
+    assert command[:2] == ["uvicorn", "app.main:app"]
+    workers = int(command[command.index("--workers") + 1]) if "--workers" in command else None
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+
+    assert uvicorn.Config("app.main:app", workers=workers).workers == 1

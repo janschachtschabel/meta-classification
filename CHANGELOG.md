@@ -315,6 +315,11 @@ brackets are its finding numbers.
   bundle under the name, no longer a model but in the way, so an import under that name
   failed with a 500. The bundle is now renamed aside first, which frees the name at once,
   and then removed; a leftover is hidden and the next start sweeps it. (R11)
+- **The image runs one worker, whatever `WEB_CONCURRENCY` says.** Without `--workers`,
+  uvicorn takes its worker count from that variable, and the training job, model cache, rate
+  limits and share links live in one process: with several workers, share links made in one
+  were unknown to the next. The image's command now pins one worker, and a start with
+  `WEB_CONCURRENCY` above 1 logs that the app runs as one process. (R07)
 
 ## [4.0.1] — 2026-09-27
 

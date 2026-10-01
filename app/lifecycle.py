@@ -15,6 +15,7 @@ first request.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -135,6 +136,23 @@ def _check_auth_configuration(settings: Settings) -> None:
         )
 
 
+def _warn_about_several_workers() -> None:
+    """Say so when the environment asks for more than one worker (audit 2026-09-30, R07).
+
+    The training job, the model cache, the rate limits and the share links live in ONE
+    process; with several workers, share links made in one were unknown to the next (9 of 20
+    in the audit's test). The image pins `--workers 1`, so there the value is ignored -- and
+    anywhere uvicorn obeys it, the app breaks in ways no request reports. A warning, not a
+    refusal: some platforms set the variable themselves, and the image is right regardless.
+    """
+    workers = os.environ.get("WEB_CONCURRENCY", "").strip()
+    if workers and workers != "1":
+        logger.warning(
+            "WEB_CONCURRENCY is %r, but this API runs as ONE process: its training job, model "
+            "cache, rate limits and share links are not shared between workers. The image "
+            "ignores it (--workers 1); started any other way, run one worker.", workers)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create storage dirs on startup, sweep model staging dirs orphaned by a
@@ -142,6 +160,7 @@ async def lifespan(app: FastAPI):
     and preload any configured warmup models."""
     settings = get_settings()
     _check_auth_configuration(settings)
+    _warn_about_several_workers()
     settings.ensure_dirs()
     registry = get_registry()
     swept = registry.sweep_stale_tmp()

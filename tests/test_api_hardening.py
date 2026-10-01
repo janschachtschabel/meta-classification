@@ -353,6 +353,19 @@ def test_startup_refuses_a_key_that_is_a_placeholder_or_not_ascii(monkeypatch, t
     assert value not in str(refused.value), "a key is never echoed, not even a bad one"
 
 
+def test_a_start_asked_for_several_workers_says_this_app_runs_one(monkeypatch, tmp_path, caplog):
+    """R07 (audit 2026-09-30): the image pins one worker, so WEB_CONCURRENCY=4 there is ignored --
+    and anywhere uvicorn obeys it, links, limits and the training job split across processes.
+    Either way the operator is told, at start."""
+    import logging
+
+    client = _fresh_client(monkeypatch, tmp_path, WEB_CONCURRENCY="4")
+    with caplog.at_level(logging.WARNING, logger="api_v3"), client:
+        pass
+
+    assert any("WEB_CONCURRENCY" in record.getMessage() for record in caplog.records)
+
+
 def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
     """Every other default path is anchored to the api_v3 folder so the app works
     from any working directory. The .env file was the exception — a relative name,
