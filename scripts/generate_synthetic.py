@@ -7,8 +7,10 @@ Design against the known augmentation pitfalls:
   sub-topic breadth) + rotating few-shot samples, so output does not collapse
   onto a few prototypes.
 - Length constrained to the curated distribution (~100-500 chars of text).
-- Output rows are marked `source=synthetic` and MUST only ever be used for
-  training — evaluation stays on curated holdout data (see eval_holdout.py).
+- Output rows carry `generated_for=<label uri>` -- the mark the API reads
+  (app/provenance.py), so they train but never validate. They were marked
+  `source=synthetic`, which nothing reads, and went into validation and the test
+  split like real rows (audit 2026-09-30, W03).
 
 Usage (from api_v3/, OPENAI_API_KEY set):
     python scripts/generate_synthetic.py --curated data/data_30k.csv \
@@ -31,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from enrich_tail import FILT, LABEL_COL, TEXT_COLS, combined_text  # noqa: E402
 
 from app.data import clean_text, split_labels  # noqa: E402
+from app.label_names import pair_names  # noqa: E402
+from app.provenance import GENERATED_FOR  # noqa: E402
 
 TITLE, DESC, KEYW = TEXT_COLS
 # Rotating per batch: target audience/level + topic angle (breadth of the subject).
@@ -81,13 +85,36 @@ def openai_chat(model: str, prompt: str, timeout: int = 120) -> dict:
 
 
 def real_examples(df: pd.DataFrame, uri: str, rng: random.Random, k: int = 4) -> list[str]:
-    rows = df[df[LABEL_COL].fillna("").str.contains(uri, regex=False)]
+    # The label exactly: a substring match took .../04003 rows as examples of .../040 (W03).
+    rows = df[df[LABEL_COL].fillna("").map(lambda value: uri in split_labels(value, ","))]
     sample = rows.sample(min(k, len(rows)), random_state=rng.randint(0, 10**6))
     out = []
     for _, r in sample.iterrows():
         out.append(f"- Titel: {r[TITLE]!s:.80} | Beschreibung: {str(r[DESC])[:220]} "
                    f"| Schlagwörter: {str(r[KEYW])[:80]}")
     return out
+
+
+def uri_names(curated: pd.DataFrame, vocabulary: Path) -> dict[str, str]:
+    """URI -> display name: `label_names.json` when there is one (the only complete source),
+    else what the CSV provably lines up (`pair_names`). Zipped by position, a name holding the
+    separator shifted every later name onto the wrong URI, and the generator wrote rows for
+    one subject under another's name (README, "Label display names"; audit W03)."""
+    if vocabulary.exists():
+        return dict(json.loads(vocabulary.read_text(encoding="utf-8")))
+    names: dict[str, str] = {}
+    for uris, shown in zip(curated[LABEL_COL].fillna(""), curated[f"{LABEL_COL}_DISPLAYNAME"].fillna(""),
+                           strict=True):
+        for uri, name in pair_names(split_labels(uris, ","), split_labels(shown, ",")):
+            names.setdefault(uri, name)
+    return names
+
+
+def synthetic_row(item: dict, uri: str, name: str) -> dict:
+    """One generated catalogue entry as a row of the curated CSV, marked as generated."""
+    return {TITLE: item.get("title", ""), DESC: item.get("description", ""),
+            KEYW: item.get("keywords", ""), LABEL_COL: uri,
+            f"{LABEL_COL}_DISPLAYNAME": name, GENERATED_FOR: uri}
 
 
 def main() -> None:
@@ -100,18 +127,16 @@ def main() -> None:
     ap.add_argument("--model", default="gpt-5.4-nano")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", default="data/data_synthetic.csv")
+    ap.add_argument("--names", default=None,
+                    help="label_names.json (default: the one beside --curated, if any)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
     curated = pd.read_csv(args.curated, sep=";", dtype=str, encoding="utf-8", low_memory=False)
     known = set(combined_text(curated, TEXT_COLS))
 
-    # URI -> display name from the curated data itself
-    dn_col = f"{LABEL_COL}_DISPLAYNAME"
-    uri_name: dict[str, str] = {}
-    for uris, names in zip(curated[LABEL_COL].fillna(""), curated[dn_col].fillna(""), strict=False):
-        for u, n in zip(split_labels(uris, ","), split_labels(names, ","), strict=False):
-            uri_name.setdefault(u, n)
+    uri_name = uri_names(curated, Path(args.names) if args.names
+                         else Path(args.curated).parent / "label_names.json")
 
     subjects = [s if s.startswith("http") else FILT + s for s in args.subjects.split(",")]
     rows: list[dict] = []
@@ -135,15 +160,14 @@ def main() -> None:
                 if not 100 <= len(text) <= 600 or text in known:
                     continue
                 known.add(text)
-                rows.append({TITLE: it.get("title", ""), DESC: it.get("description", ""),
-                             KEYW: it.get("keywords", ""), LABEL_COL: uri,
-                             dn_col: name, "source": "synthetic"})
+                rows.append(synthetic_row(it, uri, name))
                 made += 1
                 if made >= args.per_subject:
                     break
             print(f"  {name}: {made}/{args.per_subject} (batch {batches}, {facet})")
 
-    out = pd.DataFrame(rows).reindex(columns=[*curated.columns, "source"], fill_value="")
+    columns = [*curated.columns, *([GENERATED_FOR] if GENERATED_FOR not in curated.columns else [])]
+    out = pd.DataFrame(rows).reindex(columns=columns, fill_value="")
     out.to_csv(args.out, sep=";", index=False, encoding="utf-8")
     print(f"\n{len(rows)} synthetische Zeilen -> {args.out}")
 

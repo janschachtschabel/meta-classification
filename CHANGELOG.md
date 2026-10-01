@@ -526,6 +526,13 @@ brackets are its finding numbers.
   only logs a guard that fires and ends 0: it now lints strictly and renders values that
   satisfy every guard (`ci/lint-values.yaml`, kept out of the packaged chart), so a guard
   firing on them fails the job. (B11)
+- **`generate_synthetic.py` writes rows the app recognises, under the right names.** It
+  paired URIs and display names by position — the trap the README describes — so a name
+  holding the separator gave later subjects the wrong name in the prompt; it marked its rows
+  `source=synthetic`, which nothing reads, so they went into validation and the test split
+  like real rows; and it picked examples by substring, so `…/040` drew on `…/04003`. Names
+  now come from `label_names.json` or the pairs the CSV provably lines up, rows carry
+  `generated_for`, and examples match the label exactly. (W03)
 
 ## [4.0.1] — 2026-09-27
 
