@@ -453,6 +453,12 @@ brackets are its finding numbers.
   was back at the top of the page. The button now gets the focus back when the work is done,
   unless the user has moved on meanwhile; a saved correction, whose Save stays disabled, hands
   it to the form's Close button. (U09)
+- **Stopping a training asks first, and the status card keeps the focus.** "Stop training"
+  ended the run at once — and stopping also empties the queue, so one click could throw away
+  a whole batch. It now asks, naming the runs that would go with it. The card it sits on was
+  rebuilt from scratch every 2.5 s while a run was going, so the focus fell off "Stop" between
+  Tab and Enter and a phase or model name being selected lost its selection; it is now updated
+  in place, and only the rows whose text changed are written. (U10)
 
 ## [4.0.1] — 2026-09-27
 

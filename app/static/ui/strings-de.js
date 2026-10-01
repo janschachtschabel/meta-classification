@@ -269,6 +269,8 @@ const STRINGS_DE = {
   "trainStatus.state.running": "läuft",
   "trainStatus.state.stopped": "gestoppt",
   "trainStatus.stop": "Training stoppen",
+  "trainStatus.stopConfirm": "Laufendes Training „{name}“ stoppen? Es entsteht kein Modell.",
+  "trainStatus.stopConfirmQueue": {"one": "Laufendes Training „{name}“ stoppen? Das leert auch die Warteschlange: {count} weiterer Lauf wird verworfen.", "other": "Laufendes Training „{name}“ stoppen? Das leert auch die Warteschlange: {count} weitere Läufe werden verworfen."},
   "trainStatus.stopRequested": "Stopp angefordert — Warteschlange geleert. Der Lauf endet in der Regel innerhalb von ~30 s.",
   "trainStatus.connectionLost": "Keine Verbindung zum Dienst — die Anzeige unten zeigt den letzten bekannten Stand und wird nicht mehr aktualisiert.",
   "trainStatus.threadsLimited": "{used} von {requested} — vom Speicherbudget gebremst",

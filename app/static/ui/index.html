@@ -150,11 +150,17 @@
                that state forever, and a dead backend read exactly like a live run. -->
           <p id="train-stale" class="error" role="alert" hidden
              data-i18n="trainStatus.connectionLost"></p>
-          <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
-               NOT be a live region — SRs would re-announce it continuously. Phase
-               transitions are announced by #train-announce in the top bar. -->
+          <!-- Changes every poll tick (elapsed/ETA count up), so it must NOT be a live region
+               — SRs would re-announce it continuously; transitions are announced by
+               #train-announce in the top bar. Updated in place, never rebuilt: rebuilding took
+               the focus off Stop and any text selection with it (renderTrainStatus). -->
           <div id="train-status" class="train-status">
-            <p class="muted" data-i18n="train.status.loading"></p>
+            <p class="muted" id="train-status-loading" data-i18n="train.status.loading"></p>
+            <div class="progress" id="train-progress" role="progressbar" aria-valuemin="0"
+                 aria-valuemax="100" data-i18n-aria-label="trainStatus.progressLabel" hidden><span></span></div>
+            <dl id="train-status-rows"></dl>
+            <div id="train-status-notes"></div>
+            <button type="button" class="small danger" id="train-stop" data-i18n="trainStatus.stop" hidden></button>
           </div>
           <p id="train-queue" class="muted" aria-live="polite" hidden></p>
         </div>

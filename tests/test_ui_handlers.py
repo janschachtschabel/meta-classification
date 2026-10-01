@@ -36,7 +36,7 @@ function el(sel) {
       style: {}, dataset: {},
       classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
       addEventListener() {}, removeEventListener() {}, focus() {}, remove() {},
-      insertAdjacentHTML() {},
+      insertAdjacentHTML() {}, setAttribute() {},
       querySelector: (inner) => el(`${sel} ${inner}`),
       querySelectorAll: () => [],
     };
@@ -804,3 +804,86 @@ def test_classifying_leaves_the_focus_on_the_classify_button(tmp_path):
     """)
 
     assert result == {"focused": True, "enabled": True, "errors": []}
+
+
+
+# --- U10: the training card and its Stop button -----------------------------------------------
+
+# `t` with its parameters, so a value that changes reads as changed; and a card whose row list
+# counts what is rebuilt and which rows are written.
+_STATUS_PRELUDE = _PRELUDE.replace(
+    "const t = (key) => key;",
+    "const t = (key, params) => (params ? `${key} ${JSON.stringify(params)}` : key);")
+_STATUS_CARD = """
+    let rebuilt = 0;
+    Object.defineProperty(el("#train-status"), "innerHTML", { set() { rebuilt += 1; } });
+    const rows = el("#train-status-rows");
+    let built = 0;
+    const written = [];
+    rows.children = [];
+    Object.defineProperty(rows, "innerHTML", { set(markup) {
+      built += 1;
+      rows.children = [...markup.matchAll(/<(dt|dd)>/g)].map((m, at) => {
+        let text = "";
+        return { get textContent() { return text; },
+                 set textContent(value) { written.push(at); text = value; } };
+      });
+    } });
+    let bound = 0;
+    el("#train-stop").addEventListener = () => { bound += 1; };
+    const running = (elapsed) => ({
+      status: "running", phase: "C-Auswahl", phase_detail: "Fold 2/3", model_name: "fach",
+      progress: 40, elapsed_seconds: elapsed, eta_seconds: 600 - elapsed, queued: ["fach_b"],
+      rss_mb: 900, peak_rss_mb: 1200, head_fit_threads: 4, threads_requested: 4,
+      seconds_since_heartbeat: 1 });
+"""
+
+
+@needs_node
+def test_a_poll_tick_updates_the_training_card_in_place(tmp_path):
+    """U10 (audit 2026-09-30): the card was rebuilt from scratch every 2.5 s while a run was
+    going, so the focus fell off "Stop" between Tab and Enter, and a phase or model name
+    being selected to copy lost its selection. The rows are now written in place, and only
+    the ones whose text changed -- here the elapsed time and the estimate."""
+    result = _run(tmp_path, modules=("train-status.js",), helpers=("app.js:applyBarWidths",),
+                  prelude=_STATUS_PRELUDE, body=_STATUS_CARD + """
+        renderTrainStatus(running(100));
+        written.length = 0;
+        renderTrainStatus(running(102.5));
+        report({ rebuilt, built, written, bound, stopShown: !el("#train-stop").hidden, errors });
+    """)
+
+    assert result["rebuilt"] == 0, "the card was replaced"
+    assert result["built"] == 1, "the row list was rebuilt on the second tick"
+    assert result["written"] == [9, 11], "rows were rewritten that had not changed"
+    assert result["bound"] == 0, "rendering bound a listener: Stop belongs to the page"
+    assert result["stopShown"] is True
+    assert result["errors"] == []
+
+
+@needs_node
+def test_stopping_asks_first_and_names_the_queue_it_empties(tmp_path):
+    """U10: "Stop training" posted at once -- and stopping also empties the whole queue, so
+    one click could throw away a batch of runs. It asks first, and says how many go with it."""
+    result = _run(tmp_path, modules=("train-status.js",), helpers=("app.js:applyBarWidths",),
+                  prelude=_STATUS_PRELUDE, body=_STATUS_CARD + """
+        const asked = [];
+        let answer = false;
+        globalThis.confirm = (question) => { asked.push(question); return answer; };
+        globalThis.toast = () => {};
+        globalThis.toastError = (err) => errors.push(String(err.message || err));
+        const posted = [];
+        Api.post = async (url) => { posted.push(url); return {}; };
+        renderTrainStatus(running(100));
+        await stopTraining();
+        const declined = [...posted];
+        answer = true;
+        await stopTraining();
+        report({ asked, declined, posted, errors });
+    """)
+
+    assert result["declined"] == [], "a declined question still stopped the run"
+    assert result["posted"] == ["/train/stop"]
+    assert result["asked"][0].startswith("trainStatus.stopConfirmQueue")
+    assert '"count":1' in result["asked"][0] and '"name":"fach"' in result["asked"][0]
+    assert result["errors"] == []

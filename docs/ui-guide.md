@@ -192,7 +192,8 @@ wartet, steht unter dem Status („Queued on the server: …“) und kommt aus d
 nicht aus dem Browser.
 
 **Stop** beendet den laufenden Lauf *und* leert die Warteschlange: „Stop“ heißt „das soll
-enden“, nicht „spring zum nächsten“. Es wirkt am nächsten Prüfpunkt — zwischen zwei
+enden“, nicht „spring zum nächsten“. Weil ein Klick so einen ganzen Stapel verwerfen kann,
+fragt die Seite vorher nach und sagt, wie viele wartende Läufe mitgehen. Es wirkt am nächsten Prüfpunkt — zwischen zwei
 Anläufen des Modells, nicht mitten drin —, und ein Anlauf dauert bei großen Datenmengen
 Minuten. Deshalb endet ein Lauf, der nicht von selbst reagiert, nach **~30 s** ohnehin;
 die Statuszeile sagt das dann auch. Ein gestoppter Lauf hinterlässt in keinem Fall ein

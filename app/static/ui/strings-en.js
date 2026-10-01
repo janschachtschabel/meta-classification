@@ -268,6 +268,8 @@ const STRINGS_EN = {
   "trainStatus.state.running": "running",
   "trainStatus.state.stopped": "stopped",
   "trainStatus.stop": "Stop training",
+  "trainStatus.stopConfirm": "Stop the running training \"{name}\"? No model is made.",
+  "trainStatus.stopConfirmQueue": {"one": "Stop the running training \"{name}\"? This empties the queue too: {count} more run is dropped.", "other": "Stop the running training \"{name}\"? This empties the queue too: {count} more runs are dropped."},
   "trainStatus.stopRequested": "Stop requested — queue cleared. The run usually ends within ~30 s.",
   "trainStatus.connectionLost": "No connection to the service — the card below shows the last known state and is no longer being updated.",
   "trainStatus.threadsLimited": "{used} of {requested} — held back by the memory budget",

@@ -128,6 +128,7 @@ async function boot() {
   document.querySelectorAll('input[name="query-mode"]').forEach(
     (radio) => radio.addEventListener("change", onQueryModeChange));
   $("#train-chip").addEventListener("click", () => switchTab("training"));
+  $("#train-stop").addEventListener("click", stopTraining);
   $("#train-form").addEventListener("submit", onTrainStart);
   // Debounced and latest-wins: see loadDatasetColumns in training.js for why, and
   // latestOnly below for what it guarantees. Wrapped here, where every module has loaded.
