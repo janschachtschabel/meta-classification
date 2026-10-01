@@ -5,6 +5,8 @@ Thin, like every route module: the store and the export shape live in ``app.feed
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
@@ -41,7 +43,8 @@ async def record_feedback(
     """
     safe_name(body.model_name, "model name")
     try:
-        collected = feedback_store.append(body.model_dump())
+        # Off the event loop: a process's first correction counts what is on disk (R02).
+        collected = await asyncio.to_thread(feedback_store.append, body.model_dump())
     except FeedbackWriteError as exc:
         # 503 rather than 500: the request was valid, the storage is not ready, and
         # retrying is the right move — which a sanitized "Internal server error" says

@@ -112,6 +112,27 @@ def test_a_torn_last_line_does_not_swallow_the_next_correction(store):
     assert collected == 2, "the count is what a reader sees"
 
 
+def test_the_first_count_streams_the_file_instead_of_holding_it(store):
+    """R02 (audit 2026-09-30): a process's first correction counted what was on disk by loading
+    the whole file as a list -- 240 MB of corrections took 769 MB, and 2.9 s on the event
+    loop. The file is uncapped on purpose, so the count is a pass over its lines."""
+    import tracemalloc
+
+    line = json.dumps({"text": "x" * 1000, "model_name": "m", "predicted": [],
+                       "corrected": ["uri:a"], "source": "ui"}) + "\n"
+    store.write_text(line * 20_000, encoding="utf-8")  # ~20 MB
+
+    tracemalloc.start()
+    try:
+        collected = feedback.append(_correction("Bruchrechnung", ["uri:math"]))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert collected == 20_001
+    assert peak < 4 * 2**20, f"{peak / 2**20:.1f} MiB for a {store.stat().st_size / 2**20:.0f} MiB file"
+
+
 def test_a_correction_that_cannot_be_saved_fails_instead_of_vanishing(tmp_path, monkeypatch):
     """The one failure this module must not swallow.
 

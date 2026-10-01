@@ -289,6 +289,10 @@ brackets are its finding numbers.
   correction was appended onto it: one merged line the reader drops, so the correction was
   lost, including the retry the 503 tells the editor to send. A torn line is now ended
   before the next correction is written. (R06)
+- **The first correction after a start no longer holds the server.** It counted the
+  corrections on disk by loading the whole file as a list, on the event loop: with 240 MB of
+  corrections that took 2.9 s, during which not even `/health` answered, and 769 MB of
+  memory. The count now streams over the lines, in a worker thread. (R02)
 
 ## [4.0.1] — 2026-09-27
 

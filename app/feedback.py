@@ -92,7 +92,9 @@ def append(record: dict) -> int:
         if _count is None:
             # First write of this process: establish the count from what a READER sees,
             # so a line that never finished being written is not counted as a correction.
-            _count = len(read_all())
+            # Line by line: the file is uncapped, and as a list 240 MB of it took 769 MB
+            # (audit 2026-09-30, R02).
+            _count = sum(1 for _ in _iter_entries())
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Ending a torn line first costs that line, which was lost already -- and keeps
