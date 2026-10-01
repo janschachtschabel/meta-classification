@@ -463,6 +463,7 @@ def test_a_rate_limit_that_does_not_lift_still_ends_the_batch(tmp_path):
 _DATASET_PANEL = """
     const dialog = el("#dataset-detail");
     dialog.showModal = () => {};
+    globalThis.openModal = (opened) => opened.showModal();
     const frames = [];
     dialog.querySelector = (sel) => {
       if (sel !== ".detail") return null;
@@ -681,3 +682,55 @@ def test_coming_back_to_the_query_tab_keeps_the_models_picked(tmp_path):
     """)
 
     assert result == {"first": ["m1"], "kept": ["m3"], "none": [], "errors": []}
+
+
+
+# --- U09: what a screen reader is told, and where the focus is -------------------------------
+
+# Toasts, with the page's two stacks and a model panel that holds the pair openModal gives
+# every dialog. `document.querySelector("dialog[open]")` answers as the browser would.
+_TOASTS = """
+    document.createElement = () => ({ innerHTML: "", addEventListener() {},
+                                      querySelector: () => ({ addEventListener() {} }) });
+    const stack = () => ({ items: [], appendChild(item) { this.items.push(item.innerHTML); } });
+    elements["#toast"] = stack();
+    elements["#toast-alert"] = stack();
+    const steps = [];
+    const dialog = {
+      open: false, html: "", regions: {},
+      insertAdjacentHTML(where, html) { steps.push("regions"); this.html += html; },
+      showModal() { steps.push("showModal"); this.open = true; },
+      querySelector(sel) {
+        const name = (sel.match(/data-toast="([^"]+)"/) || [])[1];
+        if (!name || !this.html.includes(`data-toast="${name}"`)) return null;
+        return (this.regions[name] ||= stack());
+      },
+    };
+    document.querySelector = (sel) => (sel === "dialog[open]" ? (dialog.open ? dialog : null) : el(sel));
+    const texts = (items) => items.map((html) => html.replace(/<[^>]+>/g, "").replace("&times;", ""));
+"""
+
+
+@needs_node
+def test_a_message_raised_in_a_dialog_is_shown_inside_it(tmp_path):
+    """U09 (audit 2026-09-30): an open modal dialog makes everything outside it inert -- out
+    of the accessibility tree -- and paints it under the backdrop, both toast stacks
+    included. "Copied", or why a delete failed, was neither heard nor properly seen while the
+    model panel was open. Each dialog now holds a pair of its own, inserted empty BEFORE it
+    opens: a live region has to exist before its message does to be announced."""
+    result = _run(tmp_path, helpers=("app.js:pushToast", "app.js:toastRegion", "app.js:toastError",
+                           "app.js:openModal"),
+                  body=_TOASTS + """
+        toastError({ message: "before" });
+        openModal(dialog);
+        toastError({ message: "inside" });
+        dialog.open = false;
+        toastError({ message: "after" });
+        report({ page: texts(elements["#toast-alert"].items),
+                 dialog: texts((dialog.regions["toast-alert"] || stack()).items), steps, errors });
+    """)
+
+    assert result["dialog"] == ["inside"], "the message went under the dialog"
+    assert result["page"] == ["before", "after"]
+    assert result["steps"] == ["regions", "showModal"]
+    assert result["errors"] == []

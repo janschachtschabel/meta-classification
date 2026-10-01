@@ -442,6 +442,11 @@ brackets are its finding numbers.
   live region is not in the accessibility tree at all. A run that finished while its owner
   classified texts was never announced, though the chip beside the tabs showed it. The
   announcer now sits in the top bar beside that chip. (U09)
+- **A message raised in a dialog is shown in the dialog.** An open modal dialog makes
+  everything outside it inert and paints it under its backdrop — both message stacks
+  included, so "copied" or why a delete failed was neither heard nor properly seen while the
+  model or dataset panel was open. Each dialog now holds a pair of message stacks of its own,
+  inserted before it opens, and messages go there while it is open. (U09)
 
 ## [4.0.1] — 2026-09-27
 

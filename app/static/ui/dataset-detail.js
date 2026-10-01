@@ -117,7 +117,7 @@ async function showDatasetDetail(name) {
   dialog.innerHTML = `<div class="detail" tabindex="-1">
     <h2 id="dataset-detail-title">${esc(name)}</h2>
     <p class="muted">${t("common.loading")}</p></div>`;
-  dialog.showModal();
+  openModal(dialog);
   const frame = dialog.querySelector(".detail");
   frame.focus();
 

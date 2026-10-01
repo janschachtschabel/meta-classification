@@ -34,7 +34,7 @@ function applyBarWidths(root) {
 const TOAST_HIDE_MS = 6000;
 
 function pushToast(regionSel, msg, hideAfter) {
-  const region = $(regionSel);
+  const region = toastRegion(regionSel);
   const item = document.createElement("div");
   item.className = "toast-item";
   item.innerHTML = `<span>${esc(msg)}</span>` +
@@ -54,6 +54,27 @@ function pushToast(regionSel, msg, hideAfter) {
     item.addEventListener("focusout", resume);
   }
   return item;
+}
+
+/* An open modal dialog makes everything outside it inert -- out of the accessibility tree --
+   and paints it under the backdrop, both stacks above included: "copied", or why a delete
+   failed, was neither heard nor properly seen while a panel was open (audit 2026-09-30, U09).
+   So a dialog opens through `openModal`, which gives it a pair of its own, inserted empty
+   BEFORE it opens -- a live region has to exist before its message does to be announced --
+   and a message goes to the open dialog's pair when there is one. */
+function toastRegion(regionSel) {
+  const open = document.querySelector("dialog[open]");
+  return (open && open.querySelector(`[data-toast="${regionSel.slice(1)}"]`)) || $(regionSel);
+}
+
+function openModal(dialog) {
+  if (!dialog.querySelector("[data-toast]")) {
+    dialog.insertAdjacentHTML("beforeend",
+      '<div class="toast-stack" data-toast="toast" role="status" aria-live="polite"></div>' +
+      '<div class="toast-stack toast-alert" data-toast="toast-alert" role="alert" ' +
+      'aria-live="assertive"></div>');
+  }
+  dialog.showModal();
 }
 
 /* A confirmation: something asked for happened. Polite, and fades. */
