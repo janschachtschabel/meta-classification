@@ -24,7 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
 
-from . import model_archive, model_report
+from . import durability, model_archive, model_report
 from .classifier import ClassifierModel
 from .model_io import (
     CARD_FILE,
@@ -183,6 +183,9 @@ class Registry:
         except UnsafeModelError:
             shutil.rmtree(tmp, ignore_errors=True)
             raise
+        # On disk before a rename can expose it, and here rather than in publish: outside
+        # the disk lock, and in the child process that wrote it (audit 2026-09-30, R13).
+        durability.sync_tree(tmp)
         return tmp
 
     def publish(
@@ -213,6 +216,7 @@ class Registry:
             # stall here would be indistinguishable from one inside the last dump.
             on_step("Publishing bundle (atomic rename)")
             os.replace(tmp, target)
+            durability.sync_dir(self.dir)  # the rename itself (R13)
             if model is None:
                 return
             # Publish to the cache while STILL holding _disk_lock: a concurrent
@@ -326,7 +330,9 @@ class Registry:
             edit(metadata)
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            durability.sync_file(tmp)  # R13: never an empty metrics.json after a power cut
             os.replace(tmp, path)
+            durability.sync_dir(path.parent)
 
     def delete(self, name: str) -> None:
         # Pop the cache INSIDE the disk-lock section, AFTER the rmtree: popping
@@ -435,6 +441,7 @@ class Registry:
                 # removes them all again if any check fails.
                 model_archive.unpack_into(archive_path, tmp)
                 _read_bundle(tmp)  # validates config + skops safety; raises if unsafe
+                durability.sync_tree(tmp)  # on disk before the rename exposes it (R13)
             except Exception as exc:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if isinstance(exc, KeyError):
@@ -452,6 +459,7 @@ class Registry:
                     # Lost a same-name import race; report it as the usual conflict.
                     raise FileExistsError(name) from None
                 raise
+            durability.sync_dir(self.dir)
         return self.info(name)  # outside the disk lock: info() re-acquires it sequentially
 
 

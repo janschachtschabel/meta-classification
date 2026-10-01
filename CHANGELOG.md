@@ -298,6 +298,12 @@ brackets are its finding numbers.
   within the rate limit until the volume the models live on was full. At the cap a new
   correction answers 503 and the file is left as it is; what was collected stays exportable.
   Chart: `config.limits.maxFeedbackMb`. (R02)
+- **A published bundle survives a power cut.** Bundles were written and renamed into place
+  without an fsync; a rename reaching the disk before the data blocks leaves names pointing
+  at empty files, so a bundle could come back with empty skops files. Every member and the
+  staging directory are now synced before the rename exposes them — for a training outside
+  the disk lock, in the process that wrote it — and the models directory after; the same
+  for an import and for `metrics.json` edits. (R13)
 
 ## [4.0.1] — 2026-09-27
 
