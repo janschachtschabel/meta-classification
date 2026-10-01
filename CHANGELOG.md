@@ -533,6 +533,12 @@ brackets are its finding numbers.
   like real rows; and it picked examples by substring, so `…/040` drew on `…/04003`. Names
   now come from `label_names.json` or the pairs the CSV provably lines up, rows carry
   `generated_for`, and examples match the label exactly. (W03)
+- **`eval_holdout.py` judges each model on its own input.** It joined every text column
+  once, so a model trained with the title twice was scored on a distribution it never saw;
+  each model's text is now assembled from its own columns and weights by the app's own
+  `combine_text_columns`. And with no label shared by the models and the holdout, or no
+  weak one among them, the macro averages divided by zero after the whole holdout had been
+  classified: the first now stops before any request, the second is said. (W05)
 
 ## [4.0.1] — 2026-09-27
 

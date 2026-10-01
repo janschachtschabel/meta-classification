@@ -99,3 +99,45 @@ def test_generated_rows_carry_the_mark_the_app_reads(synthetic):
     assert "source" not in row
     assert set(MARK_COLUMNS) & set(frame.columns)
     assert block_marks(frame, mode="train").any(), "the app does not recognise the row as generated"
+
+
+# --- W05: eval_holdout.py --------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def holdout():
+    return _script("eval_holdout")
+
+
+def test_each_model_is_judged_on_its_text_as_it_was_trained(holdout):
+    """W05 (audit 2026-09-30): the holdout text was every column once, so a model trained with
+    the title twice was judged on a feature distribution it never saw -- and its thresholds,
+    tuned on the other one, cut in the wrong place. Built now as training built it."""
+    from app.dataset_load import combine_text_columns
+
+    frame = pd.DataFrame([{"title": "Bruch", "description": "rechnen", "extra": "x"}])
+    info = {"metadata": {"text_columns": ["title", "description"],
+                         "text_column_weights": {"title": 2}}}
+
+    assert holdout.model_texts(frame, info) == combine_text_columns(
+        frame, ["title", "description"], {"title": 2}).tolist()
+    assert holdout.model_texts(frame, info) == ["Bruch Bruch rechnen"]
+
+
+def test_a_holdout_without_a_trained_column_is_refused(holdout):
+    frame = pd.DataFrame([{"title": "Bruch"}])
+
+    with pytest.raises(SystemExit, match="description"):
+        holdout.model_texts(frame, {"metadata": {"text_columns": ["title", "description"]}})
+
+
+def test_nothing_to_average_is_said_rather_than_divided(holdout, monkeypatch):
+    """W05: with no label shared by every model and the holdout, or no weak one among them,
+    the macro averages divided by zero after the whole holdout had been classified."""
+    monkeypatch.setattr(holdout, "api", lambda *a, **k: {"results": [{"predictions": []}]})
+
+    scores = holdout.evaluate("http://unused", "key", "m", ["text"], [set()], set())
+
+    assert scores["macro"] is None
+    assert holdout.mean([]) is None
+    assert holdout.mean([0.5, 1.0]) == 0.75
