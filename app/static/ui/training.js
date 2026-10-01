@@ -203,7 +203,7 @@ async function onTrainStart(ev) {
     if (raw !== "") shared[field] = Number(raw);
   }
   const bodies = plan.map((p) => ({ ...shared, model_name: p.name, label_column: p.label_column }));
-  btn.disabled = true;
+  const idle = busy(btn);
   try {
     // Every run is submitted right away and the SERVER holds the order. This page used
     // to keep the rest in an array and post them as the status changed, which meant a
@@ -220,5 +220,5 @@ async function onTrainStart(ev) {
   } catch (err) {
     // Some may already be queued: say so rather than implying nothing happened.
     showError(errEl, { message: t("train.partialFailure", { message: err.message }) });
-  } finally { btn.disabled = false; }
+  } finally { idle(); }
 }

@@ -22,7 +22,7 @@ async function openCorrection(modelName, predicted, text, card, button) {
       `<div class="correction"><p class="error" role="alert">${t("feedback.textChanged")}</p></div>`);
     return;
   }
-  button.disabled = true;
+  const idle = busy(button);
   try {
     const labels = await Api.get(`/models/${encodeURIComponent(modelName)}/labels`);
     card.insertAdjacentHTML("beforeend", correctionHtml(modelName, predicted, labels));
@@ -30,7 +30,7 @@ async function openCorrection(modelName, predicted, text, card, button) {
     card.insertAdjacentHTML("beforeend",
       `<div class="correction"><p class="error" role="alert">${esc(err.message)}</p></div>`);
     return;
-  } finally { button.disabled = false; }
+  } finally { idle(); }
 
   const box = card.querySelector(".correction");
   box.querySelector("[data-send]").addEventListener("click", () =>
@@ -66,7 +66,7 @@ async function sendCorrection(modelName, predicted, box, text) {
     return;
   }
   const send = box.querySelector("[data-send]");
-  send.disabled = true;
+  const idle = busy(send);
   try {
     const answer = await Api.post("/feedback", {
       text,
@@ -82,10 +82,15 @@ async function sendCorrection(modelName, predicted, box, text) {
       : t("feedback.savedNone", { collected });
     box.querySelector("select").disabled = true;
     send.textContent = t("feedback.savedButton");
+    // Save stays disabled for good, so the focus would end on <body> (U09): what is left to
+    // do with the form is to close it.
+    const close = box.querySelector("[data-cancel]");
+    close.textContent = t("common.close");
+    close.focus();
   } catch (err) {
     message.className = "fb-message error";
     message.textContent = err.message;
-    send.disabled = false;
+    idle();
   }
 }
 

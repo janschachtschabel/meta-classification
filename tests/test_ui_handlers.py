@@ -264,7 +264,8 @@ def test_a_single_answer_and_its_extras_describe_the_same_text(tmp_path):
     metadata and the "Why?" button read the field again once the answer was back -- so a user
     who went on typing got the classification of one text beside the metadata of another, and
     "Why?" explained an answer to a text the model never saw."""
-    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, body=_ONE_TEXT + """
+    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, helpers=("app.js:busy",),
+                  body=_ONE_TEXT + """
         await runSingle(["m"], { classify: true, metadata: true }, out);
         await click.explain();
         report({ sent, errors });
@@ -283,7 +284,8 @@ def test_a_correction_records_the_text_that_was_classified(tmp_path):
     to Biologie -- and the feedback file got "Photosynthese" with the Mathematik prediction:
     a row the next training reads as a true pair. Here the field holds the classified text
     when the form is used; the next test is about one that changed."""
-    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, body=_ONE_TEXT + """
+    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, helpers=("app.js:busy",),
+                  body=_ONE_TEXT + """
         await runSingle(["m"], { classify: true, metadata: false }, out);
         el("#query-text").value = CLASSIFIED;
         await click.correct();
@@ -302,7 +304,8 @@ def test_a_correction_is_refused_once_the_text_has_changed(tmp_path):
     for is no longer clear -- the labels on screen belong to the old one, the user may mean
     the new one. Neither guess goes into the training data; the user is asked to classify
     again, both when opening the form and when saving one opened before the edit."""
-    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, body=_ONE_TEXT + """
+    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, helpers=("app.js:busy",),
+                  body=_ONE_TEXT + """
         await runSingle(["m"], { classify: true, metadata: false }, out);
         let shown = "";
         el("#card").insertAdjacentHTML = (where, html) => { shown += html; };
@@ -397,7 +400,7 @@ def test_a_batch_of_seven_label_fields_waits_out_the_rate_limit(tmp_path):
     limit of 5 a minute -- seven fields gave five 202s and a 429 that ended the batch. A
     retry hit the limit again, and later "already exists" for the five already queued. The
     timers are fakes that fire at once and record what they were asked to wait."""
-    result = _run(tmp_path, modules=("training.js",), body="""
+    result = _run(tmp_path, modules=("training.js",), helpers=("app.js:busy",), body="""
         const delays = [];
         globalThis.setTimeout = (run, ms) => { delays.push(ms); run(); return 0; };
         const toasts = [];
@@ -434,7 +437,7 @@ def test_a_batch_of_seven_label_fields_waits_out_the_rate_limit(tmp_path):
 def test_a_rate_limit_that_does_not_lift_still_ends_the_batch(tmp_path):
     """Waiting is bounded: another client on the same address can keep the window full, and
     a batch retrying forever would hold the Start button for as long as that lasts."""
-    result = _run(tmp_path, modules=("training.js",), body="""
+    result = _run(tmp_path, modules=("training.js",), helpers=("app.js:busy",), body="""
         globalThis.setTimeout = (run) => { run(); return 0; };
         globalThis.toast = () => {};
         el("#train-dataset").value = "data.csv";
@@ -496,7 +499,7 @@ def test_a_late_answer_for_one_dataset_does_not_retarget_another(tmp_path):
     """U08 (audit 2026-09-30): the panel kept the open dataset's name in a module-wide
     object, and every answer wrote it. Open A, close it while it is still reading, open B:
     A's late answer set the name back to A, and "Analyse" in B's panel analysed A."""
-    result = _run(tmp_path, modules=("dataset-detail.js",), body=_DATASET_PANEL + """
+    result = _run(tmp_path, modules=("dataset-detail.js",), helpers=("app.js:busy",), body=_DATASET_PANEL + """
         const first = showDatasetDetail("a.csv");
         const second = showDatasetDetail("b.csv");
         answers["/datasets/b.csv"]({ columns: ["title", "label"], sample: [] });
@@ -734,3 +737,70 @@ def test_a_message_raised_in_a_dialog_is_shown_inside_it(tmp_path):
     assert result["page"] == ["before", "after"]
     assert result["steps"] == ["regions", "showModal"]
     assert result["errors"] == []
+
+
+# A button as the browser treats one under its focus fixup rule: when the focused element
+# turns disabled, the focus falls to <body>, and enabling it again does not bring it back.
+_FOCUSABLE = """
+    document.body = { tag: "body" };
+    document.activeElement = document.body;
+    const focusable = (button) => {
+      let disabled = false;
+      Object.defineProperty(button, "disabled", { get: () => disabled, set: (value) => {
+        disabled = value;
+        if (value && document.activeElement === button) document.activeElement = document.body;
+      } });
+      button.isConnected = true;
+      button.focus = () => { if (!disabled) document.activeElement = button; };
+      return button;
+    };
+"""
+
+
+@needs_node
+def test_a_busy_button_gets_its_focus_back(tmp_path):
+    """U09 (audit 2026-09-30): after every submit the focus was on <body> -- a keyboard or
+    screen-reader user back at the top of the page, a whole shell away from the form. It is
+    given back only where the button had it, and only if nothing else has taken it since."""
+    result = _run(tmp_path, helpers=("app.js:busy",), body=_FOCUSABLE + """
+        const pressed = focusable({ name: "pressed" });
+        pressed.focus();
+        const idle = busy(pressed);
+        const during = { disabled: pressed.disabled, onBody: document.activeElement === document.body };
+        idle();
+        const back = document.activeElement === pressed;
+
+        const elsewhere = { name: "field" };
+        pressed.focus();
+        const idle2 = busy(pressed);
+        document.activeElement = elsewhere;          // the user tabbed on meanwhile
+        idle2();
+        report({ during, back, enabled: !pressed.disabled, kept: document.activeElement === elsewhere });
+    """)
+
+    assert result == {"during": {"disabled": True, "onBody": True}, "back": True,
+                      "enabled": True, "kept": True}
+
+
+@needs_node
+def test_classifying_leaves_the_focus_on_the_classify_button(tmp_path):
+    """The audit's own case, through the real handler: query.js disabled #query-btn for the
+    request and the focus never came back."""
+    result = _run(tmp_path, modules=("query.js",), helpers=("app.js:busy",), body=_FOCUSABLE + """
+        el('input[name="query-mode"]:checked').value = "one";
+        document.querySelectorAll = (sel) =>
+          (sel === 'input[name="query-model"]:checked' ? [{ value: "m" }] : []);
+        el("#query-text").value = "Pythagoras";
+        el("#query-topk").value = "";
+        Api.post = async () => ({ results: [{ predictions: [{ uri: "u", label: "M", confidence: 1 }] }] });
+        globalThis.fmtFixed = (v, d) => Number(v).toFixed(d);
+        globalThis.applyBarWidths = () => {};
+        globalThis.bindExplainButtons = () => {};
+        globalThis.bindCorrectionButtons = () => {};
+        const button = focusable(el("#query-btn"));
+        button.focus();
+        await onQuery({ preventDefault() {} });
+        report({ focused: document.activeElement === button, enabled: !button.disabled, errors });
+    """)
+
+    assert result == {"focused": True, "enabled": True, "errors": []}

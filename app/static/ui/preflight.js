@@ -18,7 +18,7 @@ async function runPreflight() {
     $("#train-preflight-announce").textContent = "";
     return;
   }
-  button.disabled = true;
+  const idle = busy(button);
   button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
@@ -43,7 +43,7 @@ async function runPreflight() {
     box.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`;
     $("#train-preflight-announce").textContent = "";
   } finally {
-    button.disabled = false;
+    idle();
     button.textContent = t("train.preflight.button");   // see explain.js: not a copy
   }
 }

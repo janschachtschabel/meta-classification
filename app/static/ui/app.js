@@ -100,6 +100,22 @@ function closer(close) {
   };
 }
 
+/* Disabled for as long as its work runs, so a second press cannot start it twice -- and the
+   focus given back afterwards. A focused button that turns disabled hands the focus to
+   <body>, and enabling it again does not return it: after every submit a keyboard or
+   screen-reader user was back at the top of the page (audit 2026-09-30, U09). Only where the
+   button had the focus, and only if nothing else has taken it since. Returns the call that
+   ends the busy state. */
+function busy(button) {
+  const hadFocus = document.activeElement === button;
+  button.disabled = true;
+  return () => {
+    button.disabled = false;
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (hadFocus && lost && button.isConnected) button.focus();
+  };
+}
+
 /* ---------- login / shell ---------- */
 
 async function boot() {
@@ -165,7 +181,7 @@ async function onLogin(ev) {
   ev.preventDefault();
   const btn = $("#login-btn"), errEl = $("#login-error");
   errEl.hidden = true;
-  btn.disabled = true;
+  const idle = busy(btn);
   Api.setKey($("#api-key").value.trim());
   try {
     await Api.get("/models");            // any valid key answers 200 here
@@ -174,7 +190,7 @@ async function onLogin(ev) {
   } catch (err) {
     Api.clearKey();
     showError(errEl, err.status === 401 ? { message: t("login.rejected") } : err);
-  } finally { btn.disabled = false; }
+  } finally { idle(); }
 }
 
 function showApp(keyless) {

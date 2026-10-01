@@ -299,3 +299,21 @@ def test_every_option_carries_its_value():
             for tag in re.findall(r"<option\b[^>]*>", source) if "value=" not in tag]
 
     assert not bare, bare
+
+
+# --- U09: a pressed button keeps the focus ---------------------------------------------------
+
+
+def test_no_module_disables_a_button_by_hand():
+    """U09 (audit 2026-09-30): a focused button that turns disabled hands the focus to <body>,
+    and enabling it again does not bring it back. `busy()` (app.js) disables for the work and
+    gives the focus back; a module doing it by hand loses it again. The one exception is not a
+    button: the label list of a saved correction, which stays disabled for good."""
+    allowed = {("app.js", "button"), ("feedback.js", 'box.querySelector("select")')}
+    by_hand = sorted(
+        f"{name}: {target}" for name, source in MODULES.items()
+        for target in re.findall(r'([\w.$()"\[\]#-]+)\.disabled = true', source)
+        if (name, target) not in allowed
+    )
+
+    assert not by_hand, by_hand

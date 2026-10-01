@@ -105,7 +105,7 @@ async function startEvaluation(name, box) {
     return;
   }
   const button = box.querySelector("#ev-start");
-  button.disabled = true;
+  const idle = busy(button);
   try {
     const answer = await Api.post(`/models/${encodeURIComponent(name)}/evaluate`, {
       dataset_name: box.querySelector("#ev-dataset").value,
@@ -119,5 +119,5 @@ async function startEvaluation(name, box) {
   } catch (err) {
     message.className = "error";
     message.textContent = err.message;
-  } finally { button.disabled = false; }
+  } finally { idle(); }
 }

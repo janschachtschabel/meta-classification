@@ -447,6 +447,12 @@ brackets are its finding numbers.
   included, so "copied" or why a delete failed was neither heard nor properly seen while the
   model or dataset panel was open. Each dialog now holds a pair of message stacks of its own,
   inserted before it opens, and messages go there while it is open. (U09)
+- **The focus stays where the user pressed.** Every form disabled its button while the
+  request ran, and a focused button that turns disabled hands the focus to the page itself —
+  enabling it again does not give it back. After every submit a keyboard or screen-reader user
+  was back at the top of the page. The button now gets the focus back when the work is done,
+  unless the user has moved on meanwhile; a saved correction, whose Save stays disabled, hands
+  it to the form's Close button. (U09)
 
 ## [4.0.1] — 2026-09-27
 

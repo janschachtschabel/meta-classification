@@ -96,7 +96,7 @@ async function runAnalysis(frame, name) {
       `<div class="analysis"><p class="error" role="alert">${t("common.error.noTextColumn")}</p></div>`);
     return;
   }
-  button.disabled = true;
+  const idle = busy(button);
   button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
@@ -107,7 +107,7 @@ async function runAnalysis(frame, name) {
     frame.insertAdjacentHTML("beforeend",
       `<div class="analysis"><p class="error" role="alert">${esc(err.message)}</p></div>`);
   } finally {
-    button.disabled = false;
+    idle();
     button.textContent = t("datasetDetail.analyze");   // see explain.js: not a copy
   }
 }

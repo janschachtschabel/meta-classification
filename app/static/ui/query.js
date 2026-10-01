@@ -444,7 +444,7 @@ async function onQuery(ev) {
     out.innerHTML = `<p class="error" role="alert">${t("query.error.oneModelOnly")}</p>`;
     return;
   }
-  btn.disabled = true;
+  const idle = busy(btn);
   $("#query-status").textContent = t(plan.progress);
   try {
     let done = "";
@@ -457,5 +457,5 @@ async function onQuery(ev) {
   } catch (err) {
     out.innerHTML = queryErrorHtml(err);
     $("#query-status").textContent = "";
-  } finally { btn.disabled = false; }
+  } finally { idle(); }
 }

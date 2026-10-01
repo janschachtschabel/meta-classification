@@ -133,7 +133,7 @@ async function onImportModel(ev) {
   form.append("file", fileInput.files[0]);
   const newName = $("#import-name").value.trim();
   if (newName) form.append("new_name", newName);
-  btn.disabled = true;
+  const idle = busy(btn);
   try {
     await Api.postForm("/models/import", form);
     toast(t("models.imported"));
@@ -141,5 +141,5 @@ async function onImportModel(ev) {
     $("#import-name").value = "";
     loadModels();
   } catch (err) { showError(errEl, err); }
-  finally { btn.disabled = false; }
+  finally { idle(); }
 }
