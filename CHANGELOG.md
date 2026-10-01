@@ -551,6 +551,11 @@ brackets are its finding numbers.
   turns into collection errors in ten test modules, while CI — on the hashed tree — stayed
   green. Both install instructions now use `requirements-hashes.lock`; a fresh venv set up
   that way on Windows (Python 3.12) passes the whole suite. (W01)
+- **`fetch_vocab_labels.py` cannot empty the label file.** A scheme without `hasTopConcept`
+  gave `{}`, written in place over a good `label_names.json`; and `--url file:///…` was read
+  despite the https allowlist the code claimed. A vocabulary yielding fewer than ten labels
+  now stops the run with nothing written, the file is replaced whole or not at all (temp
+  file, fsync, rename), and only https URLs are fetched. (W07)
 
 ## [4.0.1] — 2026-09-27
 

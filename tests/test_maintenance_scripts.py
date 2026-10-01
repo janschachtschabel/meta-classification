@@ -194,3 +194,77 @@ def test_a_built_row_names_only_the_subjects_it_kept(tmp_path):
         assert not wrong, f"{row['properties.cclom:title']}: {wrong}"
     staged = next(r for r in rows if r["properties.cclom:title"] == "Staging")
     assert staged["properties.ccm:taxonid_DISPLAYNAME"] == "Informatik"
+
+
+# --- W07: fetch_vocab_labels.py ---------------------------------------------------------------
+
+
+@pytest.fixture
+def vocab(monkeypatch):
+    """The script with `urlopen` answering from a dict of URL -> SKOS document."""
+    import io
+    import json
+
+    module = _script("fetch_vocab_labels")
+    served: dict[str, dict] = {}
+    opened: list[str] = []
+
+    def urlopen(url, timeout=None):
+        opened.append(url)
+        return io.BytesIO(json.dumps(served[url]).encode("utf-8"))
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    module.served, module.opened = served, opened
+    return module
+
+
+def _scheme(count: int) -> dict:
+    return {"hasTopConcept": [{"id": f"{FILT}{i}", "prefLabel": {"de": f"Fach {i}"}}
+                              for i in range(count)]}
+
+
+def _run_fetch(module, monkeypatch, out, *urls):
+    argv = ["fetch_vocab_labels.py", "--out", str(out)]
+    for url in urls:
+        argv += ["--url", url]
+    monkeypatch.setattr(sys, "argv", argv)
+    module.main()
+
+
+def test_a_vocabulary_that_yields_nothing_writes_nothing(vocab, monkeypatch, tmp_path):
+    """W07 (audit 2026-09-30): a scheme without `hasTopConcept` gave `{}`, and `{}` was written
+    over a good label_names.json -- every display name in the next training gone."""
+    out = tmp_path / "label_names.json"
+    out.write_text('{"keep": "me"}', encoding="utf-8")
+    vocab.served["https://vocabs.example/a.json"] = {"title": "not a concept scheme"}
+
+    with pytest.raises(SystemExit):
+        _run_fetch(vocab, monkeypatch, out, "https://vocabs.example/a.json")
+
+    assert out.read_text(encoding="utf-8") == '{"keep": "me"}'
+
+
+def test_only_https_urls_are_fetched(vocab, monkeypatch, tmp_path):
+    """W07: the allowlist comment said https, and `--url file:///…` was read all the same."""
+    with pytest.raises(SystemExit):
+        _run_fetch(vocab, monkeypatch, tmp_path / "out.json", "file:///etc/passwd")
+
+    assert vocab.opened == []
+
+
+def test_the_label_file_is_replaced_whole_or_not_at_all(vocab, monkeypatch, tmp_path):
+    """W07: the file was written in place, so an interrupted write left half a JSON document
+    where the names were. A failure before the rename now leaves the old file as it was."""
+    out = tmp_path / "label_names.json"
+    out.write_text('{"keep": "me"}', encoding="utf-8")
+    vocab.served["https://vocabs.example/a.json"] = _scheme(20)
+
+    def refuse(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vocab.os, "replace", refuse)
+    with pytest.raises(OSError):
+        _run_fetch(vocab, monkeypatch, out, "https://vocabs.example/a.json")
+
+    assert out.read_text(encoding="utf-8") == '{"keep": "me"}'
+    assert [p.name for p in tmp_path.iterdir()] == ["label_names.json"], "a temp file was left"
