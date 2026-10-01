@@ -75,3 +75,39 @@ def test_discarding_removes_a_staged_bundle(tmp_path):
     registry.discard_staged("dropped")
     assert not _hidden(registry)
     assert not registry.exists("dropped")
+
+
+
+# --- R11: a delete cut short does not block the name --------------------------------------------
+
+
+def test_a_delete_cut_short_leaves_the_name_free_and_nothing_visible(tmp_path, monkeypatch):
+    """R11 (audit 2026-09-30): delete was one rmtree. Cut short -- a file another process holds,
+    an I/O error -- it left part of the bundle under the model's name: no longer a model, but
+    in the way, so an import under that name failed with a 500."""
+    import contextlib
+
+    from app import registry as registry_mod
+
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+    registry.save("m", model, metadata)
+    archive = tmp_path / "m.zip"
+    with archive.open("wb") as sink:
+        registry.export_to("m", sink)
+
+    def cut_short(path, *args, **kwargs):
+        next(p for p in Path(path).iterdir() if p.is_file()).unlink()
+        raise OSError("a file in it is in use")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(registry_mod.shutil, "rmtree", cut_short)
+        with contextlib.suppress(OSError):
+            registry.delete("m")
+
+    assert not registry.exists("m") and "m" not in registry.list()
+    assert [p.name for p in registry.dir.iterdir() if not p.name.startswith(".")] == [], (
+        "what is left is hidden, not lying under the name")
+    registry.import_archive("m", archive)
+    assert registry.get("m").classes == model.classes, "the name took a new bundle"
+    assert registry.sweep_stale_tmp() == 1, "and the next start removes the leftover"

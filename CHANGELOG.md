@@ -310,6 +310,11 @@ brackets are its finding numbers.
   is expecting 7"). Loading — which an import runs before publishing — now checks that the
   head takes the features the vectorizer makes and scores the classes `config.json` names;
   a mixed archive is refused on import, a mixed bundle on disk answers 422. (R08)
+- **A delete cut short no longer blocks the model's name.** Deleting was one recursive
+  removal; cut short — a file another process holds, an I/O error — it left part of the
+  bundle under the name, no longer a model but in the way, so an import under that name
+  failed with a 500. The bundle is now renamed aside first, which frees the name at once,
+  and then removed; a leftover is hidden and the next start sweeps it. (R11)
 
 ## [4.0.1] — 2026-09-27
 

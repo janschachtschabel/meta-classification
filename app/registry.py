@@ -14,7 +14,9 @@ keeps a half-written bundle unpublishable would then live in two places.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import secrets
 import shutil
 import tempfile
 import threading
@@ -35,6 +37,8 @@ from .model_io import (
 )
 from .settings import get_settings
 from .staged_archives import StagedArchives
+
+logger = logging.getLogger("api_v3.registry")
 
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
@@ -342,7 +346,18 @@ class Registry:
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
-            shutil.rmtree(self._path(name))
+            # A rename first, which frees the name in one step, then the removal. As one
+            # rmtree, a delete cut short -- a file another process holds, an I/O error -- left
+            # part of the bundle under the name: no model, but in the way of the next import
+            # (audit 2026-09-30, R11). Hidden and ending in .tmp, a leftover is the startup
+            # sweep's to remove.
+            doomed = self.dir / f".{name}.deleted-{secrets.token_hex(4)}.tmp"
+            os.replace(self._path(name), doomed)
+            try:
+                shutil.rmtree(doomed)
+            except OSError as exc:
+                logger.warning("Deleted model %r, but could not remove all of it yet (%s); "
+                               "the next start does.", name, exc)
             with self._lock:
                 # Every spelling, not just this one: on a case-insensitive
                 # filesystem get("M") loads the bundle "m" and caches it under
