@@ -796,6 +796,12 @@ proba = head.predict_proba(X)            # column order == cfg["classes"]
 # multiclass/binary (cfg["task_type"]): take proba.argmax(axis=1) — thresholds are unused.
 ```
 
+The texts above go in as they are; the API cleans them first (HTML, Markdown, entities),
+exactly as the training texts were cleaned. `cfg["text_cleaning"]` names the version of that
+cleaning (`app/data.py`, `clean_text`): 2 for models trained since the audit of 2026-09-30,
+1 — or no key — before. Version 2 takes `<` as a tag only when a letter, `/`, `!` or `?`
+follows, so `x < y` stays text; the API serves every bundle with the version it recorded.
+
 For hosting in other ML serving systems:
 - **MLflow / BentoML / Ray Serve** can wrap the sklearn pipeline losslessly (recommended).
 - **ONNX** (via `skl2onnx`) is possible, but TF-IDF with `char_wb` n-grams converts only partially.

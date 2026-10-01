@@ -24,6 +24,7 @@ class _StubModel:
         self.global_threshold = 0.5
         self.per_label_thresholds = {}
         self.uri_to_label = {uri: uri.upper() for uri in classes}
+        self.text_cleaning = 2  # a model trained with the current clean_text (T09)
         self._rows = np.array(rows, dtype=float)
         self._served = 0
         self.batches: list[int] = []

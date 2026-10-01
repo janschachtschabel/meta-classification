@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 from .csv_encoding import CsvEncoding, detect
-from .data import clean_text, read_csv, split_labels
+from .data import CLEANING_VERSION, clean_text, read_csv, split_labels
 from .errors import TrainingInputError
 from .label_names import pair_names
 from .provenance import GENERATED, MARK_COLUMNS, SAME_TEXT, SYNTHETIC_MODES, block_marks
@@ -145,6 +145,7 @@ def load_dataset(
     synthetic_rows: str = "train",
     on_progress: Callable[[str], None] | None = None,
     chunk_rows: int = CHUNK_ROWS,
+    text_cleaning: int = CLEANING_VERSION,
 ) -> LoadedData:
     """Load a CSV and return cleaned texts + label lists.
 
@@ -191,6 +192,7 @@ def load_dataset(
         label_separator=label_separator, label_filter=label_filter,
         min_text_length=min_text_length, drop_duplicates=drop_duplicates,
         weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
+        text_cleaning=text_cleaning,
     )
     # The label column, its display names and the marks are read as written: a label may be
     # called "NA", "None" or "null", which pandas reads as a missing cell -- and the rows
@@ -251,6 +253,8 @@ class _Collector:
     weights: dict[str, int] | None
     mode: str = "train"
     has_marks: bool = False
+    # The clean_text version: a training's current one, an evaluation's model's own.
+    text_cleaning: int = CLEANING_VERSION
     texts: list[str] = field(default_factory=list)
     label_lists: list[list[str]] = field(default_factory=list)
     uri_to_label: dict[str, str] = field(default_factory=dict)
@@ -271,7 +275,8 @@ class _Collector:
     conflicting_duplicates: int = 0
 
     def add(self, frame: pd.DataFrame) -> None:
-        cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
+        cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(
+            lambda value: clean_text(value, self.text_cleaning))
         label_series = frame[self.label_column]
         if self.dn_col is not None:
             names = frame[self.dn_col].fillna("")

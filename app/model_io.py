@@ -32,6 +32,7 @@ from skops.io import load as skops_load
 from . import __version__
 from .bundle_meta import per_label_f1
 from .classifier import ClassifierModel
+from .data import TEXT_CLEANING_VERSIONS
 from .errors import UnsafeModelError
 from .label_names import is_container_label
 from .vectorizers import TfidfBackend
@@ -177,6 +178,7 @@ def _write_bundle(
         "global_threshold": model.global_threshold,
         "per_label_thresholds": model.per_label_thresholds,
         "uri_to_label": model.uri_to_label,
+        "text_cleaning": model.text_cleaning,
     }
     on_step("Writing config.json + metrics.json")
     (directory / "config.json").write_text(
@@ -284,11 +286,27 @@ def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
             global_threshold=config["global_threshold"],
             per_label_thresholds=config.get("per_label_thresholds", {}),
             per_label_f1=per_label_f1(metadata),
+            text_cleaning=_text_cleaning(config),
         )
         _warn_about_container_labels(directory.name, model.classes)
     except (AttributeError, ValueError, KeyError, TypeError) as exc:
         raise UnsafeModelError(f"Invalid model bundle in {directory.name!r}: {exc!r}") from exc
     return model, metadata
+
+
+def _text_cleaning(config: dict) -> int:
+    """The cleaning a bundle's input gets: what it was trained with, 1 before that was recorded.
+
+    An unknown version comes from a newer server, whose cleaning this one cannot reproduce --
+    serving the bundle anyway would feed its vectorizer text it was never fitted on.
+    """
+    version = config.get("text_cleaning", 1)
+    if version not in TEXT_CLEANING_VERSIONS:
+        raise UnsafeModelError(
+            f"The bundle was trained with text cleaning version {version!r}; this server knows "
+            f"{list(TEXT_CLEANING_VERSIONS)}. Serve it with the version that trained it."
+        )
+    return int(version)
 
 
 def _warn_about_container_labels(name: str, classes: list[str]) -> None:

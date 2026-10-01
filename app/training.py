@@ -22,6 +22,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from .classifier import ClassifierModel
+from .data import CLEANING_VERSION
 from .deploy import Fitted, fit_evaluate_deploy
 from .errors import TrainingInputError, UnsafeModelError
 from .memory import MiB, PeakSampler, held_bytes
@@ -225,6 +226,7 @@ def run_training(
             # publishes THIS object straight into the LRU cache, so a freshly trained
             # model would otherwise serve without label_f1 until it is evicted.
             per_label_f1=dict(fitted.metrics.get("per_label_f1", {})),
+            text_cleaning=CLEANING_VERSION,
         )
         elapsed = time.time() - start
         metadata = _build_metadata(

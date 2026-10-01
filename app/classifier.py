@@ -99,6 +99,9 @@ class ClassifierModel:
     # travels with the prediction so a caller can weigh it. Empty for bundles
     # trained before this existed — the field is then simply absent.
     per_label_f1: dict[str, float] = field(default_factory=dict)
+    # The `data.clean_text` version this model was trained with, and so the one its input is
+    # cleaned with (``data.CLEANING_VERSION``). 1 for bundles that predate the field.
+    text_cleaning: int = 1
     # Lazily computed empty-text probabilities (deterministic per model, so
     # cached once); runtime-only, never persisted in the bundle.
     _baseline: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
@@ -128,7 +131,7 @@ class ClassifierModel:
         TF-IDF vocabulary (fit on cleaned text) sees matching tokens at inference
         instead of raw HTML/Markdown (a train/serve skew).
         """
-        cleaned = [clean_text(t) for t in texts]
+        cleaned = [clean_text(t, self.text_cleaning) for t in texts]
         return self.head.predict_proba(self.vectorizer.transform(cleaned))
 
     def _threshold_for(self, uri: str, override: float | None) -> float:

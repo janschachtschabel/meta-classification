@@ -282,3 +282,66 @@ def test_validation_does_not_count_a_label_called_na_as_missing(tmp_path):
     report = validate_dataset(tmp_path / "set.csv", ["title"], "labels")
 
     assert not any("without labels" in warning for warning in report["warnings"]), report
+
+
+
+# --- T09: a comparison is not a tag, for new models -------------------------------------------
+
+_MATH = "Für alle x < y gilt: Wenn a > b, dann ist die Differenz positiv."
+
+
+def test_a_comparison_survives_the_cleaning_a_new_model_is_trained_with():
+    """T09: any `<...>` was a tag, so the vectorizer path made "Für alle x b, dann ..." of
+    a sentence in maths material. A tag starts with `<` and a letter, `/`, `!` or `?`."""
+    cleaned = data.clean_text(_MATH)
+
+    assert "y gilt" in cleaned and "Wenn a" in cleaned, cleaned
+    assert data.clean_text("5 &lt; 7 und 9 &gt; 2") == "5 < 7 und 9 2"
+
+
+def test_a_model_trained_before_keeps_the_cleaning_it_was_trained_with():
+    """Changing what the cleaning produces shifts the features a fitted vectorizer expects,
+    so an existing bundle is served with the cleaning it was trained with."""
+    assert data.clean_text(_MATH, version=1) == "Für alle x b, dann ist die Differenz positiv."
+
+
+def test_the_cleaning_is_idempotent_in_both_versions():
+    """Evaluation cleans twice (the loader, then the model); a second pass must not change
+    what the first produced."""
+    for version in (1, 2):
+        for text in (_MATH, "&lt;b&gt;fett&lt;/b&gt; <p>Absatz</p> x < y", "a&lt;b und c&gt;d"):
+            once = data.clean_text(text, version=version)
+            assert data.clean_text(once, version=version) == once, (version, text)
+
+
+def test_a_bundle_records_its_cleaning_and_an_old_one_is_served_with_version_1(tmp_path):
+    import json
+
+    from app.errors import UnsafeModelError
+
+    rows = [f"{text} Teil {i};{uri}" for uri, text in SUBJECTS.items() for i in range(20)]
+    settings = _dataset(tmp_path, rows)
+    _train(settings)
+    bundle = settings.models_dir / "m" / "config.json"
+    config = json.loads(bundle.read_text(encoding="utf-8"))
+    assert config["text_cleaning"] == data.CLEANING_VERSION
+
+    del config["text_cleaning"]  # as every bundle written before the version existed
+    bundle.write_text(json.dumps(config), encoding="utf-8")
+    model, _ = Registry(settings.models_dir, 2).load_fresh("m")
+    assert model.text_cleaning == 1
+
+    config["text_cleaning"] = 99  # from a server newer than this one
+    bundle.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(UnsafeModelError, match="cleaning"):
+        Registry(settings.models_dir, 2).load_fresh("m")
+
+
+def test_evaluation_reads_the_dataset_with_the_models_cleaning(tmp_path):
+    from app.dataset_load import load_dataset
+
+    _dataset(tmp_path, [f"{_MATH};uri:math"])
+
+    old = load_dataset(tmp_path / "set.csv", ["title"], "labels", separator=";", text_cleaning=1)
+
+    assert old.texts == ["Für alle x b, dann ist die Differenz positiv."]

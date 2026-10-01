@@ -53,8 +53,17 @@ def read_csv(path: str | Path, encoding: CsvEncoding | None = None, **kwargs: ob
 
 _WS_RE = re.compile(r"\s+")
 
+# The version of `clean_text` a NEW model is trained with. A bundle records its own
+# (`text_cleaning` in config.json, 1 when absent) and is served with that one: what the
+# cleaning produces is what its vectorizer was fitted on, so changing it in place would shift
+# the features of every model already trained.
+#   1 -- any `<...>` is a tag: "x < y gilt: Wenn a > b" lost "y gilt: Wenn a".
+#   2 -- a tag starts with `<` and a letter, `/`, `!` or `?` (audit 2026-09-30, T09).
+CLEANING_VERSION = 2
+TEXT_CLEANING_VERSIONS = (1, 2)
 
-def clean_text(value: object) -> str:
+
+def clean_text(value: object, version: int = CLEANING_VERSION) -> str:
     """Normalize text for vectorization.
 
     Decodes HTML entities, strips HTML tags and common Markdown markup, removes
@@ -67,7 +76,7 @@ def clean_text(value: object) -> str:
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
-    text = strip_tags(str(value))
+    text = strip_tags(str(value), strict=version >= 2)
     text = MD_LINK_RE.sub(r"\1", text)
     text = MD_MARK_RE.sub("", text)
     # Control characters LAST, as they always were: removed earlier, a mangled byte

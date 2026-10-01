@@ -116,6 +116,12 @@ brackets are its finding numbers.
   following lines: 10 rows were shown as 3. Rows are counted with a CSV reader now, which
   takes a quote as one only where a field starts — using the dataset's separator where the
   request names one, else the one its header line uses. (T14)
+- **A comparison in the text survives the cleaning, for new models.** The classification
+  path's cleaning took any `<…>` for a tag, so "Für alle x < y gilt: Wenn a > b" lost "y gilt:
+  Wenn a" — in training and prediction alike. New models are trained with cleaning version 2,
+  where a tag starts with `<` and a letter, `/`, `!` or `?`. A bundle records its version as
+  `text_cleaning`, and serving and evaluation clean with the version the model was trained
+  with: existing models (version 1) behave exactly as before. (T09)
 
 ### Fixed
 

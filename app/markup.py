@@ -42,11 +42,12 @@ _BLOCK_TAG_NAMES = (
 # whitespace, a `/` or the closing `>`.
 BLOCK_TAG_RE = re.compile(rf"</?(?:{_BLOCK_TAG_NAMES})(?=[\s/>])[^<>]*>", re.IGNORECASE)
 HTML_TAG_RE = re.compile(r"<[^<>]+>")
-# Metadata path only (`strip_markup_preserving_lines`). A tag starts with `<` and a letter,
-# `/`, `!` or `?` -- what HTML itself requires -- so `x < 5` and `a < b und c > d` stay prose
-# (audit 2026-09-30, M05). `HTML_TAG_RE` keeps its looser form: `data.clean_text` feeds fitted
-# vectorizers, and a tag it no longer removed would shift their features.
-_STRICT_TAG_RE = re.compile(r"<[A-Za-z/!?][^<>]*>")
+# A tag starts with `<` and a letter, `/`, `!` or `?` -- what HTML itself requires -- so
+# `x < 5` and `a < b und c > d` stay prose (audit 2026-09-30, M05 for the metadata path, T09
+# for the classification path from cleaning version 2 on). `HTML_TAG_RE` keeps its looser form
+# for cleaning version 1: bundles trained with it are served with it, since a tag it no longer
+# removed would shift the features their vectorizers were fitted on.
+STRICT_TAG_RE = re.compile(r"<[A-Za-z/!?][^<>]*>")
 
 # Four elements whose body is not prose, so removing the tags around them is not enough:
 # `script` and `style` hold code, and `nav` and `footer` are what HTML calls chrome rather than
@@ -128,7 +129,7 @@ def _tag(match: re.Match[str]) -> str:
     return "\n" if BLOCK_TAG_RE.fullmatch(match.group()) else " "
 
 
-def strip_tags(text: str) -> str:
+def strip_tags(text: str, *, strict: bool = False) -> str:
     r"""Decode entities and remove HTML tags; a block-level tag becomes a line break.
 
     One pass that decides the replacement per match, rather than a block-tag pass followed by
@@ -140,7 +141,7 @@ def strip_tags(text: str) -> str:
     produces — whether a tag became `"\n"` or `" "` is invisible once its whitespace collapse
     runs.
     """
-    return HTML_TAG_RE.sub(_tag, html.unescape(text))
+    return (STRICT_TAG_RE if strict else HTML_TAG_RE).sub(_tag, html.unescape(text))
 
 
 def _drop_comments(text: str) -> str:
@@ -206,7 +207,7 @@ def strip_markup_preserving_lines(raw: str) -> str:
     """
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
     text = _drop_non_prose(_drop_comments(text))
-    text = _STRICT_TAG_RE.sub(_prose_tag, text)
+    text = STRICT_TAG_RE.sub(_prose_tag, text)
     text = CONTROL_RE.sub("", text)
     text = MD_LINK_RE.sub(r"\1", text)
     # Quote markers before headings: `_MD_HEADING_RE` is anchored to `^`, so a line that still
