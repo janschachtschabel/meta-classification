@@ -564,6 +564,12 @@ brackets are its finding numbers.
   start. And `patch_bundle_labels.py` rewrote every directory holding a `config.json` —
   staging directories, delete tombstones and the `.prebackup` copy that exists to keep the
   original — and now touches what the registry lists as models. (W04)
+- **The docs say what the code does.** The README listed 7 of the 13 profile fields as if
+  complete (a docs test now holds it to the loader) and claimed CI installs with
+  `--only-binary=:all:`, which only the image does; `config.yaml` said only `best` probes
+  past the C grid's ends and costs 20 head fits — `best` shares `auto`'s grid and fits 15
+  times; the chart README named `/health` for all three probes, where readiness asks
+  `/ready`. The UI guide's queue and CI's "13 pins" were corrected with U05 and B05. (W08)
 
 ## [4.0.1] — 2026-09-27
 

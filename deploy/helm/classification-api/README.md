@@ -137,7 +137,7 @@ same upgrade. Either way the keys map to the app's
 | `securityContext.runAsUser`                 | User id to run as (image's `appuser`)                              | `1000`               |
 | `securityContext.*`                         | non-root, no privilege escalation, drop ALL capabilities           | see `values.yaml`    |
 | `terminationGracePeriod`                    | Grace period in seconds (training cancels cooperatively)           | `60`                 |
-| `startupProbe.*` / `livenessProbe.*` / `readinessProbe.*` | Probe tuning (`GET /health`)                        | see `values.yaml`    |
+| `startupProbe.*` / `livenessProbe.*` / `readinessProbe.*` | Probe tuning (startup and liveness `GET /health`, readiness `GET /ready`) | see `values.yaml`    |
 | `resources.limits.cpu`                      | CPU limit (bounds training parallelism)                            | `4000m`              |
 | `resources.limits.memory`                   | Memory limit (sized for ~600k-row training)                        | `8Gi`                |
 | `resources.requests.cpu`                    | CPU request                                                        | `500m`               |

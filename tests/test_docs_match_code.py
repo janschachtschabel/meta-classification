@@ -177,3 +177,14 @@ def test_the_readme_installs_the_tree_the_suite_was_run_against():
     assert not [line for line in installs if "-c requirements.lock" in line], installs
     assert sum("--require-hashes -r requirements-hashes.lock" in line for line in installs) >= 2, installs
 
+
+def test_the_readme_names_every_profile_key():
+    """W08 (audit 2026-09-30): the README's list of profile fields named 7 of the 13 the
+    loader reads, and read as complete -- `stratified_splits`, `selection_tol` and the rest
+    were findable only in docs/configuration.md."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    [sentence] = [line for line in readme.splitlines() if line.startswith("Add your own profiles")]
+    keys = _profile_keys() - {"c_grid"}  # the lower-case spelling is an accepted alias
+
+    assert not sorted(k for k in keys if f"`{k}`" not in sentence), sentence
+

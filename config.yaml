@@ -7,7 +7,8 @@
 # The three levers that drive wall-clock, and what each is measured to be worth:
 #
 #   1. C candidates. Under k-fold CV the head is fit k x |grid| times, so the grid
-#      is a direct multiplier — and it is the lever the three rungs differ on most.
+#      is a direct multiplier. `fast` differs from the other two on it; `auto` and
+#      `best` share one grid and differ in folds (lever 2).
 #      Two independent qualities matter, and they are NOT interchangeable:
 #        - SPAN, i.e. does the grid reach the optimum at all. This is the one that
 #          bites: the known targets optimize at OPPOSITE ends (subject picks 32,
@@ -20,8 +21,8 @@
 #          the C curve is flat near its optimum. 4x steps are therefore the floor and
 #          finer steps are not worth the fits.
 #      Both known optima sit at the EDGE of a 2 ... 32 grid, which by this project's own
-#      rule means "the search ran out of candidates, not that it found an optimum".
-#      Only `best` can tell those apart, by probing past both ends.
+#      rule means "the search ran out of candidates, not that it found an optimum". No
+#      profile probes past both ends today -- `best` included, whose grid is `auto`'s.
 #   2. CV folds. Any k >= 2 deploys on 100% of the rows and evaluates every row
 #      out-of-fold; k only sets how much data the *evaluation* models see
 #      (k=3 -> 67%, k=5 -> 80%). Fewer folds is therefore a slightly pessimistic
@@ -62,9 +63,9 @@ profiles:
     cv_folds: 3
     # Same span as `fast`, twice the resolution: the middle candidate closes the 16x gap
     # to two 4x gaps, so the pick lands at most 2x from the optimum — the spacing that
-    # was measured to be as good as an 8-candidate grid. 6 head fits over the dataset
-    # instead of `best`'s 20, while still deploying on 100% of the rows and scoring
-    # every row out-of-fold.
+    # was measured to be as good as an 8-candidate grid. 9 head fits (3 folds x 3 C, each
+    # on 2/3 of the rows) instead of `best`'s 15 (5 x 3, each on 4/5), while still
+    # deploying on 100% of the rows and scoring every row out-of-fold.
     C_grid: [2.0, 8.0, 32.0]
 
   best:
