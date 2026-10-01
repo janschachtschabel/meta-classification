@@ -513,6 +513,12 @@ brackets are its finding numbers.
   were neither in the image nor able to find the volume: they looked beside the code. The
   image carries both, they take their directories from the app's settings, and the docs say
   how the file gets into a container. (B06)
+- **The chart's guards check what they stand for.** `replicaCount` was documented as "must
+  stay 1" and nothing held it: 3 rendered three pods, each with its own training job, model
+  cache, rate limiter and share links. More than one replica now refuses the release (0 still
+  scales down). And the TLS guard only checked that `ingress.tls` was not empty, so an entry
+  without hosts, or one for another host, passed while the served host went unencrypted —
+  every host in `ingress.hosts` now has to be named by a TLS entry. (B11)
 
 ## [4.0.1] — 2026-09-27
 

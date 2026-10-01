@@ -47,8 +47,9 @@ same upgrade. Either way the keys map to the app's
 > **TLS is not optional here.** Every authenticated call sends `X-API-Key` as a plain
 > header, so an ingress without TLS publishes the credential to anything on the network path.
 > With `ingress.enabled: true` the chart therefore refuses to render until either
-> `ingress.tls` is filled in or `ingress.allowInsecure: true` says TLS is terminated above
-> the ingress (a service mesh, a cloud load balancer) — something the chart cannot detect.
+> `ingress.tls` names every host in `ingress.hosts` (exactly or by a `*.` wildcard) or
+> `ingress.allowInsecure: true` says TLS is terminated above the ingress (a service mesh, a
+> cloud load balancer) — something the chart cannot detect.
 
 > **Name the proxy the rate limiter may believe.** Behind the ingress every request reaches
 > the pod from the controller, so unless uvicorn may take the client address from
@@ -87,7 +88,7 @@ same upgrade. Either way the keys map to the app's
 | `fullnameOverride` | Fully override the generated resource name                         | `""`                           |
 | `image.name`       | Override image repository (defaults to registry/repository)        | `""`                           |
 | `image.tag`        | Set image tag (defaults to `.Chart.AppVersion`)                    | `""`                           |
-| `replicaCount`     | Amount of replicas — MUST stay 1 (process-local state, one PVC)    | `1`                            |
+| `replicaCount`     | Amount of replicas — 1, or 0 to scale down; more is refused (process-local state, one PVC) | `1` |
 | `service.type`     | Set service type                                                   | `ClusterIP`                    |
 | `service.port`     | Set service port (cluster-internal)                                | `8000`                         |
 | `ingress.enabled`  | Enable ingress                                                     | `true`                         |

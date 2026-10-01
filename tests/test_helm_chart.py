@@ -150,6 +150,9 @@ def test_tls_values_reach_the_rendered_ingress():
     objects = _render(
         *KEYS,
         PROXIED,
+        # The host the TLS entry names is the one the ingress serves: TLS for another host
+        # than the default one is refused since B11.
+        "ingress.hosts[0]=classify.example.de",
         "ingress.tls[0].secretName=classify-tls",
         "ingress.tls[0].hosts[0]=classify.example.de",
     )
@@ -321,3 +324,47 @@ def test_the_chart_no_longer_offers_keyless_mode_for_cluster_internal_use():
     ]
 
     assert documented and not [line for line in documented if "cluster-internal" in line], documented
+
+
+# --- B11: the chart's guards check what they stand for ------------------------------------------
+
+
+@pytest.mark.parametrize("replicas", ["2", "3"])
+def test_more_than_one_replica_refuses_the_release(replicas):
+    """B11 (audit 2026-09-30): the training job, the model cache, the rate limiter and the share
+    links live in one process, and `replicaCount=3` rendered three pods each with its own --
+    a share link made in one unknown to the others, three trainings at once."""
+    message = _refused(*KEYS, INSECURE, PROXIED, f"replicaCount={replicas}")
+
+    assert "replicaCount" in message, message
+
+
+def test_no_replica_still_renders_for_scaling_down():
+    [statefulset] = _of_kind(_render(*KEYS, INSECURE, PROXIED, "replicaCount=0"), "StatefulSet")
+
+    assert statefulset["spec"]["replicas"] == 0
+
+
+HOST = "ingress.hosts[0]=classify.example.org"
+
+
+@pytest.mark.parametrize("tls", [
+    ("ingress.tls[0].secretName=classify-tls",),
+    ("ingress.tls[0].secretName=other-tls", "ingress.tls[0].hosts[0]=other.example.org"),
+])
+def test_tls_that_does_not_cover_the_host_refuses_the_release(tls):
+    """B11: the guard checked only that `ingress.tls` was not empty, so an entry without hosts,
+    or one for another host, passed -- and the API key went over the wire in cleartext for the
+    host the ingress actually serves."""
+    message = _refused(*KEYS, PROXIED, HOST, *tls)
+
+    assert "classify.example.org" in message, message
+
+
+@pytest.mark.parametrize("covering", ["classify.example.org", "*.example.org"])
+def test_tls_that_covers_the_host_renders(covering):
+    objects = _render(*KEYS, PROXIED, HOST, "ingress.tls[0].secretName=classify-tls",
+                      f"ingress.tls[0].hosts[0]={covering}")
+
+    [ingress] = _of_kind(objects, "Ingress")
+    assert ingress["spec"]["tls"][0]["hosts"] == [covering]

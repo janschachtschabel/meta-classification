@@ -1,3 +1,9 @@
+{{- /* Audit 2026-09-30, B11: the comment below said "exactly one replica" and nothing held
+       it -- replicaCount=3 rendered three pods, each with its own training job, model cache,
+       rate limiter and share links. 0 stays possible: scaling down for maintenance. */}}
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail (printf "replicaCount is %v: this app keeps its training job, model cache, rate limiter and share links in one process, so a second replica is a second, inconsistent app (a share link made in one is unknown to the others). Use 1 -- or 0 to scale down -- and scale with CPU and memory instead." .Values.replicaCount) }}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

@@ -2,6 +2,20 @@
 {{- if and (not .Values.ingress.tls) (not .Values.ingress.allowInsecure) }}
 {{- fail (printf "ingress.enabled is true with no ingress.tls: every authenticated request sends X-API-Key as a header, so this would publish the credential in cleartext. Set ingress.tls, or ingress.allowInsecure=true if TLS is terminated above this ingress (mesh, cloud load balancer).") }}
 {{- end }}
+{{- /* Audit 2026-09-30, B11: a non-empty ingress.tls is not yet TLS for the hosts served -- an
+       entry without hosts, or one for another host, passed the check above. Every host has to
+       be named by an entry, exactly or by a one-label wildcard. */}}
+{{- if not .Values.ingress.allowInsecure }}
+{{- $covered := list }}
+{{- range .Values.ingress.tls }}
+{{- $covered = concat $covered (default (list) .hosts) }}
+{{- end }}
+{{- range .Values.ingress.hosts }}
+{{- if not (or (has . $covered) (has (regexReplaceAll "^[^.]+" . "*") $covered)) }}
+{{- fail (printf "ingress host %s is named by no ingress.tls entry, so requests to it -- and the X-API-Key they carry -- would go unencrypted. Add it to the hosts of an ingress.tls entry, or set ingress.allowInsecure=true if TLS is terminated above this ingress." .) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- /* Audit 2026-09-30, B09: keyless mode serves loopback callers only -- in a pod, that is
        kubectl port-forward -- so every request through this ingress would be a 403. */}}
 {{- if not .Values.config.auth.enabled }}
