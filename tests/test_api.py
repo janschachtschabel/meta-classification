@@ -638,6 +638,22 @@ def test_a_repair_backup_is_not_a_model_to_any_route(trained_model):
     assert ".prebackup" in trained.json()["detail"]
 
 
+def _drain_job_runner(timeout: float = 10.0) -> None:
+    """Wait until the runner is idle: nothing running, nothing queued, the last thread retired.
+
+    A finished run reads "completed" while its thread still writes the history and hands
+    over to the queue, and until it retires `datasets_in_use()` still counts it --
+    deliberately, by the liveness check that also covers a hard-stopped run still reading.
+    Waiting on the status alone let a delete land in that gap and get 409, now and then.
+    """
+    from app.jobs import job_runner
+
+    deadline = time.time() + timeout
+    while (job_runner.is_running() or job_runner.queued_names()
+           or job_runner.active_model_name()) and time.time() < deadline:
+        time.sleep(0.05)
+
+
 def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
     """The running check above missed the queue: an import under a name that a
     queued training will save was accepted (reproduced before this change), and
@@ -664,9 +680,7 @@ def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
         assert "queued" in response.json()["detail"]
     finally:
         release.set()
-        deadline = time.time() + 10
-        while (job_runner.is_running() or job_runner.queued_names()) and time.time() < deadline:
-            time.sleep(0.05)
+        _drain_job_runner()
     assert "queued_import" not in client.get("/models", headers=RO).text
 
 
@@ -695,9 +709,7 @@ def test_a_dataset_a_running_or_queued_run_will_read_cannot_be_deleted(trained_m
         queued = client.delete("/datasets/queued_r12.csv", headers=ADMIN)
     finally:
         release.set()
-        deadline = time.time() + 10
-        while (job_runner.is_running() or job_runner.queued_names()) and time.time() < deadline:
-            time.sleep(0.05)
+        _drain_job_runner()
 
     assert (running.status_code, queued.status_code) == (409, 409), (running.text, queued.text)
     assert "queued_r12.csv" in queued.json()["detail"]
