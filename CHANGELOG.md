@@ -47,6 +47,12 @@ brackets are its finding numbers.
   declares — the way a crafted `.skops` file runs code, and the one the API's own loader
   refuses. A bundle of this app declares none, so the example passes `trusted=[]` and says
   why; the suite now runs the snippet against a freshly trained bundle. (S07)
+- **A model name outside Latin-1 no longer breaks its export and share link — or fills the
+  disk.** The download header was built by hand, and a header is Latin-1: a model called
+  "Fächer–2026" made the export and its public share link answer 500, and every attempt left
+  a whole bundle copy behind until the next restart — repeatable without a key. The header
+  is now written RFC 5987-encoded where the name needs it (an ASCII name keeps the old form),
+  and a staged copy is deleted when the response cannot be built. (S03)
 
 ### Fixed
 

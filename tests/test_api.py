@@ -377,6 +377,33 @@ def test_export_import_roundtrip_via_api(trained_model):
     assert "api_copy" in client.get("/models", headers=RO).json()
 
 
+def test_a_model_name_outside_latin_1_can_be_exported_and_shared(trained_model):
+    """S03 (audit 2026-09-30): the download header was built by hand, and a header is
+    Latin-1 -- a model called "Fächer–2026" (en dash) made its export and its public share
+    link answer 500, and each attempt left a whole bundle copy behind as `.export-*`."""
+    from urllib.parse import unquote
+
+    name = "Fächer–2026"
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    client.post("/models/import", headers=ADMIN, data={"new_name": name},
+                files={"file": ("bundle.zip", bundle, "application/zip")}).raise_for_status()
+
+    answers = TestClient(app, raise_server_exceptions=False)  # a 500 as a caller sees it
+    direct = answers.post(f"/models/{name}/export", headers=ADMIN)
+    link = client.post(f"/models/{name}/export", headers=ADMIN, json={"generate_share_url": True})
+    shared = answers.get(link.json()["share_url"])
+
+    orphans = list((_TMP / "models").glob(".export-*"))
+    assert (direct.status_code, shared.status_code, len(orphans)) == (200, 200, 0)
+    for response in (direct, shared):
+        assert response.status_code == 200, response.text
+        disposition = response.headers["content-disposition"]
+        assert "filename*=utf-8''" in disposition, disposition
+        assert unquote(disposition.split("''", 1)[1]) == f"{name}.zip"
+    assert not list((_TMP / "models").glob(".export-*")), "no staged copy is left behind"
+    client.delete(f"/models/{name}", headers=ADMIN).raise_for_status()
+
+
 def test_a_bundle_named_in_upper_case_can_be_imported(trained_model):
     """Found beside V04 (audit 2026-09-30): the model import compared `.zip` case-sensitively
     too, so a bundle saved as `FAECHER.ZIP` was refused as not being a ZIP."""

@@ -47,10 +47,18 @@ def staged_zip_response(name: str) -> FileResponse:
     why; this owns the response that streams it and deletes it once the body is sent.
     """
     path = get_registry().stage_export(name)
-    return FileResponse(
-        path, media_type="application/zip",
-        # `safe_name` rejects the quote and the semicolon, so the name cannot end the
-        # filename parameter early (audit SEC-8); it runs on every path that reaches here.
-        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
-        background=BackgroundTask(path.unlink, missing_ok=True),
-    )
+    try:
+        return FileResponse(
+            path, media_type="application/zip",
+            # Starlette writes the header, RFC 5987-encoded (`filename*=utf-8''…`) where the
+            # name is not plain ASCII: a header is Latin-1, and built by hand "Fächer–2026"
+            # made every export of that model a 500 (audit 2026-09-30, S03). `safe_name`,
+            # which runs on every path to here, keeps quotes and line breaks out (SEC-8).
+            filename=f"{name}.zip",
+            background=BackgroundTask(path.unlink, missing_ok=True),
+        )
+    except BaseException:
+        # Ours until a response owns it: each failed attempt used to leave a whole bundle
+        # copy behind, which only the next start's sweep removed.
+        path.unlink(missing_ok=True)
+        raise
