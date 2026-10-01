@@ -5,12 +5,13 @@
 
 async function loadTrainingTab() {
   const dsSel = $("#train-dataset"), profileSel = $("#train-profile");
-  // Both lists are rebuilt on every visit to the tab, which reset the dataset and the profile
-  // whenever someone looked at another tab (audit 2026-09-30, U08). A choice stays while it
-  // still exists.
-  const dataset = dsSel.value, profile = profileSel.value;
   try {
     const [datasets, profiles] = await Promise.all([Api.get("/datasets"), Api.get("/train/profiles")]);
+    // Both lists are rebuilt on every visit to the tab, which reset the dataset and the
+    // profile whenever someone looked at another tab (audit 2026-09-30, U08). A choice stays
+    // while it still exists -- read now, not before the fetch: one made while the lists were
+    // loading is the newest (review of U08).
+    const dataset = dsSel.value, profile = profileSel.value;
     dsSel.innerHTML = `<option value="">${esc(t("train.dataset.choose"))}</option>` +
       datasets.map((d) => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("");
     // The profile descriptions are server configuration (config.yaml), not UI text:

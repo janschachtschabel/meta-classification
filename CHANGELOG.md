@@ -436,7 +436,8 @@ brackets are its finding numbers.
   lists on every visit, which put the check back on the first model and reset the dataset and
   the profile — while the column pickers still offered the old dataset's columns. A choice now
   survives the rebuild while it still exists (an empty model choice too: metadata alone needs
-  no model), and a dataset deleted meanwhile clears its columns. (U08)
+  no model) — including one made while the lists were still loading — and a dataset deleted
+  meanwhile clears its columns. (U08)
 - **A training run's transitions are heard from every tab.** The element announcing them sat
   inside the Training panel, which is hidden whenever another tab is shown — and a hidden
   live region is not in the accessibility tree at all. A run that finished while its owner

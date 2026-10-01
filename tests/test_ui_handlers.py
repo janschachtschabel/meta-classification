@@ -940,3 +940,55 @@ def test_stopping_also_cancels_the_runs_this_page_has_not_sent(tmp_path):
     assert '"count":2' in result["toasts"][-1]
     assert result["idle"] is True
     assert result["errors"] == []
+
+
+
+@needs_node
+def test_a_choice_made_while_the_tab_reloads_is_kept(tmp_path):
+    """Review of U08 (2026-10-01): the choices were read BEFORE the lists were fetched and put
+    back after -- so a dataset picked while `GET /datasets` was still running (the select
+    still offers the old list) was reverted when the answer came, and the run went out for
+    the other dataset with this one's columns."""
+    result = _run(tmp_path, modules=("training.js",), body=_FAKE_SELECT + """
+        await loadTrainingTab();
+        el("#train-dataset").value = "b.csv";
+        let release;
+        const slow = new Promise((resolve) => { release = resolve; });
+        const answer = Api.get;
+        Api.get = (url) => (url === "/datasets" ? slow.then(() => datasets) : answer(url));
+        const reload = loadTrainingTab();
+        el("#train-dataset").value = "a.csv";
+        release();
+        await reload;
+        report({ dataset: el("#train-dataset").value, errors });
+    """)
+
+    assert result == {"dataset": "a.csv", "errors": []}
+
+
+@needs_node
+def test_a_model_ticked_while_the_list_reloads_stays_ticked(tmp_path):
+    """The same on the Query tab: a model ticked during `GET /models` was unticked again."""
+    result = _run(tmp_path, modules=("query.js",), body="""
+        let release;
+        const slow = new Promise((resolve) => { release = resolve; });
+        let calls = 0;
+        Api.get = async () => { calls += 1; if (calls > 1) await slow; return ["m1", "m2"]; };
+        const box = el("#query-models");
+        let boxes = [];
+        const read = () => {
+          boxes = [...box.innerHTML.matchAll(/value="([^"]*)"( checked)?/g)]
+            .map(([, value, checked]) => ({ value, checked: Boolean(checked) }));
+        };
+        box.querySelector = () => boxes[0] || null;
+        document.querySelectorAll = (sel) =>
+          (sel === 'input[name="query-model"]:checked' ? boxes.filter((b) => b.checked) : []);
+        await loadQueryTab(); read();
+        const reload = loadQueryTab();
+        boxes[1].checked = true;
+        release();
+        await reload; read();
+        report({ checked: boxes.filter((b) => b.checked).map((b) => b.value), errors });
+    """)
+
+    assert result == {"checked": ["m1", "m2"], "errors": []}
