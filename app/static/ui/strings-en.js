@@ -32,6 +32,7 @@ const STRINGS_EN = {
 
   "errors.adminRequired": "This action needs the admin API key.",
   "errors.clipboard": "Could not copy — the text is selected and can be copied with Ctrl+C. (Browsers only grant clipboard access over HTTPS.)",
+  "errors.notApi": "That answer did not come from the API — is a proxy or a sign-in page in between?",
   "errors.rateLimited": "Rate limit reached — please wait a moment.",
   "errors.network": "No connection to the server — the network or the service is unreachable. The request was not carried out.",
   "errors.requestFailed": "Request failed ({status})",

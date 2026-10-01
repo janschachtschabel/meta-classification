@@ -33,6 +33,7 @@ const STRINGS_DE = {
 
   "errors.adminRequired": "Für diese Aktion wird der Admin-API-Schlüssel gebraucht.",
   "errors.clipboard": "Kopieren nicht möglich — der Text ist markiert und kann mit Strg+C kopiert werden. (Die Zwischenablage steht Browsern nur über HTTPS zur Verfügung.)",
+  "errors.notApi": "Diese Antwort kam nicht von der API — steht ein Proxy oder eine Anmeldeseite dazwischen?",
   "errors.rateLimited": "Ratenbegrenzung erreicht — bitte einen Moment warten.",
   "errors.network": "Keine Verbindung zum Server — Netzwerk oder Dienst nicht erreichbar. Die Anfrage wurde nicht ausgeführt.",
   "errors.requestFailed": "Anfrage fehlgeschlagen ({status})",

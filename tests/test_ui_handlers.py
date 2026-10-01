@@ -372,6 +372,7 @@ function report(value) { console.log(`RESULT ${JSON.stringify(value)}`); }
 const answer = (status, body, headers = {}) => ({
   status, ok: status >= 200 && status < 300, headers: new Headers(headers),
   json: async () => JSON.parse(body), text: async () => body,
+  blob: async () => new Blob([body]),
 });
 """
 
@@ -555,3 +556,38 @@ def test_a_double_click_creates_one_share_link(tmp_path):
     assert result["posts"] == ["/models/m/export", "/models/m/export"], (
         "a double click must post once, and a later click again")
     assert result["errors"] == []
+
+
+@needs_node
+@pytest.mark.parametrize("content_type, body", [
+    ("text/html; charset=utf-8", "<html><body>Anmelden</body></html>"),
+    ("application/json", "<html>"),
+])
+def test_an_answer_that_is_not_the_apis_says_so(tmp_path, content_type, body):
+    """U08 (audit 2026-09-30): a JSON call handed back the Response itself when a 2xx was not
+    JSON -- an SSO proxy's sign-in page, a captive portal -- and the caller failed on it as
+    "names.map is not a function", or showed an empty list. A body that claims JSON and is
+    not failed with the browser's own parser message."""
+    result = _run(tmp_path, modules=("api.js",), prelude=_API_PRELUDE, body=f"""
+        globalThis.fetch = async () =>
+          answer(200, {json.dumps(body)}, {{ "content-type": {json.dumps(content_type)} }});
+        try {{ const got = await Api.get("/models"); report({{ thrown: false, got: typeof got }}); }}
+        catch (err) {{ report({{ thrown: true, status: err.status, message: err.message }}); }}
+    """)
+
+    assert result == {"thrown": True, "status": 200, "message": "errors.notApi"}
+
+
+@needs_node
+def test_a_download_still_gets_the_answer_itself(tmp_path):
+    """The other side of the same seam: a download IS a non-JSON answer, and /predict/csv
+    reports its completeness in a header (X-Input-Rows, U02)."""
+    result = _run(tmp_path, modules=("api.js",), prelude=_API_PRELUDE, body="""
+        globalThis.document = { createElement: () => ({ click() {} }) };
+        globalThis.fetch = async () =>
+          answer(200, "row,text\\n0,a", { "content-type": "text/csv", "X-Input-Rows": "1" });
+        const { blob, headers } = await Api.downloadForm("/predict/csv", {}, "x.csv");
+        report({ text: await blob.text(), rows: headers.get("X-Input-Rows") });
+    """)
+
+    assert result == {"text": "row,text\n0,a", "rows": "1"}

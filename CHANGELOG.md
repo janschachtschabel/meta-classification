@@ -426,6 +426,12 @@ brackets are its finding numbers.
 - **A double click creates one share link.** "Share link" posted once per click, so a double
   click created two links — two bearer capabilities, valid for a day, for one intent. A
   resource being shared is now not shared again until the first answer is in. (U08)
+- **An answer that is not the API's says so.** A JSON call handed back the raw response when
+  a successful answer was not JSON — an SSO proxy's sign-in page, a captive portal — and the
+  caller failed on it as "names.map is not a function", or showed an empty list; a body that
+  claimed JSON and was not surfaced the browser's own parser message. Both now fail with one
+  translated sentence that names the likely cause. Downloads still get the answer itself.
+  (U08)
 
 ## [4.0.1] — 2026-09-27
 
