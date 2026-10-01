@@ -21,16 +21,14 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
 from .. import predict_csv as predict_csv_mod
-from ..bundle_meta import as_mapping, as_names
 from ..concurrency import csv_slots
 from ..errors import TrainingInputError
 from ..limiter import limiter, predict_limit
-from ..registry import get_registry
 from ..schemas.common import separator_problem
 from ..schemas.serving import Threshold, TopK
 from ..security import require_role, spool_upload_capped
 from ..settings import Settings, get_settings
-from ._bundles import load_model
+from ._bundles import load_model, text_columns_for
 
 router = APIRouter(tags=["Prediction"])
 
@@ -44,24 +42,6 @@ def _download_name(upload_name: str | None, model_name: str) -> str:
     """The filename the answer is offered under, derived from the uploaded one."""
     stem = _UNSAFE_IN_FILENAME.sub("-", Path(upload_name or model_name).stem).strip("-")
     return f"{stem or model_name}-predictions.csv"
-
-
-def _text_columns_for(model_name: str, requested: list[str] | None) -> tuple[list[str], dict]:
-    """Which columns to read, and how often each is repeated — from the bundle.
-
-    How a text is assembled is part of what the model was fit on, so the columns and
-    their weights are read from the bundle rather than asked of the caller. An explicit
-    ``text_columns`` overrides the names (a newer export may call them something else);
-    the weights then narrow to those columns, exactly as a training request narrows them.
-    """
-    metadata = as_mapping(get_registry().info(model_name).get("metadata"))
-    columns = requested or as_names(metadata.get("text_columns"))
-    if not columns:
-        raise HTTPException(
-            400, "This bundle does not record which text columns it was trained on; "
-                 "pass text_columns explicitly.")
-    weights = as_mapping(metadata.get("text_column_weights"))
-    return columns, {col: weight for col, weight in weights.items() if col in columns}
 
 
 @router.post("/predict/csv", summary="Classify every row of a CSV (upload → CSV download)")
@@ -123,7 +103,7 @@ async def predict_csv(
         # reasons, as GET /datasets/{name} and every request model's csv_separator.
         raise HTTPException(400, problem)
     model = await asyncio.to_thread(load_model, model_name)
-    columns, weights = _text_columns_for(model_name, text_columns)
+    columns, weights = text_columns_for(model_name, text_columns)
 
     # Spooled to our own file rather than read from the upload's own handle: the
     # response body is produced AFTER this function returns, and the request's
