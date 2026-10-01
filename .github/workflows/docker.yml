@@ -173,7 +173,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Sign build provenance (Sigstore via OIDC)
+          # SLSA build provenance, attached as an attestation. Unsigned: a signature would take
+          # cosign or actions/attest-build-provenance, which this workflow does not run (the
+          # comment here promised one -- audit 2026-09-30, B10).
           provenance: true
           sbom: true
 

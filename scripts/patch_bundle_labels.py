@@ -19,9 +19,21 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+from app.settings import Settings  # noqa: E402
+
+
+def _defaults() -> tuple[Path, Path]:
+    """The data and models directories the app itself uses: APIV3_DATA_DIR / APIV3_MODELS_DIR
+    (or `.env`) when set -- in a container, the volume -- else beside the code. Looking only
+    beside the code found nothing in a container (audit 2026-09-30, B06)."""
+    settings = Settings()
+    return Path(settings.data_dir), Path(settings.models_dir)
 
 
 def patch(bundle: Path, names: dict[str, str], *, apply: bool) -> tuple[int, int, int]:
@@ -97,8 +109,9 @@ def write_config_atomically(config_path: Path, config: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--names", default=str(_REPO_ROOT / "data" / "label_names.json"))
-    parser.add_argument("--models-dir", default=str(_REPO_ROOT / "models"))
+    data_dir, models_dir = _defaults()
+    parser.add_argument("--names", default=str(data_dir / "label_names.json"))
+    parser.add_argument("--models-dir", default=str(models_dir))
     parser.add_argument("--model", action="append", default=None, help="bundle name (repeatable)")
     parser.add_argument("--apply", action="store_true", help="write; otherwise dry run")
     args = parser.parse_args()

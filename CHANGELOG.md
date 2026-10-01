@@ -499,6 +499,20 @@ brackets are its finding numbers.
   every caller but `kubectl port-forward` with 403 — other pods and the ingress included. The
   chart now refuses keyless mode together with an ingress, and describes it as what it is.
   (B09)
+- **The image installs nothing unpinned and cannot rewrite its own code.** The build upgraded
+  pip first — whatever pip was newest, unpinned and unhashed, beside a lock that refuses
+  exactly that; the base image's own pip now installs the lock. The base digest was three
+  months old: it is the current `python:3.11-slim-trixie` build (Python 3.11.16), and
+  Dependabot now proposes the next one. `chown -R appuser /app` let the serving process
+  rewrite its code; it owns `/data` and nothing else, and the image sets the five volume
+  paths itself, so an unconfigured `docker run` writes to the volume instead of beside the
+  code. A workflow comment promised a Sigstore signature of the build provenance that
+  nothing makes; it says what is attached. (B10)
+- **The label repairs work in a container.** `label_names.json` belongs in the data
+  directory — in a container, the volume — and the repairs that apply it to trained bundles
+  were neither in the image nor able to find the volume: they looked beside the code. The
+  image carries both, they take their directories from the app's settings, and the docs say
+  how the file gets into a container. (B06)
 
 ## [4.0.1] — 2026-09-27
 

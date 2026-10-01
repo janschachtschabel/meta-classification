@@ -10,6 +10,7 @@ files must agree, and the release gate must run every step the push gate runs â€
 edit that re-opens one of these gaps fails here instead of in production.
 """
 
+import importlib.util
 import json
 import os
 import shlex
@@ -395,3 +396,95 @@ def test_the_licence_gate_reads_the_tree_the_image_installs():
 
     assert "--require-hashes -r requirements-hashes.lock" in step, step
     assert dev_pin in step, f"the audit job does not install {dev_pin}"
+
+
+# --- B10/B06: what the image is built from, and what it may do at run time ----------------------
+
+
+def _dockerfile() -> list[str]:
+    """The Dockerfile's instructions, continuation lines joined."""
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8").replace("\\\n", " ")
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def test_the_image_installs_nothing_unpinned():
+    """B10 (audit 2026-09-30): `pip install --upgrade pip` fetched whatever pip was newest into
+    every build -- unpinned and unhashed, next to a lock that refuses exactly that. The base
+    image's own pip installs the lock."""
+    installs = [part for line in _dockerfile() if line.startswith("RUN")
+                for part in line.split("&&") if "pip install" in part]
+
+    assert installs and all("--require-hashes" in part for part in installs), installs
+
+
+def test_the_base_image_is_pinned_by_digest():
+    [base] = [line for line in _dockerfile() if line.startswith("FROM")]
+
+    assert "@sha256:" in base, base
+
+
+def test_the_runtime_user_cannot_rewrite_the_code():
+    """B10: `chown -R appuser /app` let the process that serves requests rewrite its own code.
+    It owns its data, nothing else."""
+    lines = _dockerfile()
+    chowned = [word for line in lines for part in line.split("&&") if "chown" in part
+               for word in part.split() if word.startswith("/")]
+
+    assert chowned and all(path == "/data" or path.startswith("/data/") for path in chowned), chowned
+    assert "USER appuser" in lines
+
+
+def test_the_image_points_every_writable_path_at_the_volume():
+    """Which is what lets the code stay read-only: the five paths defaulted to files beside the
+    code, so an unconfigured `docker run` wrote into /app -- and lost it with the container.
+    The image sets them as compose and the chart do."""
+    env = " ".join(line for line in _dockerfile() if line.startswith("ENV"))
+    service = _service()["environment"]
+
+    for name in _PATHS:
+        assert f"{name}={service[name]}" in env, f"the image does not set {name} to {service[name]}"
+
+
+def test_the_bundle_repairs_ship_in_the_image():
+    """B06 (audit 2026-09-30): the label repairs had to run where the bundles are -- in the
+    container -- and the image did not carry them."""
+    copies = " ".join(line for line in _dockerfile() if line.startswith("COPY"))
+
+    for script in ("scripts/patch_bundle_labels.py", "scripts/prune_bundle_labels.py"):
+        assert script in copies, f"{script} is not in the image"
+
+
+@pytest.mark.parametrize("script", ["patch_bundle_labels.py", "prune_bundle_labels.py"])
+def test_the_bundle_repairs_find_the_configured_directories(script, monkeypatch, tmp_path):
+    """In the container the bundles and the label file are in the volume (APIV3_MODELS_DIR,
+    APIV3_DATA_DIR), and the scripts looked beside the code. They now ask the app's own
+    settings, so they find what the app serves; unconfigured, that is the old default."""
+    monkeypatch.setenv("APIV3_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("APIV3_DATA_DIR", str(tmp_path / "datasets"))
+    spec = importlib.util.spec_from_file_location(script.removesuffix(".py"), ROOT / "scripts" / script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._defaults() == (tmp_path / "datasets", tmp_path / "models")
+
+
+def test_dependabot_keeps_the_pinned_base_image_current():
+    """B10 (audit 2026-09-30): the base digest was three months old. Pinning a digest stops it
+    moving under a build; it also stops it ever being patched unless something proposes the
+    next one. Python dependencies stay out on purpose (dependabot.yml says why; pip-audit gates
+    their CVEs)."""
+    config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    ecosystems = {(entry["package-ecosystem"], entry["directory"]) for entry in config["updates"]}
+
+    assert ("docker", "/") in ecosystems, ecosystems
+
+
+def test_the_image_workflow_claims_no_signature_it_does_not_make():
+    """B10: a comment at `provenance: true` read "Sign build provenance (Sigstore via OIDC)" --
+    a signature nothing in the workflow makes. Whoever relies on that comment checks for a
+    signature that is not there."""
+    workflow = (ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
+    signs = "cosign" in workflow or "attest-build-provenance" in workflow
+
+    assert signs or "Sigstore" not in workflow

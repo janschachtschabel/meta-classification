@@ -55,9 +55,11 @@ docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
   ghcr.io/janschachtschabel/meta-classification:latest
 ```
 
-The five path variables are what make the volume the source of truth; without them the
-container would write inside its own filesystem and lose everything on the next `docker
-run`. `docker compose` sets them for you.
+The five path variables put everything the app writes on the volume. Images built after
+4.0.1 set them themselves, and their code is not writable by the process that runs it;
+spelled out here, the command also works with 4.0.1 and earlier, which would otherwise
+write inside the container's own filesystem and lose it on the next `docker run`.
+`docker compose` and the Helm chart set them too.
 
 **Tags:** `latest` is the newest release (currently the same image as `4.0.1`, `4.0`
 and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
@@ -337,6 +339,17 @@ be repaired **without retraining** — `uri_to_label` is presentation-only JSON 
 ```bash
 python scripts/patch_bundle_labels.py --apply
 ```
+
+In a container the data directory is the volume: copy the file in and run the repair there
+— the image carries it, and it finds the volume as the app does (`APIV3_DATA_DIR`,
+`APIV3_MODELS_DIR`):
+
+```bash
+docker cp label_names.json metaclassify:/data/datasets/
+docker exec metaclassify python scripts/patch_bundle_labels.py --apply
+```
+
+(`kubectl cp` / `kubectl exec` likewise.)
 
 See [`docs/configuration.md`](docs/configuration.md#datalabel_namesjson--authoritative-label-display-names-optional) for the details.
 

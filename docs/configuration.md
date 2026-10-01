@@ -246,6 +246,11 @@ python scripts/fetch_vocab_labels.py                        # -> data/label_name
 python scripts/patch_bundle_labels.py --apply               # repair EXISTING bundles
 ```
 
+In a container the data directory is the volume (`/data/datasets`): copy the file there
+(`docker cp`, `kubectl cp`) and run the repair inside the container (`docker exec … python
+scripts/patch_bundle_labels.py --apply`). The image carries both bundle repairs; they take
+their directories from `APIV3_DATA_DIR` and `APIV3_MODELS_DIR` like the app.
+
 `fetch_vocab_labels.py` downloads SKOS vocabularies (add URLs at the top of the file) and
 is **build-time only** — `app/` never fetches a URL, which is the same SSRF boundary that
 makes dataset/model import upload-only. `patch_bundle_labels.py` rewrites `uri_to_label`

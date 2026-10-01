@@ -1,5 +1,6 @@
 # Dependabot keeps the SHA-pinned GitHub Actions current: on a new release it
 # opens a PR bumping both the commit SHA and the `# vX` comment in the workflows.
+# It does the same for the Dockerfile's digest-pinned base image (below).
 # Python dependencies are intentionally NOT managed here — they are hash-locked
 # and updated deliberately (see CLAUDE.md: "no new dependency without written
 # justification"), so automated pip PRs would fight that process.
@@ -16,3 +17,13 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "ci"
+
+  # The base image is pinned by digest, which stops it moving under a build -- and stops it
+  # ever being patched unless something proposes the next digest. This does, when the tag
+  # moves (audit 2026-09-30, B10: the pinned digest was three months old).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
