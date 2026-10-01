@@ -58,6 +58,7 @@ const STATE_KEYS = {
   completed: "trainStatus.state.completed",
   error: "trainStatus.state.error",
   stopped: "trainStatus.state.stopped",
+  interrupted: "trainStatus.state.interrupted",
 };
 const stateLabel = (status) => (STATE_KEYS[status] ? t(STATE_KEYS[status]) : status);
 
@@ -94,6 +95,8 @@ let lastStatus = null;
 let shownNotes = "";
 
 function renderTrainStatus(s) {
+  // A run that just ended is a new row in the history (train-history.js).
+  if (lastStatus && lastStatus.status === "running" && s.status !== "running") loadTrainHistory();
   lastStatus = s;
   renderTrainChip(s);
   announceTrainState(s);

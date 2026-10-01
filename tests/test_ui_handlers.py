@@ -833,6 +833,7 @@ _STATUS_CARD = """
     } });
     let bound = 0;
     el("#train-stop").addEventListener = () => { bound += 1; };
+    globalThis.loadTrainHistory = async () => {};
     const running = (elapsed) => ({
       status: "running", phase: "C-Auswahl", phase_detail: "Fold 2/3", model_name: "fach",
       progress: 40, elapsed_seconds: elapsed, eta_seconds: 600 - elapsed, queued: ["fach_b"],
@@ -1079,3 +1080,76 @@ def test_a_csv_run_sends_the_threshold_too(tmp_path):
     """)
 
     assert ["threshold", "0.3"] in result["sent"], result["sent"]
+
+
+
+# --- Improvement 8: what the finished runs left behind, in the Training tab ---------------------
+
+_HISTORY = """
+    globalThis.fmtDate = (iso) => `date(${iso})`;
+    globalThis.fmtScore = (v) => (v == null ? "–" : Number(v).toFixed(3));
+    globalThis.costLabel = (minutes) => `cost(${minutes})`;
+    const card = el("#train-history");
+    const runs = [
+      { model_name: "faecher", kind: "training", status: "completed", finished_at: "2026-10-01T10:00:00",
+        duration_seconds: 120, request: { dataset_name: "data.csv" }, f1_macro: 0.74, f1_micro: 0.81 },
+      { model_name: "faecher", kind: "evaluation", status: "error", finished_at: "2026-10-01T11:00:00",
+        duration_seconds: 5, request: { dataset_name: "neu.csv" }, error: "<b>no shared labels</b>" },
+    ];
+"""
+
+
+@needs_node
+def test_the_training_tab_shows_what_finished_runs_left_behind(tmp_path):
+    """Improvement 8 (audit 2026-09-30): GET /train/history kept every run's outcome --
+    scores, duration, and for a failed run the only surviving reason -- and the UI never read
+    it. Two models on one dataset could only be compared by opening each."""
+    result = _run(tmp_path, modules=("escape.js", "train-status.js", "train-history.js"),
+                  prelude=_PRELUDE.replace("const esc = (s) => String(s);\n", ""), body=_HISTORY + """
+        Api.get = async (url) => { card.asked = url; return runs; };
+        await loadTrainHistory();
+        report({ asked: card.asked, html: card.innerHTML, errors });
+    """)
+
+    html = result["html"]
+    assert result["asked"].startswith("/train/history")
+    for shown in ("faecher", "data.csv", "neu.csv", "0.740", "0.810", "cost(2)",
+                  "date(2026-10-01T10:00:00)", "trainHistory.kind.evaluation", "trainStatus.state.error"):
+        assert shown in html, shown
+    assert "<b>no shared labels</b>" not in html and "&lt;b&gt;no shared labels" in html, (
+        "a run's error text is shown escaped")
+    assert result["errors"] == []
+
+
+@needs_node
+def test_an_empty_or_failing_history_says_so(tmp_path):
+    result = _run(tmp_path, modules=("escape.js", "train-status.js", "train-history.js"),
+                  prelude=_PRELUDE.replace("const esc = (s) => String(s);\n", ""), body=_HISTORY + """
+        Api.get = async () => [];
+        await loadTrainHistory();
+        const empty = card.innerHTML;
+        Api.get = async () => { throw new Error("Server weg"); };
+        await loadTrainHistory();
+        report({ empty, failed: card.innerHTML, errors });
+    """)
+
+    assert "trainHistory.empty" in result["empty"]
+    assert "Server weg" in result["failed"] and 'role="alert"' in result["failed"]
+
+
+@needs_node
+def test_a_run_that_ends_refreshes_the_history(tmp_path):
+    """The card is read when the tab opens and again whenever a run ends."""
+    result = _run(tmp_path, modules=("train-status.js", "training.js"),
+                  helpers=("app.js:applyBarWidths",), prelude=_STATUS_PRELUDE,
+                  body=_STATUS_CARD + """
+        let refreshed = 0;
+        globalThis.loadTrainHistory = async () => { refreshed += 1; };
+        renderTrainStatus(running(100));
+        const whileRunning = refreshed;
+        renderTrainStatus({ ...running(130), status: "completed", queued: [] });
+        renderTrainStatus({ ...running(132), status: "completed", queued: [] });
+        report({ whileRunning, afterEnd: refreshed, errors });
+    """)
+
+    assert result == {"whileRunning": 0, "afterEnd": 1, "errors": []}

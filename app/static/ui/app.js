@@ -203,7 +203,12 @@ function showApp(keyless) {
   startStatusPolling();
 }
 
-const loaders = { query: loadQueryTab, training: loadTrainingTab, models: loadModels, datasets: loadDatasets };
+const loaders = {
+  query: loadQueryTab,
+  training: () => { loadTrainingTab(); loadTrainHistory(); },
+  models: loadModels,
+  datasets: loadDatasets,
+};
 
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((b) => {

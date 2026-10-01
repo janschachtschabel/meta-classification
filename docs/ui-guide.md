@@ -199,6 +199,11 @@ Minuten. Deshalb endet ein Lauf, der nicht von selbst reagiert, nach **~30 s** o
 die Statuszeile sagt das dann auch. Ein gestoppter Lauf hinterlässt in keinem Fall ein
 Modell.
 
+**Verlauf:** Unten im Tab stehen die zuletzt beendeten Läufe — Trainings und Bewertungen —
+mit Ergebnis, F1 Makro und Mikro, Dauer und Ende; ein fehlgeschlagener Lauf nennt seinen
+Grund, der sonst nirgends erhalten bleibt. Läufe auf demselben Datensatz lassen sich so
+direkt vergleichen. Die Liste lädt beim Öffnen des Tabs neu und nach jedem beendeten Lauf.
+
 Während des Laufs zeigt die Statuskarte zwei Zeilen, die erklären, warum es manchmal
 langsamer geht als erwartet:
 

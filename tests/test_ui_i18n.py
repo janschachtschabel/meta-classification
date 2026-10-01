@@ -36,7 +36,7 @@ _KEY_IN_HTML_RE = re.compile(r"data-i18n(?:-[a-z-]+)?=\"([^\"]+)\"")
 # its keys as data. Matching the namespace instead of the call site finds those too —
 # and is why no key in this UI may be assembled from a template.
 NAMESPACES = ("common", "errors", "shell", "login", "query", "explain", "feedback",
-              "share", "train", "trainStatus", "models", "modelDetail", "evaluate",
+              "share", "train", "trainStatus", "trainHistory", "models", "modelDetail", "evaluate",
               "datasets", "datasetDetail")
 _KEY_IN_JS_RE = re.compile(
     r"[\"'](" + "|".join(NAMESPACES) + r")((?:\.[A-Za-z0-9]+)+)[\"']")

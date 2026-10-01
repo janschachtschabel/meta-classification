@@ -593,6 +593,11 @@ it found.
   cluster allows. An admin uploads the mapping as JSON; it replaces the file whole or not
   at all, an empty mapping is refused, and `GET /label-names` shows what training will use.
   An upload only — the app fetches no URL. (Improvement 9)
+- **The run history in the Training tab.** `GET /train/history` kept every finished run's
+  outcome — scores, duration, and for a failed run the only surviving reason — and the UI
+  never read it, so two models on one dataset could only be compared by opening each. The
+  tab now lists the last 20 runs, trainings and evaluations alike, and reloads the list when
+  a run ends. An interrupted run (R03) reads as such. (Improvement 8)
 
 ## [4.0.1] — 2026-09-27
 
