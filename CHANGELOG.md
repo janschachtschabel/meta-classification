@@ -108,6 +108,9 @@ brackets are its finding numbers.
   model comparison said they were natively calibrated. Decisions are unaffected — the
   thresholds are tuned on the same scores — but a displayed percentage is a score to compare
   with the label's threshold. Calibration itself is listed as a later improvement. (T13)
+- **Evaluation weights are bounded like training weights.** `/train` caps a text-column weight
+  at 10; `/models/{name}/evaluate` took any number, and a typo like `1000000` made the API
+  process build a million column names per row. Over 10 is now a 422. (T15)
 
 ### Fixed
 

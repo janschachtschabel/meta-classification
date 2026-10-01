@@ -204,6 +204,16 @@ def test_a_model_can_be_evaluated_on_a_dataset(trained_model):
     assert entry["status"] == "completed"
 
 
+def test_evaluation_weights_are_bounded_like_training_weights(trained_model):
+    """T15 (audit 2026-09-30): /train caps a weight at 10, evaluate did not -- a typo like
+    1000000 made the API process build a list of a million column names per row."""
+    body = {**EVAL_BODY, "text_column_weights": {"properties.cclom:title": 1_000_000}}
+
+    response = client.post("/models/api_model/evaluate", headers=ADMIN, json=body)
+
+    assert response.status_code == 422, response.text
+
+
 def test_evaluating_twice_appends_rather_than_replaces(trained_model):
     """A model is evaluated on several datasets over its life; keeping only the newest
     would throw away exactly the comparison this exists for."""

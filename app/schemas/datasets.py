@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 
 from .common import (
@@ -39,16 +41,18 @@ class EvaluateRequest(BaseModel):
     label_filter: OptionalFilter = Field(None, description=LABEL_FILTER)
     # The model was fit on text assembled a particular way; scoring it on text
     # assembled differently measures a distribution it was not tuned on.
-    text_column_weights: dict[str, int] | None = Field(
+    # At most 10, as /train allows: unbounded, a typo like 1000000 made the API process
+    # build a list of a million column names per row (audit 2026-09-30, T15).
+    text_column_weights: dict[str, Annotated[int, Field(le=10)]] | None = Field(
         None,
         description=(
             "How often each text column is repeated in the evaluation text, as in `/train` "
             '(e.g. `{"properties.cclom:title": 2}`; unlisted columns once). Omitted or null '
             "(default) takes the model's own weights (`metadata.text_column_weights` in "
             "`GET /models/{name}`), narrowed to `text_columns`, so it is scored on text built "
-            "the way it was trained; an explicit `{}` repeats nothing. Values below 1 count as "
-            "1; keys not in `text_columns` are ignored. The recorded evaluation says which "
-            "weights it used."
+            "the way it was trained; an explicit `{}` repeats nothing. At most 10; values below "
+            "1 count as 1; keys not in `text_columns` are ignored. The recorded evaluation says "
+            "which weights it used."
         ),
     )
 
