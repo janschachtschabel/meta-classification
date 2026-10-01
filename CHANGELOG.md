@@ -60,6 +60,11 @@ brackets are its finding numbers.
   without a key — after which trainings, feedback and new links failed. Downloads of the
   same bundle state now share one staged file, which the last of them deletes; a changed
   bundle (`PUT …/info`, a new model under the name) is packed anew. (S02)
+- **A share link's model name is checked again before the public download.** The dataset
+  branch re-validated the name read back from the link store; the model branch joined it
+  onto the models directory as stored, so an altered store entry such as `../elsewhere/m`
+  exported a bundle from outside it to anyone holding the link. It now answers 404, like an
+  unknown link. (S11)
 
 ### Fixed
 

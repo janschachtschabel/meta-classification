@@ -80,6 +80,13 @@ async def download_shared(
     if info is None:
         raise HTTPException(404, "Share link not found or expired.")
     if info["kind"] == "model":
+        # Revalidated like a dataset's name below, for the same reason: `Registry._path` is a
+        # plain join, and a store entry naming `../elsewhere/m` exported a bundle from beside
+        # the models directory (audit 2026-09-30, S11).
+        try:
+            safe_name(info["name"], "model name")
+        except HTTPException as exc:
+            raise HTTPException(404, "Model no longer exists.") from exc
         registry = get_registry()
         if not registry.exists(info["name"]):
             raise HTTPException(404, "Model no longer exists.")
