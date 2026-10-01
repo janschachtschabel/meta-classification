@@ -34,7 +34,8 @@ function el(sel) {
       value: "", hidden: true, disabled: false, textContent: "", innerHTML: "",
       style: {}, dataset: {},
       classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-      addEventListener() {}, removeEventListener() {}, focus() {},
+      addEventListener() {}, removeEventListener() {}, focus() {}, remove() {},
+      insertAdjacentHTML() {},
       querySelector: (inner) => el(`${sel} ${inner}`),
       querySelectorAll: () => [],
     };
@@ -218,28 +219,41 @@ def test_signing_out_hands_the_next_person_a_fresh_page(tmp_path):
 
 
 
+
+
 # --- U06/U03: a single-text answer stays about the text that was classified ------------------
 
-# The page as the Query tab needs it for one text: the answer of /predict, the near-miss and
-# the metadata calls, each recorded with the texts it was sent -- and the user typing on while
-# every one of them is on its way, which is what the audit did in the browser.
+# The Query tab answering one text, with explain.js and feedback.js wired in as the page wires
+# them. Every request is recorded with the text(s) it carried -- and the user types on while
+# each one is on its way, which is what the audit did in the browser. The answer's buttons
+# are fakes that keep the handler they are given, so a test clicks them as a user would.
 _ONE_TEXT = """
-    el("#query-text").value = "Pythagoras im rechtwinkligen Dreieck";
+    const CLASSIFIED = "Pythagoras im rechtwinkligen Dreieck";
+    el("#query-text").value = CLASSIFIED;
     el("#query-topk").value = "";
     const sent = [];
     Api.post = async (url, body) => {
       sent.push({ url, texts: body.texts || [body.text] });
       el("#query-text").value = "Photosynthese in der Pflanze";
       if (url === "/metadata") return { results: [{ title: "", description: "", keywords: [] }] };
+      if (url === "/feedback") return { collected: 1 };
       return { results: [{ predictions: [{ uri: "u:m", label: "Mathematik", confidence: 0.9 }] }] };
     };
+    const gets = [];
+    Api.get = async (url) => { gets.push(url); return [{ uri: "u:bio", label: "Biologie" }]; };
     globalThis.fmtFixed = (v, d) => Number(v).toFixed(d);
     globalThis.applyBarWidths = () => {};
-    const bound = {};
-    globalThis.bindExplainButtons = (root, text) => { bound.explain = text; };
-    globalThis.bindCorrectionButtons = (root, byModel, text) => { bound.correct = text; };
-    const out = { innerHTML: "", querySelectorAll: () => [] };
+    globalThis.closer = (close) => close;
+    globalThis.I18n = { locale: () => "de" };
+    const click = {};
+    const button = (kind) => ({ dataset: { [kind]: "m" }, closest: () => el("#card"),
+                                addEventListener: (type, run) => { click[kind] = run; } });
+    const out = { innerHTML: "", querySelectorAll: (sel) => (sel === "[data-explain]"
+      ? [button("explain")] : sel === "[data-correct]" ? [button("correct")] : []) };
+    el("#card .correction [data-send]").addEventListener = (type, run) => { click.save = run; };
 """
+_ONE_TEXT_MODULES = ("query.js", "explain.js", "feedback.js")
+CLASSIFIED = "Pythagoras im rechtwinkligen Dreieck"
 
 
 @needs_node
@@ -248,13 +262,62 @@ def test_a_single_answer_and_its_extras_describe_the_same_text(tmp_path):
     metadata and the "Why?" button read the field again once the answer was back -- so a user
     who went on typing got the classification of one text beside the metadata of another, and
     "Why?" explained an answer to a text the model never saw."""
-    result = _run(tmp_path, modules=("query.js",), body=_ONE_TEXT + """
+    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, body=_ONE_TEXT + """
         await runSingle(["m"], { classify: true, metadata: true }, out);
-        report({ sent, bound, errors });
+        await click.explain();
+        report({ sent, errors });
     """)
 
-    classified = ["Pythagoras im rechtwinkligen Dreieck"]
     assert result["errors"] == []
-    assert result["sent"] == [{"url": "/predict", "texts": classified},
-                              {"url": "/metadata", "texts": classified}]
-    assert result["bound"]["explain"] == classified[0]
+    assert result["sent"] == [{"url": "/predict", "texts": [CLASSIFIED]},
+                              {"url": "/metadata", "texts": [CLASSIFIED]},
+                              {"url": "/predict/explain", "texts": [CLASSIFIED]}]
+
+
+@needs_node
+def test_a_correction_records_the_text_that_was_classified(tmp_path):
+    """U03 (audit 2026-09-30): the correction read the text field when it was SAVED. The
+    audit classified "Pythagoras ...", changed the field to "Photosynthese ..." and corrected
+    to Biologie -- and the feedback file got "Photosynthese" with the Mathematik prediction:
+    a row the next training reads as a true pair. Here the field holds the classified text
+    when the form is used; the next test is about one that changed."""
+    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, body=_ONE_TEXT + """
+        await runSingle(["m"], { classify: true, metadata: false }, out);
+        el("#query-text").value = CLASSIFIED;
+        await click.correct();
+        el("#query-text").value = CLASSIFIED;
+        await click.save();
+        report({ sent, errors });
+    """)
+
+    assert result["errors"] == []
+    assert [s["texts"] for s in result["sent"] if s["url"] == "/feedback"] == [[CLASSIFIED]]
+
+
+@needs_node
+def test_a_correction_is_refused_once_the_text_has_changed(tmp_path):
+    """The other half of U03: once the field says something else, which text a correction is
+    for is no longer clear -- the labels on screen belong to the old one, the user may mean
+    the new one. Neither guess goes into the training data; the user is asked to classify
+    again, both when opening the form and when saving one opened before the edit."""
+    result = _run(tmp_path, modules=_ONE_TEXT_MODULES, body=_ONE_TEXT + """
+        await runSingle(["m"], { classify: true, metadata: false }, out);
+        let shown = "";
+        el("#card").insertAdjacentHTML = (where, html) => { shown += html; };
+        await click.correct();
+        const refusedOpen = { gets: [...gets], shown };
+        el("#query-text").value = CLASSIFIED;
+        await click.correct();
+        el("#query-text").value = "Photosynthese in der Pflanze";
+        await click.save();
+        report({ refusedOpen, gets, sent, errors,
+                 message: el("#card .correction .fb-message").textContent });
+    """)
+
+    assert result["refusedOpen"]["gets"] == [], "the form opened for a text that was not classified"
+    assert "feedback.textChanged" in result["refusedOpen"]["shown"]
+    assert result["gets"] == ["/models/m/labels"], "the form did not open for the classified text"
+    assert not [s for s in result["sent"] if s["url"] == "/feedback"], (
+        "a correction was saved for a text that was not classified")
+    assert result["message"] == "feedback.textChanged"
+    assert result["errors"] == []

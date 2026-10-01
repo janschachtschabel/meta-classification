@@ -9,8 +9,19 @@
    control carries both without a lookup that can be wrong. */
 "use strict";
 
-async function openCorrection(modelName, predicted, card, button) {
+/* A correction is certain to be about the classified text only while the field still holds
+   it: the labels on screen belong to that text, and a user who edited it may mean the new
+   one. Reading the field at save time recorded the new text beside the old prediction, a row
+   the next training reads as a true pair (audit 2026-09-30, U03). Neither guess is saved. */
+const textChangedSince = (classified) => $("#query-text").value !== classified;
+
+async function openCorrection(modelName, predicted, text, card, button) {
   card.querySelector(".correction")?.remove();
+  if (textChangedSince(text)) {
+    card.insertAdjacentHTML("beforeend",
+      `<div class="correction"><p class="error" role="alert">${t("feedback.textChanged")}</p></div>`);
+    return;
+  }
   button.disabled = true;
   try {
     const labels = await Api.get(`/models/${encodeURIComponent(modelName)}/labels`);
@@ -23,7 +34,7 @@ async function openCorrection(modelName, predicted, card, button) {
 
   const box = card.querySelector(".correction");
   box.querySelector("[data-send]").addEventListener("click", () =>
-    sendCorrection(modelName, predicted, box));
+    sendCorrection(modelName, predicted, box, text));
   box.querySelector("[data-cancel]").addEventListener("click", closer(() => box.remove()));
   box.querySelector("select").focus();
 }
@@ -45,15 +56,20 @@ function correctionHtml(modelName, predicted, labels) {
   </div>`;
 }
 
-async function sendCorrection(modelName, predicted, box) {
+async function sendCorrection(modelName, predicted, box, text) {
   const corrected = [...box.querySelectorAll("#fb-labels option")]
     .filter((o) => o.selected).map((o) => o.value);
   const message = box.querySelector(".fb-message");
+  if (textChangedSince(text)) {   // edited while the form was open
+    message.className = "fb-message error";
+    message.textContent = t("feedback.textChanged");
+    return;
+  }
   const send = box.querySelector("[data-send]");
   send.disabled = true;
   try {
     const answer = await Api.post("/feedback", {
-      text: $("#query-text").value,
+      text,
       model_name: modelName,
       predicted: predicted.map((p) => p.uri),
       corrected,
@@ -73,11 +89,12 @@ async function sendCorrection(modelName, predicted, box) {
   }
 }
 
-/* Wire the "Correct" buttons of a freshly rendered single-text result. */
-function bindCorrectionButtons(root, byModel) {
+/* Wire the "Correct" buttons of a freshly rendered single-text result; `text` is the one
+   that was classified. */
+function bindCorrectionButtons(root, byModel, text) {
   root.querySelectorAll("[data-correct]").forEach((button) => {
     const name = button.dataset.correct;
     button.addEventListener("click", () =>
-      openCorrection(name, byModel[name] || [], button.closest(".card"), button));
+      openCorrection(name, byModel[name] || [], text, button.closest(".card"), button));
   });
 }

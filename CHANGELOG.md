@@ -390,6 +390,14 @@ brackets are its finding numbers.
   back: a user who went on typing got the metadata of one text beside the classification of
   another, and "Why?" explained an answer for a text the model never saw. The text is now
   read once per query. (U06)
+- **A correction is saved with the text that was classified.** It read the text field at the
+  moment it was saved: classify "Pythagoras …", change the field to "Photosynthese …",
+  correct to Biologie, and the feedback file held "Photosynthese" beside the Mathematik
+  prediction — a row the next training reads as a true pair. The classified text now travels
+  with the answer, and once the field says something else the correction is refused with a
+  request to classify again, both when opening the form and when saving one opened before the
+  edit: the labels on screen belong to the old text, the user may mean the new one, and
+  neither guess belongs in the training data. (U03)
 
 ## [4.0.1] — 2026-09-27
 

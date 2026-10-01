@@ -151,6 +151,7 @@ const STRINGS_DE = {
   "feedback.saved": "Gespeichert. Bisher {collected} gesammelt.",
   "feedback.savedButton": "Gespeichert",
   "feedback.savedNone": "Als „keines davon trifft zu“ gespeichert. Bisher {collected} gesammelt.",
+  "feedback.textChanged": "Der Text wurde nach der Klassifikation geändert. Bitte erneut klassifizieren, um ihn zu korrigieren.",
 
   "share.activeHeading": "Aktive Freigabelinks",
   "share.activeNote": "Wer den Link hat, kann bis zum Ablauf ohne API-Schlüssel herunterladen. Ein Widerruf stoppt weitere Downloads; was bereits geholt wurde, lässt sich nicht zurückrufen.",

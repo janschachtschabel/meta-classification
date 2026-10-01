@@ -117,6 +117,9 @@ sollen: die Liste zeigt alle Labels des Modells, Mehrfachauswahl per Strg-Klick.
 - **Nichts auswählen** heißt „keines davon passt“. Das wird ebenfalls gespeichert,
   taucht aber nicht im Trainings-Export auf — eine Zeile ohne Label kann ein Lauf nicht
   lernen.
+- Gespeichert wird der Text, **der klassifiziert wurde**. Wer ihn danach im Feld ändert,
+  kann die Antwort erst wieder korrigieren, wenn er neu klassifiziert hat — sonst stünde
+  eine Korrektur, die für den neuen Text gemeint ist, neben der Vorhersage für den alten.
 - Korrekturen werden **nie verworfen**. Anders als die Lauf-Historie (gedeckelt bei 200)
   sind sie kein Protokoll, sondern die Daten, aus denen der nächste Lauf lernt.
 - Der Export unter `GET /feedback/export` ist eine CSV mit den Spalten `text` und

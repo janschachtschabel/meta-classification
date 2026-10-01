@@ -150,6 +150,7 @@ const STRINGS_EN = {
   "feedback.saved": "Saved. {collected} collected so far.",
   "feedback.savedButton": "Saved",
   "feedback.savedNone": "Saved as \"none of these apply\". {collected} collected so far.",
+  "feedback.textChanged": "The text was changed after it was classified. Classify it again to correct it.",
 
   "share.activeHeading": "Active share links",
   "share.activeNote": "Anyone with the link can download without an API key until it expires. Revoking stops further downloads; it cannot recall what was already fetched.",

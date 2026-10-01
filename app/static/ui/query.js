@@ -240,7 +240,7 @@ async function runSingle(models, plan, out) {
   // Only here: both act on ONE text — the endpoint explains one, and a correction
   // records one. The bulk modes have nothing to bind.
   bindExplainButtons(out, text);
-  bindCorrectionButtons(out, byModel);
+  bindCorrectionButtons(out, byModel, text);
 }
 
 /* ---------- many texts ---------- */
