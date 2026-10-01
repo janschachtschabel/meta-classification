@@ -140,8 +140,16 @@ jobs:
         #
         # pip-licenses reads *installed* metadata, so the tree has to be present; it is
         # installed here rather than reusing the api job's venv because that one also
-        # holds the dev tools, which do not ship. requirements.lock (the 13 direct pins,
-        # resolved fresh) is the tree the next recompile gets.
+        # holds the dev tools, which do not ship. It is the fully hashed tree the image
+        # installs: a fresh resolution of requirements.lock's 17 direct pins is the tree
+        # the next recompile would get, and the gate judged that one instead of the one
+        # that ships (audit 2026-09-30, B05). The tool comes first, pinned with the other
+        # dev tools, so the tree's own pins win over anything it pulls in.
+        #
+        # --partial-match: the denylist is matched inside licence names. Without it whole
+        # names were compared, and no package calls its licence "GPL" -- Unidecode's
+        # metadata says "GNU General Public License v2 or later (GPLv2+)", and it passed
+        # (B05; tests/test_deployment_config.py runs this very command against one).
         #
         # Runs last so a failure in the licence tooling cannot mask a CVE finding.
         #
@@ -152,6 +160,6 @@ jobs:
         # allow-list therefore fails on this tree today; verified, not assumed.
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
-          pip install pip-licenses
-          pip install -r requirements.lock
-          python -m piplicenses --fail-on "GPL;AGPL;LGPL" --format markdown --order license
+          pip install pip-licenses==5.5.5
+          pip install --require-hashes -r requirements-hashes.lock
+          python -m piplicenses --fail-on "GPL;AGPL;LGPL" --partial-match --format markdown --order license

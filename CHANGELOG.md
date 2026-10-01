@@ -476,6 +476,13 @@ brackets are its finding numbers.
   the UI switch — and `FORWARDED_ALLOW_IPS` never reached the container. `.env` is now the
   container's environment (optional, so keys exported in the shell still work); the volume
   paths stay pinned over it. `.env.example` documents `FORWARDED_ALLOW_IPS`. (B04)
+- **The licence gate catches a GPL licence as its metadata spells it.** `--fail-on
+  "GPL;AGPL;LGPL"` compared whole licence names, and no package calls its licence "GPL":
+  Unidecode's metadata says "GNU General Public License v2 or later (GPLv2+)", and the gate
+  passed it. It now matches inside names (`--partial-match`), judges the hashed tree the image
+  installs rather than a fresh resolution of the direct pins, and runs a pinned pip-licenses
+  (now in `requirements-dev.txt`). A test runs the workflow's own command against a GPLv2+
+  and an MIT package. (B05)
 
 ## [4.0.1] — 2026-09-27
 

@@ -12,8 +12,10 @@ edit that re-opens one of these gaps fails here instead of in production.
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -339,3 +341,57 @@ def test_a_setting_in_env_reaches_the_container(tmp_path):
     assert environment.get("FORWARDED_ALLOW_IPS") == "10.42.0.0/16"
     assert environment.get("APIV3_MAX_UPLOAD_MB") == "99"
     assert environment.get("APIV3_DATA_DIR") == "/data/datasets", "the volume path lost to .env"
+
+
+# --- B05: the licence gate catches a GPL licence as the metadata spells it ----------------------
+
+
+def _licence_step() -> str:
+    [step] = [s for s in _workflow("ci.yml")["jobs"]["audit"]["steps"]
+              if "piplicenses" in s.get("run", "")]
+    return step["run"]
+
+
+def _gate(tmp_path: Path, classifier: str) -> subprocess.CompletedProcess[str]:
+    """The audit job's own pip-licenses command, run against one installed distribution."""
+    pytest.importorskip("piplicenses", reason="pip-licenses (requirements-dev.txt) is not installed")
+    [command] = [line for line in _licence_step().splitlines() if "-m piplicenses" in line]
+    args = shlex.split(command.strip())[3:]  # after "python -m piplicenses"
+    site = tmp_path / "site"
+    (site / "licence_probe-1.0.dist-info").mkdir(parents=True)
+    (site / "licence_probe-1.0.dist-info" / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: licence-probe\nVersion: 1.0\nLicense: see classifier\n"
+        f"Classifier: {classifier}\n", encoding="utf-8")
+    return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, "-m", "piplicenses", *args, "--packages", "licence-probe"],
+        capture_output=True, text=True, timeout=120, check=False,
+        env={**os.environ, "PYTHONPATH": str(site)})
+
+
+def test_the_licence_gate_fails_on_a_gpl_package_as_its_metadata_spells_it(tmp_path):
+    """B05 (audit 2026-09-30): `--fail-on "GPL;AGPL;LGPL"` compared whole licence names, and
+    no package calls its licence "GPL": Unidecode's metadata says "GNU General Public
+    License v2 or later (GPLv2+)", and the gate passed it. Run here exactly as the audit job
+    runs it, against a package that declares that classifier."""
+    gate = _gate(tmp_path, "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)")
+
+    assert gate.returncode != 0, f"a GPLv2+ package passed the licence gate:\n{gate.stdout}"
+
+
+def test_the_licence_gate_passes_a_permissive_package(tmp_path):
+    """The other half: a gate that fails on everything gates nothing."""
+    gate = _gate(tmp_path, "License :: OSI Approved :: MIT License")
+
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+
+
+def test_the_licence_gate_reads_the_tree_the_image_installs():
+    """It installed `requirements.lock` -- 17 direct pins, resolved fresh -- so it judged the
+    tree the next recompile would get, not the one the image ships. And its own tool came
+    unpinned; it is pinned with the other dev tools now."""
+    step = _licence_step()
+    dev_pin = next(line.strip() for line in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+                   .splitlines() if line.lower().startswith("pip-licenses=="))
+
+    assert "--require-hashes -r requirements-hashes.lock" in step, step
+    assert dev_pin in step, f"the audit job does not install {dev_pin}"
