@@ -33,6 +33,7 @@ from .. import data as data_mod
 from .. import dataset_stats as stats_mod
 from ..capacity import CapacityPlan
 from ..errors import TrainingInputError
+from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter
 from ..profiles import load_training_config
 from ..schemas import AnalyzeRequest, ExportRequest, ValidateRequest
@@ -313,9 +314,16 @@ async def delete_dataset(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Delete a CSV file from the data directory (irreversible), and revoke its share
-    links first. If the link store cannot be written, 503 and nothing changes.
+    links first. If the link store cannot be written, 503 and nothing changes. A dataset a
+    running or queued run will read is refused (409) until that run is done.
     **Auth:** admin · rate limit active."""
     path = _dataset_path(dataset_name, settings)
+    # A queued run reads its dataset when its turn comes, by name: deleted and uploaded anew
+    # under the same name, it trained on the new file without a word (audit 2026-09-30, R12).
+    if dataset_name.casefold() in job_runner.datasets_in_use():
+        raise HTTPException(
+            409, f"Dataset '{dataset_name}' is the input of a running or queued run; delete it "
+                 "once that run is done, or stop the run first.")
     # Same reason and order as model delete: the next import under this name must not be
     # reachable through a link that was handed out for this file, so the links go first.
     get_share_store().revoke_for("dataset", dataset_name)

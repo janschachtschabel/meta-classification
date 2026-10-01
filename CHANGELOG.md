@@ -326,6 +326,11 @@ brackets are its finding numbers.
   and the run it was meant to prevent started anyway. Taking a run off the queue and
   launching it is now one step, and `stop` sets its flag under the same lock; the same
   closes a gap in which two starts could both pass the busy check. (R10)
+- **A dataset a waiting run will read cannot be deleted from under it.** Queued runs read
+  their dataset by name when their turn comes, and deleting a dataset ignored the queue:
+  deleted and uploaded anew under the same name, the waiting run trained — or evaluated —
+  on the new file without a word. `DELETE /datasets/{name}` now answers 409 while a running
+  or queued run names the dataset. (R12)
 
 ## [4.0.1] — 2026-09-27
 

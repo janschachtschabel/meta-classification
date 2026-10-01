@@ -631,6 +631,41 @@ def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
     assert "queued_import" not in client.get("/models", headers=RO).text
 
 
+def test_a_dataset_a_running_or_queued_run_will_read_cannot_be_deleted(trained_model):
+    """R12 (audit 2026-09-30): a queued run does not look at its dataset again, and deleting
+    one ignored the queue -- deleted and uploaded anew under the same name, the waiting run
+    trained on the new file without a word. Refused (409) while a run names it."""
+    import threading
+
+    from app.jobs import job_runner
+
+    for name in ("running_r12.csv", "queued_r12.csv"):
+        (_TMP / "data" / name).write_bytes((_TMP / "data" / "tiny.csv").read_bytes())
+    started, release = threading.Event(), threading.Event()
+
+    def blocker(**_):
+        started.set()
+        release.wait(30)
+
+    job_runner.submit(blocker, model_name="blocker_r12", request={"dataset_name": "running_r12.csv"})
+    try:
+        assert started.wait(5)
+        job_runner.submit(lambda **_: None, model_name="queued_r12",
+                          request={"dataset_name": "queued_r12.csv"})
+        running = client.delete("/datasets/running_r12.csv", headers=ADMIN)
+        queued = client.delete("/datasets/queued_r12.csv", headers=ADMIN)
+    finally:
+        release.set()
+        deadline = time.time() + 10
+        while (job_runner.is_running() or job_runner.queued_names()) and time.time() < deadline:
+            time.sleep(0.05)
+
+    assert (running.status_code, queued.status_code) == (409, 409), (running.text, queued.text)
+    assert "queued_r12.csv" in queued.json()["detail"]
+    for name in ("running_r12.csv", "queued_r12.csv"):
+        assert client.delete(f"/datasets/{name}", headers=ADMIN).status_code == 200, "free once done"
+
+
 def test_datasets_endpoints():
     listing = client.get("/datasets", headers=RO)
     assert listing.status_code == 200

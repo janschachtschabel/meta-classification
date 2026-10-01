@@ -256,6 +256,21 @@ class JobRunner:
         with self._lock:
             return [entry[2] for entry in self._queue]
 
+    def datasets_in_use(self) -> set[str]:
+        """The datasets the running and the queued runs read, as their requests name them.
+
+        Casefolded: on Windows `D.csv` reaches the file `d.csv`. Includes a hard-stopped run
+        whose thread still executes -- it may still be reading. Deleting one of these is what
+        let a waiting run train on a different file uploaded under the same name (audit
+        2026-09-30, R12).
+        """
+        with self._lock:
+            requests = [entry[3] for entry in self._queue]
+            if self._busy_locked():
+                requests.append(self._last_request)
+        return {str(request["dataset_name"]).casefold() for request in requests
+                if isinstance(request, dict) and request.get("dataset_name")}
+
     def _dispatch_next(self) -> None:
         """Start the next queued run — called by the finishing thread, as its last act.
 
