@@ -252,7 +252,7 @@ def test_a_sentence_ending_in_an_abbreviation_gets_no_second_period():
     period — the cost table shows them on their own — so the sentence has to ask whether
     one is already there instead of adding a second.
 
-    Only the pre-flight embeds a duration in a sentence, so only training.js needs the
+    Only the pre-flight embeds a duration in a sentence, so only preflight.js needs the
     helper. The other place that ends a built sentence with a period is the CSV summary
     in query.js, and it is safe for a reason this test keeps true: none of the fragments
     it joins ends in one. If that changes, the summary needs the same treatment.
@@ -261,9 +261,9 @@ def test_a_sentence_ending_in_an_abbreviation_gets_no_second_period():
     assert german["common.minutes"].endswith("."), "the abbreviation keeps its period"
     assert german["common.hours"].endswith(".")
 
-    training = (UI / "training.js").read_text(encoding="utf-8")
-    assert "endSentence(" in training, "the pre-flight must not append a bare period"
-    assert "}.</p>" not in training, "the bare period this test exists for"
+    preflight = (UI / "preflight.js").read_text(encoding="utf-8")
+    assert "endSentence(" in preflight, "the pre-flight must not append a bare period"
+    assert "}.</p>" not in preflight, "the bare period this test exists for"
 
     for language in ("de", "en"):
         strings = load_map(language)
