@@ -121,3 +121,27 @@ def test_the_first_original_is_kept_as_the_backup_not_the_previous_patch(tmp_pat
     backup = json.loads((bundle / "config.json.bak").read_text(encoding="utf-8"))
     assert backup["uri_to_label"] == {"uri:a": "Alpha"}, "the backup is the previous patch"
     assert _config(bundle)["uri_to_label"]["uri:a"] == "zweite Korrektur"
+
+
+
+def test_the_label_repair_rewrites_models_and_nothing_else(tmp_path):
+    """W04 (audit 2026-09-30): every directory holding a config.json was patched -- a training's
+    staging directory, a delete's tombstone, and the `.prebackup` copy the repairs keep so the
+    untouched original survives. Run as the script runs."""
+    import subprocess
+
+    models = tmp_path / "models"
+    config = {"classes": ["u:a"], "uri_to_label": {"u:a": "alt"}, "per_label_thresholds": {"u:a": 0.5}}
+    for directory in ("m", ".m.0a1b2c3d.tmp", "m.prebackup", ".m.deleted-0a1b2c3d.tmp"):
+        (models / directory).mkdir(parents=True)
+        (models / directory / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    names = tmp_path / "label_names.json"
+    names.write_text('{"u:a": "neu"}', encoding="utf-8")
+
+    subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "scripts" / "patch_bundle_labels.py"),  # noqa: S603
+                    "--names", str(names), "--models-dir", str(models), "--apply"],
+                   check=True, capture_output=True, text=True, timeout=120)
+
+    changed = {d.name for d in models.iterdir()
+               if json.loads((d / "config.json").read_text(encoding="utf-8"))["uri_to_label"]["u:a"] == "neu"}
+    assert changed == {"m"}

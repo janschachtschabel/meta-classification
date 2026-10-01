@@ -25,6 +25,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
+from app.registry import Registry, is_backup_name  # noqa: E402
 from app.settings import Settings  # noqa: E402
 
 
@@ -118,11 +119,11 @@ def main() -> None:
 
     names: dict[str, str] = json.loads(Path(args.names).read_text(encoding="utf-8"))
     models_dir = Path(args.models_dir)
-    targets = (
-        [models_dir / name for name in args.model]
-        if args.model
-        else sorted(p for p in models_dir.iterdir() if (p / "config.json").exists())
-    )
+    # What the registry counts as a model, and only that: every directory holding a config.json
+    # was patched -- a training's staging, a delete's tombstone, and the `.prebackup` copy kept
+    # so the untouched original survives (audit 2026-09-30, W04).
+    chosen = args.model or Registry(models_dir, 1).list()
+    targets = [models_dir / name for name in chosen if not name.startswith(".") and not is_backup_name(name)]
     print(f"{len(names)} authoritative names from {args.names}")
     for bundle in targets:
         if not (bundle / "config.json").exists():

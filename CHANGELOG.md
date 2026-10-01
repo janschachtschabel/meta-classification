@@ -556,6 +556,14 @@ brackets are its finding numbers.
   despite the https allowlist the code claimed. A vocabulary yielding fewer than ten labels
   now stops the run with nothing written, the file is replaced whole or not at all (temp
   file, fsync, rename), and only https URLs are fetched. (W07)
+- **A bundle repair cannot lose the model it repairs.** Replacing a bundle — what
+  `prune_bundle_labels.py` does to a serving model — removed the old one and then renamed the
+  new one in: an error or a kill between the two left no model, and the next start swept the
+  staged copy as well. The old bundle is now renamed aside first and deleted only once the
+  new one is in place; an error between the renames puts it back at once, a kill at the next
+  start. And `patch_bundle_labels.py` rewrote every directory holding a `config.json` —
+  staging directories, delete tombstones and the `.prebackup` copy that exists to keep the
+  original — and now touches what the registry lists as models. (W04)
 
 ## [4.0.1] — 2026-09-27
 

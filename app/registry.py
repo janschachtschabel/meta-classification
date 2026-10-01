@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import tempfile
@@ -49,6 +50,10 @@ MAX_EVALUATIONS = 50
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
 BACKUP_SUFFIX = ".prebackup"
+
+
+# A bundle renamed aside while `publish` replaces it; see `sweep_stale_tmp`.
+_REPLACED = re.compile(r"^\.(?P<name>.+)\.replaced-[0-9a-f]+\.tmp$")
 
 
 def is_backup_name(name: str) -> bool:
@@ -121,8 +126,16 @@ class Registry:
             return 0
         removed = 0
         with self._disk_lock:
-            for path in self.dir.iterdir():
+            for path in list(self.dir.iterdir()):
                 if not (path.name.startswith(".") and path.name.endswith(".tmp")):
+                    continue
+                replaced = _REPLACED.match(path.name)
+                if replaced and path.is_dir() and not self._path(replaced["name"]).exists():
+                    # A replace killed between its two renames (`publish`): the old bundle
+                    # goes back instead of out with the rest (audit 2026-09-30, W04).
+                    os.replace(path, self._path(replaced["name"]))
+                    logger.warning("Restored model %r from a replace that was cut short",
+                                   replaced["name"])
                     continue
                 if path.is_dir():
                     shutil.rmtree(path, ignore_errors=True)
@@ -186,7 +199,7 @@ class Registry:
         before staging and again under the disk lock. /train refuses existing
         names at SUBMIT time, which does not cover a model imported while the
         run waited in the queue — trusting it let a queued run destroy that
-        import. Replacing is not atomic (rmtree, then rename).
+        import. Replacing renames the old bundle aside first (see ``publish``).
 
         ``on_step`` is called with a short description before each sub-step; the
         training job routes it into progress updates so even a very slow save
@@ -252,16 +265,31 @@ class Registry:
         """
         with self._disk_lock:
             target = self._path(name)
+            aside: Path | None = None
             if target.exists():
                 if not overwrite:  # appeared while we staged
                     shutil.rmtree(staged, ignore_errors=True)
                     raise FileExistsError(name)
-                shutil.rmtree(target)
+                # Renamed aside, not removed: rmtree-then-rename left a window with no model,
+                # and an error or a kill inside it lost the model for good -- the next start
+                # swept the staged copy too (audit 2026-09-30, W04). An error between the two
+                # renames puts the old bundle back below; a kill, `sweep_stale_tmp` at the
+                # next start.
+                aside = self.dir / f".{name}.replaced-{secrets.token_hex(4)}.tmp"
+                os.replace(target, aside)
             # Stepping again after the dumps marks them finished — otherwise a
             # stall here would be indistinguishable from one inside the last dump.
             on_step("Publishing bundle (atomic rename)")
-            os.replace(staged, target)
+            try:
+                os.replace(staged, target)
+            except BaseException:
+                if aside is not None:
+                    os.replace(aside, target)
+                shutil.rmtree(staged, ignore_errors=True)
+                raise
             durability.sync_dir(self.dir)  # the rename itself (R13)
+            if aside is not None:
+                shutil.rmtree(aside, ignore_errors=True)
             if model is None:
                 return
             # Publish to the cache while STILL holding _disk_lock: a concurrent

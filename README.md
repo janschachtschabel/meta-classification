@@ -356,6 +356,12 @@ docker exec metaclassify python scripts/patch_bundle_labels.py --apply
 
 (`kubectl cp` / `kubectl exec` likewise.)
 
+Both repairs may run beside the server. They touch models only — never a staging directory,
+a backup or a deleted bundle — and replace a bundle whole or not at all: the old one is
+renamed aside first, and a replace cut short is undone at the next start. A request that
+reads the bundle at the very moment of the swap may fail once; the next one gets the
+repaired bundle.
+
 See [`docs/configuration.md`](docs/configuration.md#datalabel_namesjson--authoritative-label-display-names-optional) for the details.
 
 ### Model documentation (`PUT /models/{name}/info`)

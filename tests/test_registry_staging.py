@@ -216,3 +216,48 @@ def test_a_bundle_rewritten_on_disk_is_served_as_rewritten(tmp_path):
     shutil.rmtree(registry.dir / "m")
     with pytest.raises(FileNotFoundError):
         registry.get("m")
+
+
+
+def test_a_replace_that_fails_midway_keeps_the_old_bundle_serving(tmp_path, monkeypatch):
+    """W04 (audit 2026-09-30): replacing a bundle -- what the label repair does to a serving
+    model -- removed the old one first and renamed the new one in after. An error between the
+    two left no model at all."""
+    import app.registry as registry_module
+
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+    registry.save("m", model, {**metadata, "marker": "old"})
+    staged = registry.stage("m", model, {**metadata, "marker": "new"}, overwrite=True)
+    real_replace = registry_module.os.replace
+
+    def replace(source, destination):
+        if Path(source) == staged:
+            raise OSError("the disk went away")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(registry_module.os, "replace", replace)
+    with pytest.raises(OSError):
+        registry.publish("m", staged, overwrite=True)
+    monkeypatch.undo()
+
+    assert registry.exists("m"), "the model is gone"
+    assert registry.load_fresh("m")[1]["marker"] == "old"
+
+
+def test_a_replace_killed_between_its_renames_is_undone_at_the_next_start(tmp_path):
+    """The window no handler covers: the process killed after the old bundle was renamed aside
+    and before the new one was renamed in. The next start puts the old one back; the sweep
+    used to delete both hidden directories -- and the model with them."""
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+    registry.save("m", model, {**metadata, "marker": "old"})
+    staged = registry.stage("m", model, {**metadata, "marker": "new"}, overwrite=True)
+    (registry.dir / "m").rename(registry.dir / ".m.replaced-0123abcd.tmp")
+
+    restarted = Registry(tmp_path / "models", 2)
+    restarted.sweep_stale_tmp()
+
+    assert restarted.exists("m"), "the interrupted replace lost the model"
+    assert restarted.load_fresh("m")[1]["marker"] == "old"
+    assert not staged.exists() and not _hidden(restarted)
