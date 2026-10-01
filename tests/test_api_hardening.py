@@ -113,6 +113,30 @@ def test_multichar_separator_rejected_on_all_endpoints(monkeypatch, tmp_path):
     assert validate.status_code == 422, validate.text
 
 
+@pytest.mark.parametrize("separator", ["\n", "\r"])
+def test_a_line_break_is_refused_as_a_separator_everywhere(monkeypatch, tmp_path, separator):
+    """V02 (audit 2026-09-30): one character, so the length guard let it through -- and
+    pandas refuses `\\n` as a delimiter with a ValueError the API answered as a 500, on
+    `GET /datasets/{name}` with a readonly key. A row ends at a line break; a field can't."""
+    client = _fresh_client(monkeypatch, tmp_path)
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "d.csv").write_text("a;b\n1;2\n", encoding="utf-8")
+    body = {"text_columns": ["a"], "label_column": "b", "csv_separator": separator}
+
+    info = client.get("/datasets/d.csv", params={"separator": separator}, headers=RO)
+    bulk = client.post("/predict/csv", headers=RO, files={"file": ("d.csv", b"a;b\n1;2\n", "text/csv")},
+                       data={"model_name": "m", "separator": separator})
+    train = client.post("/train", headers=ADMIN, json={**body, "dataset_name": "d.csv", "model_name": "m"})
+    analyze = client.post("/datasets/analyze", headers=ADMIN, json={**body, "dataset_name": "d.csv"})
+    validate = client.post("/datasets/d.csv/validate", headers=ADMIN, json=body)
+    evaluate = client.post("/models/m/evaluate", headers=ADMIN, json={**body, "dataset_name": "d.csv"})
+
+    assert (info.status_code, bulk.status_code) == (400, 400), (info.text, bulk.text)
+    assert "line break" in info.json()["detail"] and "line break" in bulk.json()["detail"]
+    assert [r.status_code for r in (train, analyze, validate, evaluate)] == [422] * 4, [
+        r.text for r in (train, analyze, validate, evaluate)]
+
+
 def test_unknown_profile_detail_has_no_stray_quotes(monkeypatch, tmp_path):
     """str(KeyError) reprs its message -> the 400 detail arrived wrapped in
     literal quotes. The detail must start with the message itself."""

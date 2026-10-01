@@ -170,6 +170,12 @@ brackets are its finding numbers.
   any number: `top_k=-1` sliced the ranking from its far end, `threshold=5` or `nan` passed
   no label, and each answered 200. Both transports now share one definition of the bounds
   (`top_k` 0–1000, `threshold` 0–1); outside them is a 422 before the upload is spooled. (V01)
+- **A line break is refused as a CSV separator.** It is one character, so the length guard let
+  it through, and pandas refuses `\n` as a delimiter: `GET /datasets/{name}` and
+  `/predict/csv` answered 500 even to a readonly key, `/train`, `/datasets/analyze` and
+  `/validate` did too, an evaluation ended as a job error without a reason, and `\r` read
+  every row as a single column. All six separator inputs share one rule now — the query and
+  form parameters answer 400, the request bodies 422. (V02)
 
 ## [4.0.1] — 2026-09-27
 

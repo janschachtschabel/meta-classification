@@ -26,6 +26,7 @@ from ..concurrency import csv_slots
 from ..errors import TrainingInputError
 from ..limiter import limiter, predict_limit
 from ..registry import get_registry
+from ..schemas.common import separator_problem
 from ..schemas.serving import Threshold, TopK
 from ..security import require_role, spool_upload_capped
 from ..settings import Settings, get_settings
@@ -76,7 +77,8 @@ async def predict_csv(
             "weights then apply to the names that match. Omitted = the columns the model was trained on."
         ),
     ),
-    separator: str = Form(";", description="The CSV's field delimiter: exactly one character (else 400)."),
+    separator: str = Form(
+        ";", description="The CSV's field delimiter: exactly one character, not a line break (else 400)."),
     threshold: Threshold | None = Form(
         None,
         description=(
@@ -116,11 +118,10 @@ async def predict_csv(
     rate limit as for the other uploads.
     **Auth:** readonly.
     """
-    if len(separator) != 1:
-        # pandas treats a multi-char sep as a regex (python engine) -> ReDoS, and this
-        # route is reachable with a readonly key on a single worker. Same guard, same
-        # reason as GET /datasets/{name}.
-        raise HTTPException(400, "separator must be a single character.")
+    if problem := separator_problem(separator):
+        # Reachable with a readonly key on a single worker: the same guard, for the same
+        # reasons, as GET /datasets/{name} and every request model's csv_separator.
+        raise HTTPException(400, problem)
     model = await asyncio.to_thread(load_model, model_name)
     columns, weights = _text_columns_for(model_name, text_columns)
 

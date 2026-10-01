@@ -36,6 +36,7 @@ from ..errors import TrainingInputError
 from ..limiter import default_limit, export_limit, limiter
 from ..profiles import load_training_config
 from ..schemas import AnalyzeRequest, ExportRequest, ValidateRequest
+from ..schemas.common import separator_problem
 from ..security import require_role, safe_name, spool_upload_capped
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
@@ -108,7 +109,8 @@ def list_datasets(
 def dataset_info(
     request: Request,
     dataset_name: DatasetName,
-    separator: str = Query(";", description="The CSV's field delimiter: exactly one character (else 400)."),
+    separator: str = Query(
+        ";", description="The CSV's field delimiter: exactly one character, not a line break (else 400)."),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -116,9 +118,8 @@ def dataset_info(
 
     `separator` is the CSV delimiter (default `;`). **Auth:** readonly.
     """
-    if len(separator) != 1:
-        # pandas treats a multi-char sep as a regex (python engine) -> ReDoS.
-        raise HTTPException(400, "separator must be a single character.")
+    if problem := separator_problem(separator):
+        raise HTTPException(400, problem)
     path = _dataset_path(dataset_name, settings)
     try:
         shaped = stats_mod.sample_rows(path, separator=separator)

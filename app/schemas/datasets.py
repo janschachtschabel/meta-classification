@@ -12,6 +12,7 @@ from .common import (
     LABEL_COLUMN,
     LABEL_FILTER,
     LABEL_SEPARATOR,
+    CsvSeparator,
     OptionalFilter,
 )
 
@@ -35,8 +36,8 @@ class EvaluateRequest(BaseModel):
             "learned are reported (`unknown_labels`), not scored."
         ),
     )
-    # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
-    csv_separator: str = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
+    # One character, not a line break: see common.separator_problem.
+    csv_separator: CsvSeparator = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
     label_separator: str = Field(",", min_length=1, description=LABEL_SEPARATOR)
     label_filter: OptionalFilter = Field(None, description=LABEL_FILTER)
     # The model was fit on text assembled a particular way; scoring it on text
@@ -64,8 +65,8 @@ class AnalyzeRequest(BaseModel):
         description="Columns merged into the input text, for the text statistics. A column the CSV lacks is skipped.",
     )
     label_column: str = Field(..., description=LABEL_COLUMN)
-    # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
-    csv_separator: str = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
+    # One character, not a line break: see common.separator_problem.
+    csv_separator: CsvSeparator = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
     label_separator: str = Field(",", min_length=1, description=LABEL_SEPARATOR)
     label_filter: OptionalFilter = Field(None, description=LABEL_FILTER)
 
@@ -79,8 +80,8 @@ class ValidateRequest(BaseModel):
         ..., description="Columns merged into the input text; each one the CSV lacks is reported in `errors`.",
     )
     label_column: str = Field(..., description=LABEL_COLUMN)
-    # Single char only — see TrainRequest.csv_separator (regex/ReDoS guard).
-    csv_separator: str = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
+    # One character, not a line break: see common.separator_problem.
+    csv_separator: CsvSeparator = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
     label_separator: str = Field(",", min_length=1, description=LABEL_SEPARATOR)
 
 
