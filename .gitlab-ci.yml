@@ -191,7 +191,8 @@ build and push (branches):
 
 # -----------------------------------------------------------------------------
 # Build + push Docker image on tag creation (e.g. v1.2.0)
-# Tag = exact git tag name
+# Tags = the git tag (v1.2.0) and the bare version (1.2.0) -- the second is what
+# the chart names as its appVersion
 # -----------------------------------------------------------------------------
 build and push (tags):
   stage: build
@@ -211,15 +212,22 @@ build and push (tags):
   script:
     # --password-stdin keeps the secret out of the process list on shared runners.
     - echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
-    - docker buildx build --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME" .
+    # Also the bare version: the chart names its image by appVersion (4.0.1, no "v"), and
+    # installed from the repository as its README says, it pulled a tag no pipeline had
+    # pushed to this registry (audit 2026-09-30, B02).
+    - docker buildx build
+        --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME"
+        --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:${CI_COMMIT_TAG#v}" .
     - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME"
+    - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:${CI_COMMIT_TAG#v}"
   rules:
     # Only on tag AND configured registry (see above).
     - if: "$CI_COMMIT_TAG && $DOCKER_REGISTRY"
 
 # -----------------------------------------------------------------------------
 # Package Helm chart + push to the chart repo
-# Chart/app version = git tag (on tags) or 0.0.0-<branch-slug> (on branches)
+# Chart/app version = git tag (on tags); on branches 0.0.0-<branch-slug>.<pipeline>
+# and the immutable sha-<commit> image the branch build pushed
 # -----------------------------------------------------------------------------
 .helm_base:
   stage: deploy
@@ -245,8 +253,12 @@ build and push helm chart:
   extends: .helm_base
   timeout: 15 minutes
   variables:
-    CHART_VERSION: "0.0.0-$CI_COMMIT_REF_SLUG"
-    APP_VERSION: "$CI_COMMIT_REF_SLUG"
+    # One chart per pipeline, naming the image it built. With "0.0.0-main" and ":main" every
+    # main pipeline produced the same chart: `helm upgrade` left the pod spec unchanged, the
+    # pod never rolled, IfNotPresent kept the cached image, and `helm rollback` restored the
+    # same ":main" (audit 2026-09-30, B03).
+    CHART_VERSION: "0.0.0-$CI_COMMIT_REF_SLUG.$CI_PIPELINE_IID"
+    APP_VERSION: "sha-$CI_COMMIT_SHORT_SHA"
   rules:
     # Tag → chart/app version = exact tag name. Only with a configured chart
     # repo (HELM_REGISTRY) — otherwise skipped, pipeline stays green.

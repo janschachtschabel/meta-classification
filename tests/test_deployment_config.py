@@ -10,6 +10,9 @@ files must agree, and the release gate must run every step the push gate runs â€
 edit that re-opens one of these gaps fails here instead of in production.
 """
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -227,3 +230,67 @@ def test_the_image_runs_one_worker_even_when_the_environment_asks_for_more(monke
     monkeypatch.setenv("WEB_CONCURRENCY", "4")
 
     assert uvicorn.Config("app.main:app", workers=workers).workers == 1
+
+
+# --- B02/B03: what the GitLab pipeline pushes is what the charts reference ----------------------
+
+needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX shell to expand in")
+
+
+def _expanded(words: list[str], env: dict[str, str]) -> list[str]:
+    """Each word as GitLab's shell expands it -- `${CI_COMMIT_TAG#v}` included, which a
+    string comparison cannot judge."""
+    script = "\n".join(f"printf '%s\\n' {word}" for word in words)
+    done = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30,  # noqa: S603, S607
+                          env={**os.environ, **env}, check=True)
+    return done.stdout.splitlines()
+
+
+def _pushed(job: str, env: dict[str, str]) -> set[str]:
+    """The image references a GitLab job pushes, for one set of CI variables."""
+    refs = [line.split("docker image push", 1)[1].strip()
+            for line in _gitlab()[job]["script"] if line.startswith("docker image push")]
+    return set(_expanded(refs, env))
+
+
+_REGISTRY = {"DOCKER_REGISTRY": "registry.example", "DOCKER_IMAGE_PATH": "wlo/classification-api"}
+
+
+@needs_sh
+def test_a_release_pushes_the_image_tag_the_chart_names():
+    """B02 (audit 2026-09-30): the chart names its image by `appVersion` -- 4.0.1 -- and the
+    GitLab tag build pushed only the git tag, v4.0.1. Installed from the repository as its own
+    README says, the chart pulled an image no pipeline had pushed to that registry."""
+    app_version = yaml.safe_load((CHART / "Chart.yaml").read_text(encoding="utf-8"))["appVersion"]
+    tag = f"v{app_version}"
+
+    pushed = _pushed("build and push (tags)", {**_REGISTRY, "CI_COMMIT_TAG": tag, "CI_COMMIT_REF_NAME": tag})
+
+    assert f"registry.example/wlo/classification-api:{app_version}" in pushed, pushed
+    assert f"registry.example/wlo/classification-api:{tag}" in pushed, "the git tag itself is still pushed"
+
+
+@needs_sh
+def test_every_main_pipeline_rolls_out_the_image_it_built():
+    """B03 (audit 2026-09-30): the branch chart named the image `:main` and carried the same
+    version every time, so `helm upgrade` changed nothing in the pod spec, the pod never
+    rolled, IfNotPresent kept the cached image, and `helm rollback` restored the same `:main`.
+    The chart now names the immutable sha- tag the branch build pushes, under a version that
+    differs per pipeline."""
+    job = _gitlab()["build and push helm chart"]
+
+    def versions(sha: str, iid: str) -> tuple[str, str]:
+        env = {"CI_COMMIT_REF_SLUG": "main", "CI_COMMIT_SHORT_SHA": sha, "CI_PIPELINE_IID": iid}
+        chart, app = _expanded([f'"{job["variables"][k]}"' for k in ("CHART_VERSION", "APP_VERSION")], env)
+        return chart, app
+
+    first_chart, first_app = versions("1a2b3c4", "41")
+    second_chart, second_app = versions("5d6e7f8", "42")
+    built = _pushed("build and push (branches)",
+                    {**_REGISTRY, "CI_COMMIT_REF_SLUG": "main", "CI_COMMIT_SHORT_SHA": "1a2b3c4"})
+
+    assert f"registry.example/wlo/classification-api:{first_app}" in built, (
+        f"the chart names :{first_app}, which the branch build does not push")
+    assert first_app != "main", "the chart still names the mutable branch tag"
+    assert first_app != second_app and first_chart != second_chart, (
+        "two pipelines produce the same chart, so an upgrade does not roll the pod")

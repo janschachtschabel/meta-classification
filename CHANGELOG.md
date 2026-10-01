@@ -462,6 +462,15 @@ brackets are its finding numbers.
 - **The model checkboxes no longer ask for a Ctrl-click.** Their label, and the UI guide,
   still said "Ctrl-click for several" from the multi-select they replaced; a checkbox needs
   no modifier. Found while checking U08 in the browser.
+- **A release pushes the image tag its chart names.** The chart names its image by
+  `appVersion` (4.0.1), and the GitLab tag build pushed only the git tag (v4.0.1): installed
+  from the repository as its README says, the chart pulled an image no pipeline had pushed to
+  that registry. The tag build now pushes both. (B02)
+- **Every main pipeline rolls out the image it built.** The branch chart named the image
+  `:main` under the same version every time, so `helm upgrade` changed nothing in the pod
+  spec, the pod never rolled, and `helm rollback` restored the same `:main` — the immutable
+  `sha-` tag the build pushes for exactly this was never referenced. The chart now names it,
+  under a version that differs per pipeline (`0.0.0-main.<pipeline>`). (B03)
 
 ## [4.0.1] — 2026-09-27
 
