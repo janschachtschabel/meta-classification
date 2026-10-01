@@ -2,6 +2,11 @@
 {{- if and (not .Values.ingress.tls) (not .Values.ingress.allowInsecure) }}
 {{- fail (printf "ingress.enabled is true with no ingress.tls: every authenticated request sends X-API-Key as a header, so this would publish the credential in cleartext. Set ingress.tls, or ingress.allowInsecure=true if TLS is terminated above this ingress (mesh, cloud load balancer).") }}
 {{- end }}
+{{- /* Audit 2026-09-30, B09: keyless mode serves loopback callers only -- in a pod, that is
+       kubectl port-forward -- so every request through this ingress would be a 403. */}}
+{{- if not .Values.config.auth.enabled }}
+{{- fail "config.auth.enabled is false with ingress.enabled true: keyless mode serves loopback callers only, which in a pod means kubectl port-forward and nothing else, so every request through the ingress, and from every other pod, would be refused (403). Set the API keys, or set ingress.enabled=false and reach the pod with kubectl port-forward." }}
+{{- end }}
 {{- /* Audit 2026-09-30, S04: values.yaml asked for this and nothing enforced it. */}}
 {{- if and .Values.config.limits.rateLimitEnabled (not .Values.config.limits.forwardedAllowIps) }}
 {{- fail "ingress.enabled and config.limits.rateLimitEnabled are true with no config.limits.forwardedAllowIps: every request reaches the pod from the ingress controller, so all clients would share ONE rate-limit bucket and one busy client would throttle everyone. Set config.limits.forwardedAllowIps to the controller's addresses -- the narrowest range that holds them; a whole pod range lets any pod in it name its own client address unless a NetworkPolicy admits only the controller -- or set config.limits.rateLimitEnabled=false and limit at the ingress." }}

@@ -491,6 +491,11 @@ brackets are its finding numbers.
   limit, while a training plans with 85 % of the limit: the scheduler could place it where
   1 Gi was free, and under node pressure a pod above its request is the first evicted —
   mid-run. The default request now equals the limit. (B08)
+- **Keyless mode in the chart says what it is.** `config.auth.enabled=false` was offered "for
+  cluster-internal use", and since keyless mode serves loopback callers only, a pod answers
+  every caller but `kubectl port-forward` with 403 — other pods and the ingress included. The
+  chart now refuses keyless mode together with an ingress, and describes it as what it is.
+  (B09)
 
 ## [4.0.1] — 2026-09-27
 

@@ -117,7 +117,10 @@ ingress:
 config:
 
   auth:
-    ## @param config.auth.enabled Enable API-key authentication (disable only for cluster-internal use)
+    ## @param config.auth.enabled Enable API-key authentication. false = keyless mode, which serves
+    ## loopback callers only: in a pod that is `kubectl port-forward`, nothing else -- other pods
+    ## and the ingress get 403, so the chart refuses it together with an ingress (audit
+    ## 2026-09-30, B09).
     enabled: true
     ## @param config.auth.existingSecret Name of a Secret holding APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY (set this instead of the two keys below)
     ## When set, the chart renders no Secret of its own and the two values below are

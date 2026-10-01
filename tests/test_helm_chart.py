@@ -293,3 +293,31 @@ def test_the_pod_requests_the_memory_its_training_plans_with():
 
     planned = 0.85 * _bytes(resources["limits"]["memory"])
     assert _bytes(resources["requests"]["memory"]) >= planned, resources
+
+
+# --- B09: keyless mode in a pod is what it is: kubectl port-forward ---------------------------
+
+
+def test_keyless_mode_behind_an_ingress_refuses_the_release():
+    """B09 (audit 2026-09-30): `config.auth.enabled=false` was offered "for cluster-internal
+    use", and since S-1 keyless mode serves loopback callers only -- inside a pod that is
+    `kubectl port-forward`, nothing else. Every request through the ingress, and from every
+    other pod, would be answered 403: a release that renders and cannot be used."""
+    message = _refused("config.auth.enabled=false", INSECURE, PROXIED)
+
+    assert "config.auth.enabled" in message and "port-forward" in message, message
+
+
+def test_keyless_mode_without_an_ingress_renders_for_port_forward():
+    [configmap] = _of_kind(_render("config.auth.enabled=false", "ingress.enabled=false"), "ConfigMap")
+
+    assert configmap["data"]["APIV3_AUTH_ENABLED"] == "false"
+
+
+def test_the_chart_no_longer_offers_keyless_mode_for_cluster_internal_use():
+    documented = [
+        line for path in (CHART / "values.yaml", CHART / "README.md")
+        for line in path.read_text(encoding="utf-8").splitlines() if "auth.enabled" in line
+    ]
+
+    assert documented and not [line for line in documented if "cluster-internal" in line], documented

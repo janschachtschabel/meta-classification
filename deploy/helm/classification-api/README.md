@@ -102,7 +102,7 @@ same upgrade. Either way the keys map to the app's
 | Name                                    | Description                                                              | Value         |
 | --------------------------------------- | ------------------------------------------------------------------------ | ------------- |
 | `ingress.allowInsecure`                 | Allow an ingress with no TLS (see below)                                  | `false`       |
-| `config.auth.enabled`                   | Enable API-key authentication                                            | `true`        |
+| `config.auth.enabled`                   | Enable API-key authentication; `false` serves `kubectl port-forward` only (refused with an ingress) | `true`        |
 | `config.auth.existingSecret`            | Secret holding both keys; set this instead of the two below               | `""`          |
 | `config.auth.adminKey`                  | Admin API key (**REQUIRED** when auth enabled and no existingSecret)      | `""`          |
 | `config.auth.readonlyKey`               | Readonly API key (**REQUIRED** when auth enabled and no existingSecret)   | `""`          |
