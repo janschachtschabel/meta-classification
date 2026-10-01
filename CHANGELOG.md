@@ -371,6 +371,12 @@ brackets are its finding numbers.
   exactly the weights the repair removed — and a model trained or imported under such a name
   was invisible and live at once. Such names are now no model anywhere (404), and `/train`
   and the import refuse them (400). (R15)
+- **A bundle rewritten on disk is served as rewritten.** The label repairs
+  (`scripts/patch_bundle_labels.py`, `prune_bundle_labels.py`) rewrite bundles beside a running
+  server, which kept serving the model it had cached until a restart or an eviction — and a
+  bundle removed by hand kept answering the same way. A cached model is now checked against
+  its `config.json` (modification time and size) on every request and reloaded when it
+  changed; a removed one answers 404. (R15)
 
 ## [4.0.1] — 2026-09-27
 

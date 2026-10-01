@@ -189,3 +189,30 @@ def test_a_bundle_keeps_its_newest_evaluations_not_every_one_ever(tmp_path):
     stored = json.loads((registry.dir / "m" / "metrics.json").read_text(encoding="utf-8"))
     kept = [entry["dataset"] for entry in stored["evaluations"]]
     assert kept == [f"run-{run}.csv" for run in range(10, MAX_EVALUATIONS + 10)]
+
+
+
+def test_a_bundle_rewritten_on_disk_is_served_as_rewritten(tmp_path):
+    """R15 (audit 2026-09-30): the label repairs (scripts/patch_bundle_labels.py,
+    prune_bundle_labels.py) rewrite a bundle while the server runs, and the server kept
+    serving the model it had cached -- until a restart or an eviction. A bundle removed by
+    hand kept answering the same way."""
+    import json
+
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+    registry.save("m", model, metadata)
+    cached = registry.get("m")
+    config_path = registry.dir / "m" / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["uri_to_label"] = {uri: f"Umbenannt {uri}" for uri in config["classes"]}
+    config_path.write_text(json.dumps(config), encoding="utf-8")  # as patch_bundle_labels does
+
+    reloaded = registry.get("m")
+
+    assert reloaded is not cached
+    assert reloaded.uri_to_label[config["classes"][0]].startswith("Umbenannt")
+    assert registry.get("m") is reloaded, "and cached again until the next change"
+    shutil.rmtree(registry.dir / "m")
+    with pytest.raises(FileNotFoundError):
+        registry.get("m")

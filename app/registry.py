@@ -87,6 +87,8 @@ class Registry:
         self._staged = StagedArchives(self.dir)
         # Names an import holds from before its upload until it is installed (`importing`).
         self._importing: set[str] = set()
+        # What each cached model was loaded from (`_stamp`), checked on every get().
+        self._stamps: dict[str, tuple[int, int] | None] = {}
 
     def _path(self, name: str) -> Path:
         return self.dir / name
@@ -146,7 +148,19 @@ class Registry:
 
     def _evict(self) -> None:
         while len(self._cache) > self.max:
-            self._cache.popitem(last=False)
+            evicted, _ = self._cache.popitem(last=False)
+            self._stamps.pop(evicted, None)
+
+    def _stamp(self, name: str) -> tuple[int, int] | None:
+        """What says a bundle on disk changed: its config.json's mtime and size, or None when
+        it is gone. Every rewrite of a bundle rewrites config.json -- a publish, the label
+        repairs -- and the repairs run beside the server, which kept serving the model it had
+        cached until a restart (audit 2026-09-30, R15). One stat per get()."""
+        try:
+            stat = (self._path(name) / "config.json").stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
 
     def in_memory_count(self) -> int:
         """Number of models currently resident in the LRU cache (RAM signal)."""
@@ -255,8 +269,10 @@ class Registry:
             # between the rename and the cache insert and leave the model cached
             # but absent on disk. (Nesting is one-directional — no path takes
             # _disk_lock while holding _lock — so there is no ordering cycle.)
+            stamp = self._stamp(name)
             with self._lock:
                 self._cache[name] = model
+                self._stamps[name] = stamp
                 self._cache.move_to_end(name)
                 self._evict()
 
@@ -295,9 +311,11 @@ class Registry:
             return _read_bundle(self._path(name))
 
     def get(self, name: str) -> ClassifierModel:
-        """Return a cached model (LRU), loading from disk on miss."""
+        """Return a cached model (LRU), loading from disk on a miss -- or when the bundle on
+        disk changed since it was cached (``_stamp``)."""
+        stamp = self._stamp(name)
         with self._lock:
-            if name in self._cache:
+            if name in self._cache and stamp is not None and self._stamps.get(name) == stamp:
                 self._cache.move_to_end(name)
                 return self._cache[name]
         # Miss path: read AND publish to the cache while holding _disk_lock, so a
@@ -311,15 +329,20 @@ class Registry:
             # that waited behind the one loading this model finds it here instead of reading
             # it once more -- eight waiting requests loaded one model eight times (audit
             # 2026-09-30, R04).
+            stamp = self._stamp(name)  # under the lock: what is loaded is what is stamped
             with self._lock:
-                if name in self._cache:
+                if name in self._cache and stamp is not None and self._stamps.get(name) == stamp:
                     self._cache.move_to_end(name)
                     return self._cache[name]
             if not self.exists(name):
+                with self._lock:  # removed by hand: it must not keep answering from memory
+                    self._cache.pop(name, None)
+                    self._stamps.pop(name, None)
                 raise FileNotFoundError(name)
             model, _ = _read_bundle(self._path(name))
             with self._lock:
                 self._cache[name] = model
+                self._stamps[name] = stamp
                 self._cache.move_to_end(name)
                 self._evict()
         return model
@@ -430,6 +453,7 @@ class Registry:
                 key = name.casefold()
                 for cached in [k for k in self._cache if k.casefold() == key]:
                     del self._cache[cached]
+                    self._stamps.pop(cached, None)
 
     def stage_export(self, name: str) -> tuple[Path, Callable[[], None]]:
         """The bundle's archive in a staging file beside the bundles, and its release.
