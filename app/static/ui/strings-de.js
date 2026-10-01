@@ -109,7 +109,7 @@ const STRINGS_DE = {
   "query.mode.legend": "Was möchten Sie klassifizieren?",
   "query.mode.many": "Viele Texte <span class=\"muted\">(einer pro Zeile)</span>",
   "query.mode.one": "Einen Text",
-  "query.models.label": "Modelle (Strg-Klick für mehrere)",
+  "query.models.label": "Modelle",
   "query.noLabelAboveThreshold": "Kein Label über dem Schwellenwert des Modells.",
   "query.nearestBelow": "Am nächsten dran, aber unter dem Schwellenwert:",
   "query.noModels": "Noch keine Modelle — bitte zuerst im Reiter „Training“ eines trainieren.",

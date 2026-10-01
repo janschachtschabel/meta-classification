@@ -104,7 +104,7 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**. Für die beschreibenden Me
   Sicherheit aus **deinem Text** kommt — und nicht daher, dass das Label einfach
   häufig ist. Ein hoher Konfidenz-Wert mit *diff nahe 0* heißt: das Modell rät
   auf das übliche Label, dein Text hat es nicht überzeugt.
-- Mehrere Modelle gleichzeitig anhaken (Strg-Klick) → eine Antwort pro Modell,
+- Mehrere Modelle gleichzeitig anhaken → eine Antwort pro Modell,
   z. B. Fach **und** Materialart in einem Rutsch.
 - Die **allererste** Abfrage nach einem Server-Neustart kann ~30 Sekunden
   dauern (das Modell wird von der Festplatte geladen) — danach kommen Antworten

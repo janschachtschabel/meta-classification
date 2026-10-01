@@ -108,7 +108,7 @@ const STRINGS_EN = {
   "query.mode.legend": "What do you want to classify?",
   "query.mode.many": "Many texts <span class=\"muted\">(one per line)</span>",
   "query.mode.one": "One text",
-  "query.models.label": "Models (Ctrl-click for several)",
+  "query.models.label": "Models",
   "query.noLabelAboveThreshold": "No label above the model's threshold.",
   "query.nearestBelow": "Closest, but below the threshold:",
   "query.noModels": "No models yet — train one on the Training tab first.",

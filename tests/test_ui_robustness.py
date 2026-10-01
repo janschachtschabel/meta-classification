@@ -285,6 +285,11 @@ def test_the_model_picker_is_not_a_multi_select():
     assert 'id="query-models"' in INDEX, (
         "the picker's container id is gone: loadQueryTab needs it"
     )
+    # The label outlived the control: it went on asking for a Ctrl-click a checkbox does
+    # not need (found while verifying U08 in the browser, 2026-10-01).
+    for language in ("de", "en"):
+        label = re.search(r'"query\.models\.label": "([^"]*)"', _js(f"strings-{language}.js"))
+        assert label and not re.search(r"strg|ctrl", label.group(1), re.IGNORECASE), label
 
 
 # --- U07: an option submits exactly the name it shows -------------------------------------

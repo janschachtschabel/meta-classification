@@ -459,6 +459,9 @@ brackets are its finding numbers.
   rebuilt from scratch every 2.5 s while a run was going, so the focus fell off "Stop" between
   Tab and Enter and a phase or model name being selected lost its selection; it is now updated
   in place, and only the rows whose text changed are written. (U10)
+- **The model checkboxes no longer ask for a Ctrl-click.** Their label, and the UI guide,
+  still said "Ctrl-click for several" from the multi-select they replaced; a checkbox needs
+  no modifier. Found while checking U08 in the browser.
 
 ## [4.0.1] — 2026-09-27
 
