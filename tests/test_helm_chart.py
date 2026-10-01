@@ -188,6 +188,16 @@ def test_a_named_proxy_no_limiter_or_no_ingress_renders(values):
     _render(*KEYS, INSECURE, *values)
 
 
+@pytest.mark.parametrize("grace, wait", [("60", "50"), ("5", "0")])
+def test_the_shutdown_wait_stays_inside_the_pods_grace_period(grace, wait):
+    """R03 (audit 2026-09-30): the app waits that long for a running training before recording
+    it as interrupted -- longer than the grace, and the kubelet's kill comes first."""
+    [configmap] = _of_kind(_render(*KEYS, INSECURE, PROXIED, f"terminationGracePeriod={grace}"),
+                           "ConfigMap")
+
+    assert configmap["data"]["APIV3_SHUTDOWN_WAIT_SECONDS"] == wait
+
+
 def test_the_trusted_proxy_reaches_uvicorn():
     [configmap] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "ConfigMap")
 

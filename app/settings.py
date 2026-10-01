@@ -209,6 +209,11 @@ class Settings(BaseSettings):
         BeforeValidator(lambda value: value.upper() if isinstance(value, str) else value),
     ] = "INFO"
 
+    # How long a shutdown waits for a running training to stop at its next checkpoint before
+    # recording it as interrupted (audit 2026-09-30, R03). Keep it inside the platform's grace
+    # period: the chart sets it to terminationGracePeriod - 10, compose stops with 60 s.
+    shutdown_wait_seconds: float = Field(50, ge=0)
+
     # --- Rate limiting ---
     # How many /predict/csv streams may run at once. Each holds one anyio threadpool
     # worker for the whole classification (a sync generator inside a StreamingResponse), and

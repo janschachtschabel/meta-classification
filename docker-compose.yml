@@ -28,6 +28,9 @@ services:
     # available memory is worse than none, because the head-fit threads are then sized
     # for memory that is not there.
     mem_limit: ${APIV3_MEM_LIMIT:-4g}
+    # A shutdown waits up to APIV3_SHUTDOWN_WAIT_SECONDS (50) for a running training to stop
+    # at a checkpoint; Docker's own default of 10 s would kill it first.
+    stop_grace_period: 60s
     logging:
       # An INFO-level service with `restart: unless-stopped` writes for as long as it
       # runs. The data volume is bounded on purpose; the logs beside it were not.

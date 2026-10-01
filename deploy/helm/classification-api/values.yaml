@@ -270,7 +270,8 @@ securityContext:
 
 ## @param terminationGracePeriod Grace period for termination in seconds. Shutdown asks a running
 ## training to stop, which takes effect at the next checkpoint (between the C fits, before the deploy
-## fit); a run already inside a long fit is killed with the process and has to be restarted.
+## fit), and waits for it up to this minus 10 s; a run still inside a long fit then is killed with the
+## process. Either way the job history records it, and every queued run, as interrupted.
 terminationGracePeriod: 60
 
 startupProbe:

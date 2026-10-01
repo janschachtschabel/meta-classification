@@ -349,6 +349,13 @@ brackets are its finding numbers.
   a crash are the startup sweep's. An import also holds its model's name from before its
   upload until it is installed: a training — or a second import — of that name is refused
   with 409 at once, not after minutes of work. (R01)
+- **A shutdown waits for the running training and records what it ends.** It asked the run
+  to stop and returned at once: uvicorn was gone in 0.16 s, and neither the run nor anything
+  queued behind it left a trace in the history — on every rollout, node drain and key
+  rotation. Queued runs are now recorded as `interrupted` at once, the running run is given
+  `APIV3_SHUTDOWN_WAIT_SECONDS` (50; chart: `terminationGracePeriod` − 10) to stop at its
+  next checkpoint, and is recorded as `interrupted` if it is still running then. Compose
+  stops with a 60 s grace instead of Docker's 10 s. (R03)
 
 ## [4.0.1] — 2026-09-27
 

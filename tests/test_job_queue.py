@@ -234,3 +234,59 @@ def test_a_stop_landing_while_the_next_run_leaves_the_queue_still_stops_it():
 
     assert done.wait(5)
     assert seen == {"stop": True}, "the run taken off the queue never heard the stop"
+
+
+
+# --- R03: a shutdown says which runs it ended -----------------------------------------------------
+
+
+def _outcomes(*names: str) -> dict[str, str]:
+    from app import job_history
+
+    return {entry["model_name"]: entry["status"] for entry in reversed(job_history.recent(200))
+            if entry["model_name"] in names}
+
+
+def test_a_shutdown_records_every_run_it_ends():
+    """R03 (audit 2026-09-30): SIGTERM during a training with a run queued behind it -- uvicorn
+    was gone in 0.16 s, and neither run left a trace in the history. Every rollout, node
+    drain and key rotation did that to whatever was running or waiting."""
+    job = JobRunner()
+    started, release = threading.Event(), threading.Event()
+
+    def inside_a_long_fit(*, on_progress, should_stop):
+        started.set()
+        release.wait(5)  # no stop checkpoint in reach
+        return {"model_name": "r03_running", "metrics": {}}
+
+    job.submit(inside_a_long_fit, model_name="r03_running", request={"dataset_name": "a.csv"})
+    assert started.wait(2)
+    job.submit(lambda **_: {}, model_name="r03_queued", request={"dataset_name": "b.csv"})
+    thread = job._thread
+
+    job.shutdown(timeout=0.2)
+    release.set()
+    thread.join(5)
+
+    assert _outcomes("r03_running", "r03_queued") == {
+        "r03_running": "interrupted", "r03_queued": "interrupted"}, "one record each, no more"
+
+
+def test_a_run_that_stops_in_time_keeps_its_own_record():
+    job = JobRunner()
+    started = threading.Event()
+
+    def cooperative(*, on_progress, should_stop):
+        started.set()
+        for _ in range(500):
+            if should_stop():
+                return {}
+            threading.Event().wait(0.01)
+        return {"model_name": "r03_cooperative", "metrics": {}}
+
+    job.submit(cooperative, model_name="r03_cooperative")
+    assert started.wait(2)
+
+    job.shutdown(timeout=5)
+
+    assert _outcomes("r03_cooperative") == {"r03_cooperative": "stopped"}

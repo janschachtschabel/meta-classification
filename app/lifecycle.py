@@ -197,11 +197,12 @@ async def lifespan(app: FastAPI):
         "api_v3 ready (models_dir=%s, auth=%s)", settings.models_dir, settings.auth_enabled
     )
     yield
-    # Ask a running training to stop at its next checkpoint (between the C fits,
-    # before the deploy fit). The thread is a daemon and dies with the process
-    # anyway; this gives it the chance to end cleanly inside the termination grace
-    # period instead, which is what the Helm chart's 60 s already assumed.
-    job_runner.stop()
+    # Ask a running training to stop at its next checkpoint (between the C fits, before the
+    # deploy fit) and wait for it, inside the termination grace period -- and record what
+    # the shutdown ends: the queue, and a run still inside a long fit. Asked and left at
+    # once, a run and its queue vanished without a trace (audit 2026-09-30, R03). Off the
+    # loop: the wait is a thread join.
+    await asyncio.to_thread(job_runner.shutdown, settings.shutdown_wait_seconds)
     logger.info("api_v3 shutting down")
 
 

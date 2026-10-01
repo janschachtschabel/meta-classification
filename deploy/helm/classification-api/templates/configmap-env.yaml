@@ -8,6 +8,11 @@ data:
   APIV3_AUTH_ENABLED: {{ .Values.config.auth.enabled | quote }}
   APIV3_CORS_ALLOW_ORIGINS: {{ .Values.config.app.corsOrigins | quote }}
   APIV3_LOG_LEVEL: {{ .Values.config.app.logLevel | quote }}
+  {{- with .Values.terminationGracePeriod }}
+  # How long a shutdown waits for a running training to stop before recording it as
+  # interrupted: the pod's grace period, minus 10 s for the rest of the shutdown.
+  APIV3_SHUTDOWN_WAIT_SECONDS: {{ max 0 (sub (int .) 10) | quote }}
+  {{- end }}
 
   # ---- Persistent state (datasets, model bundles, share links, corrections, history) ----
   # Every path the app writes to points into the PVC — which is what makes

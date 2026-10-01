@@ -42,6 +42,7 @@ limits see real client IPs · storage paths on a persistent volume.
 | `APIV3_MODELS_DIR` | `./models` | Trained model bundles. |
 | `APIV3_SHARE_LINKS_FILE` | `./share_links.json` | Persisted expiring share links. |
 | `APIV3_FEEDBACK_FILE` | `./feedback.jsonl` | Corrections recorded via `POST /feedback` — not a log but the data a later run learns from, and never pruned. |
+| `APIV3_SHUTDOWN_WAIT_SECONDS` | `50` | How long a shutdown waits for a running training to stop at its next checkpoint. A run still running then, and every queued run, is recorded in the job history as `interrupted`. Keep it inside the platform's grace period: the chart sets it to `terminationGracePeriod` − 10, compose stops with 60 s. |
 | `APIV3_MAX_FEEDBACK_MB` | `1024` | Size at which that file stops growing: further corrections answer 503 (nothing is dropped), so a readonly key cannot fill the volume the models live on. Export, then raise it or move the file aside and restart. |
 | `APIV3_JOB_HISTORY_FILE` | `./job_history.jsonl` | How finished runs ended (`GET /train/history`), newest 200. |
 | `APIV3_CONFIG_FILE` | `./config.yaml` | Training profiles file (layer 2 above). |

@@ -418,6 +418,37 @@ class JobRunner:
 
         return thread
 
+    def shutdown(self, timeout: float) -> None:
+        """Wind down for the process exiting, and record every run that ends with it.
+
+        A rollout, a node drain or a key rotation ended the running run and dropped the queue
+        without a trace in the history (audit 2026-09-30, R03). The queued runs are recorded
+        as interrupted at once -- before the wait, which the platform may cut short -- the
+        running one is asked to stop and given ``timeout`` seconds, in which a run stopping
+        at a checkpoint records itself as ever, and one still running then is recorded as
+        interrupted, its late finish dropped as a hard-stopped run's is.
+        """
+        with self._lock:
+            dropped = list(self._queue)
+            self._queue.clear()
+            self._stop.set()
+            thread = self._thread
+        for _target, _args, name, request, kind in dropped:
+            _record_interrupted({"model_name": name, "kind": kind}, request, None,
+                                "The server shut down before the run started; submit it again.")
+        if thread is not None:
+            thread.join(timeout)
+        with self._lock:
+            if self._state["status"] != "running":
+                return
+            self._generation += 1
+            state = dict(self._state)
+            request = self._last_request
+            elapsed = round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
+            self._apply({"status": "interrupted", "message": "The server shut down during the run."})
+        _record_interrupted(state, request, elapsed,
+                            "The server shut down during the run; start it again.")
+
     def stop(self, *, hard: bool = False) -> None:
         """Cancel the running run and everything waiting behind it.
 
@@ -449,6 +480,16 @@ class JobRunner:
                 self._apply(dict(status="idle", phase="", message="Hard stopped.",
                                  progress=0, results=None, peak_rss_mb=None,
                                  head_fit_threads=None, threads_requested=None))
+
+
+def _record_interrupted(state: dict, request: dict | None, duration: float | None, why: str) -> None:
+    """Write the history record of a run the shutdown ended (``JobRunner.shutdown``)."""
+    try:
+        job_history.append(job_history.record_for(
+            {**state, "status": "interrupted", "error": why}, request, duration))
+    except OSError:
+        logger.warning("Could not record the interrupted run %r in the job history.",
+                       state.get("model_name"))
 
 
 # Module-level singleton used by the API routes.

@@ -366,6 +366,32 @@ def test_a_start_asked_for_several_workers_says_this_app_runs_one(monkeypatch, t
     assert any("WEB_CONCURRENCY" in record.getMessage() for record in caplog.records)
 
 
+def test_the_server_waits_for_a_run_and_records_it_when_it_shuts_down(monkeypatch, tmp_path):
+    """R03: the lifespan asked the run to stop and returned at once."""
+    import threading
+
+    from app import job_history
+    from app.jobs import job_runner
+
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_SHUTDOWN_WAIT_SECONDS="0.2")
+    started, release = threading.Event(), threading.Event()
+
+    def inside_a_long_fit(*, on_progress, should_stop):
+        started.set()
+        release.wait(5)
+        return {}
+
+    with client:
+        job_runner.submit(inside_a_long_fit, model_name="r03_lifespan")
+        assert started.wait(2)
+        thread = job_runner._thread
+    release.set()
+    thread.join(5)
+
+    assert [e["status"] for e in job_history.recent(200) if e["model_name"] == "r03_lifespan"] == [
+        "interrupted"]
+
+
 def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
     """Every other default path is anchored to the api_v3 folder so the app works
     from any working directory. The .env file was the exception — a relative name,
