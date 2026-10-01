@@ -591,3 +591,93 @@ def test_a_download_still_gets_the_answer_itself(tmp_path):
     """)
 
     assert result == {"text": "row,text\n0,a", "rows": "1"}
+
+
+# A <select> as the browser keeps one: assigning its options picks the `selected` one or the
+# first, and a value no option carries reads back as "" -- which is what a rebuild did to the
+# user's choice.
+_FAKE_SELECT = """
+    const fakeSelect = (sel) => {
+      const select = el(sel);
+      let html = "", value = "";
+      const options = () => [...html.matchAll(/<option value="([^"]*)"([^>]*)>/g)];
+      Object.defineProperty(select, "innerHTML", { get: () => html, set: (markup) => {
+        html = markup;
+        const picked = options().find((o) => /\\bselected\\b/.test(o[2])) || options()[0];
+        value = picked ? picked[1] : "";
+      } });
+      Object.defineProperty(select, "value", { get: () => value, set: (wanted) => {
+        value = options().some((o) => o[1] === wanted) ? wanted : "";
+      } });
+      return select;
+    };
+    let datasets = [{ name: "a.csv" }, { name: "b.csv" }];
+    Api.get = async (url) => (url === "/datasets" ? datasets : {
+      profiles: [{ name: "fast", description: "" }, { name: "auto", description: "" }],
+      default_profile: "auto", default_text_column_weights: {} });
+    fakeSelect("#train-dataset");
+    fakeSelect("#train-profile");
+"""
+
+
+@needs_node
+def test_coming_back_to_the_training_tab_keeps_the_choices(tmp_path):
+    """U08 (audit 2026-09-30): every visit to the tab rebuilt the dataset and profile lists,
+    so switching to Models and back reset both -- while the column pickers still offered the
+    columns of the dataset that was no longer shown as chosen."""
+    result = _run(tmp_path, modules=("training.js",), body=_FAKE_SELECT + """
+        await loadTrainingTab();
+        el("#train-dataset").value = "b.csv";
+        el("#train-profile").value = "fast";
+        await loadTrainingTab();
+        report({ dataset: el("#train-dataset").value, profile: el("#train-profile").value, errors });
+    """)
+
+    assert result == {"dataset": "b.csv", "profile": "fast", "errors": []}
+
+
+@needs_node
+def test_a_dataset_deleted_meanwhile_clears_its_columns(tmp_path):
+    """The case a kept choice cannot cover: the dataset is gone. The list falls back to "pick
+    one", and the pickers must not go on offering its columns."""
+    result = _run(tmp_path, modules=("training.js",), body=_FAKE_SELECT + """
+        await loadTrainingTab();
+        el("#train-dataset").value = "b.csv";
+        datasets = [{ name: "a.csv" }];
+        await loadTrainingTab();
+        await sleep(10);
+        report({ dataset: el("#train-dataset").value, columns: pickers.map((p) => p.options), errors });
+    """)
+
+    assert result == {"dataset": "", "columns": [[], []], "errors": []}
+
+
+@needs_node
+def test_coming_back_to_the_query_tab_keeps_the_models_picked(tmp_path):
+    """U08: the model list was rebuilt on every visit with the first model checked, so a user
+    who had picked another one classified with the first after looking at the Models tab. An
+    empty choice is a choice too -- metadata alone needs no model."""
+    result = _run(tmp_path, modules=("query.js",), body="""
+        Api.get = async () => ["m1", "m2", "m3"];
+        const box = el("#query-models");
+        let boxes = [];
+        const read = () => {
+          boxes = [...box.innerHTML.matchAll(/value="([^"]*)"( checked)?/g)]
+            .map(([, value, checked]) => ({ value, checked: Boolean(checked) }));
+        };
+        box.querySelector = () => boxes[0] || null;
+        document.querySelectorAll = (sel) =>
+          (sel === 'input[name="query-model"]:checked' ? boxes.filter((b) => b.checked) : []);
+        const picked = () => boxes.filter((b) => b.checked).map((b) => b.value);
+        await loadQueryTab(); read();
+        const first = picked();
+        boxes[0].checked = false;
+        boxes[2].checked = true;
+        await loadQueryTab(); read();
+        const kept = picked();
+        boxes[2].checked = false;
+        await loadQueryTab(); read();
+        report({ first, kept, none: picked(), errors });
+    """)
+
+    assert result == {"first": ["m1"], "kept": ["m3"], "none": [], "errors": []}

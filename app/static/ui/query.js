@@ -48,13 +48,18 @@ function onQueryModeChange() {
    checkbox group needs no instructions and is a native part of the form. */
 async function loadQueryTab() {
   const box = $("#query-models");
+  // Rebuilt on every visit to the tab, which put the check back on the first model whenever
+  // someone looked at another tab (audit 2026-09-30, U08). A choice made here survives it --
+  // an empty one too, since metadata alone needs no model.
+  const shownBefore = box.querySelector('input[name="query-model"]') !== null;
+  const picked = new Set(selectedModels());
   try {
     const names = await Api.get("/models");
-    // The first is pre-checked, as the <select>'s first option was: the common case is one
-    // model, and an empty picker would make the primary screen look broken.
+    // On the first visit the first is pre-checked, as the <select>'s first option was: the
+    // common case is one model, and an empty picker would make the primary screen look broken.
     box.innerHTML = names.map((n, at) => `
       <label class="check"><input type="checkbox" name="query-model" value="${esc(n)}"${
-        at === 0 ? " checked" : ""}> <span>${esc(n)}</span></label>`).join("");
+        (shownBefore ? picked.has(n) : at === 0) ? " checked" : ""}> <span>${esc(n)}</span></label>`).join("");
     if (!names.length) $("#query-results").innerHTML = `<p class="muted">${t("query.noModels")}</p>`;
   } catch (err) { $("#query-results").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
 }

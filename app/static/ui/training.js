@@ -4,15 +4,24 @@
 "use strict";
 
 async function loadTrainingTab() {
-  const dsSel = $("#train-dataset");
+  const dsSel = $("#train-dataset"), profileSel = $("#train-profile");
+  // Both lists are rebuilt on every visit to the tab, which reset the dataset and the profile
+  // whenever someone looked at another tab (audit 2026-09-30, U08). A choice stays while it
+  // still exists.
+  const dataset = dsSel.value, profile = profileSel.value;
   try {
     const [datasets, profiles] = await Promise.all([Api.get("/datasets"), Api.get("/train/profiles")]);
     dsSel.innerHTML = `<option value="">${esc(t("train.dataset.choose"))}</option>` +
       datasets.map((d) => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("");
     // The profile descriptions are server configuration (config.yaml), not UI text:
     // they are shown as the deployment wrote them rather than translated here.
-    $("#train-profile").innerHTML = profiles.profiles.map((p) =>
+    profileSel.innerHTML = profiles.profiles.map((p) =>
       `<option value="${esc(p.name)}" ${p.name === profiles.default_profile ? "selected" : ""}>${esc(p.name)} — ${esc(p.description)}</option>`).join("");
+    if (profiles.profiles.some((p) => p.name === profile)) profileSel.value = profile;
+    if (datasets.some((d) => d.name === dataset)) dsSel.value = dataset;
+    // Deleted meanwhile: the pickers must not go on offering the columns of a dataset the
+    // list no longer shows as chosen.
+    else if (dataset) loadDatasetColumns();
     // Pre-fill the field weights with the server's configured default instead of a
     // hard-coded guess, so the form shows what a request would actually do.
     defaultColWeights = profiles.default_text_column_weights || {};

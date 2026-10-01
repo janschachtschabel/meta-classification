@@ -432,6 +432,11 @@ brackets are its finding numbers.
   claimed JSON and was not surfaced the browser's own parser message. Both now fail with one
   translated sentence that names the likely cause. Downloads still get the answer itself.
   (U08)
+- **A look at another tab keeps the choices made.** The Query and Training tabs rebuild their
+  lists on every visit, which put the check back on the first model and reset the dataset and
+  the profile — while the column pickers still offered the old dataset's columns. A choice now
+  survives the rebuild while it still exists (an empty model choice too: metadata alone needs
+  no model), and a dataset deleted meanwhile clears its columns. (U08)
 
 ## [4.0.1] — 2026-09-27
 
