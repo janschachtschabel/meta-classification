@@ -85,6 +85,10 @@ brackets are its finding numbers.
   encode such a header differently. The `change-me-…` placeholders from `.env.example` were
   accepted as they are: keys anyone who has read the repository knows. Both now stop the
   start with a message naming the variable (never the value) and how to make a key. (S10)
+- **Invented HTTP methods no longer mint `/metrics` series.** The method was a label taken as
+  sent, and to uvicorn's h11 parser any token is a method: 200 invented ones made 600 series
+  in a process that never restarts. A method HTTP does not define now counts as `OTHER`, as
+  an unmatched path counts as `<unmatched>`. (S13)
 
 ### Fixed
 

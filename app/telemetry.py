@@ -12,7 +12,9 @@ service's.
 **Cardinality is the thing to get right.** Keying on the request PATH would let anyone mint
 unbounded series by scanning URLs, in a process that never restarts. So the key is the
 matched route TEMPLATE (``/models/{model_name}``), of which there are as many as the app has
-endpoints, and anything that matched no route is counted once under ``<unmatched>``.
+endpoints, and anything that matched no route is counted once under ``<unmatched>``. The
+method likewise: to uvicorn's h11 parser any token is a method, and 200 invented ones made 600
+series (audit 2026-09-30, S13), so a method HTTP does not define is counted as ``OTHER``.
 """
 
 from __future__ import annotations
@@ -20,6 +22,9 @@ from __future__ import annotations
 import threading
 
 UNMATCHED = "<unmatched>"
+OTHER_METHOD = "OTHER"
+# The methods RFC 9110 defines, plus PATCH (RFC 5789).
+_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"})
 
 # (method, template, status) -> how many. The status is an int, so a 500 shows up as a
 # series and not as a missing one.
@@ -36,6 +41,7 @@ _lock = threading.Lock()
 
 
 def record(method: str, template: str, status: int, seconds: float) -> None:
+    method = method if method in _METHODS else OTHER_METHOD
     with _lock:
         key = (method, template, status)
         _requests[key] = _requests.get(key, 0) + 1
