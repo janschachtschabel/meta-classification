@@ -42,6 +42,49 @@ brackets are its finding numbers.
   training's budget does not see. Such a 4,000-character fragment could also come back as a
   keyword. Past 64 characters a token now ends a phrase like a stopword and is stemmed
   without being remembered. (M04; the keyword half of M06)
+
+### Fixed
+
+- **The Training tab loads a dataset's columns again.** The debounce wrapper handed its
+  listener's `change` event to the handler as the `isCurrent` predicate; the first call threw,
+  and no training could be started from the admin UI in 4.0.1. The Evaluate form kept the
+  previous dataset's columns the same way. The UI handlers are now executed under node in the
+  suite, not pattern-matched. (U01)
+- **GitLab's test stage can pass.** `tests/test_helm_chart.py` refuses to skip under `CI`, and
+  GitLab's `pytest` job had no helm: eight render tests failed in every pipeline, so neither
+  image nor chart ever reached the company registry, not even for `v4.0.1`. The job installs
+  helm 3.16.4, verified against its published checksum. (B01)
+- **A label on every row no longer produces a model that cannot be loaded.** scikit-learn fits
+  such a label as a `_ConstantPredictor`, which the skops guard refuses: the run reported
+  `completed` and every `/predict` answered 422 — realistic for a parent subject in a
+  hierarchical vocabulary. A label now needs `min_samples_per_label` rows without it as well
+  as with it (in the train split, for a holdout run); the ones that fail are listed in the
+  bundle as `ubiquitous_labels` and on the model card, and a run with nothing else left stops
+  and says why. Every staged bundle is checked against the loader's type allowlist before it
+  is published. (T01)
+- **One broken byte no longer turns a UTF-8 dataset into cp1252 garbage.** Every reader tried
+  UTF-8 and, on the first undecodable byte anywhere, read the whole file as cp1252: one
+  truncated umlaut made every `ä` of every row `Ã¤`, invisibly to the metrics, and with a
+  curly quote in the file the run failed with "see server logs". The encoding is now decided
+  once per file from its bytes (`app/csv_encoding.py`) by training, the dataset views and
+  `/predict/csv` alike: up to 10 stray bytes in a UTF-8 file are read as `�`, a file with
+  more or with both encodings mixed is refused with the offset of the first bad byte, and
+  the bundle records the result as `csv_encoding`. (T02)
+- **`/predict/csv` no longer cuts its answer short on a broken row.** The input was parsed in
+  500-row chunks while the answer streamed, so a parser error past the first chunk ended the
+  stream after the 200: 500 of 700 rows, a clean end of transfer, `/metrics` counting a
+  success, the error only in the server log. The whole file is now parsed before the first
+  byte — a broken row is a 400 naming it — and the response carries `X-Input-Rows`, the
+  number of input rows the answer covers, exposed to cross-origin clients as well. (V06)
+- **The admin UI no longer reports a CSV answer cut short as done.** It compares the rows
+  the answer covers with `X-Input-Rows` and says "incomplete: N of M input rows" where it
+  used to say "Fertig … 500 Eingabezeilen" for a 700-row file. (U02)
+- **A text column the dataset lacks is refused, not skipped.** The loader dropped it without a
+  word and the bundle recorded it anyway: `/predict/csv` then refused CSVs in the training
+  data's own format, and a later export that has the column would feed the model a field it
+  never saw. `/train` now answers 400 naming the column before the run can queue, and the
+  loader refuses it for queued runs and evaluations too. (T03)
+
 - **The word-frequency table is loaded once, however many first requests arrive together.**
   wordfreq's cache is thread-safe but not single-flight: eight simultaneous first `/metadata`
   requests read the German table eight times — 3.3 s and a 554 MB peak instead of 0.3 s and
@@ -54,7 +97,8 @@ brackets are its finding numbers.
   a `\r\n` kept `###` in a heading. The metadata path now normalises line endings first,
   drops comments, drops non-prose bodies only with their closing tag, takes as a tag only `<`
   plus a letter, `/`, `!` or `?`, removes inline tags without a space, and decodes entities
-  last. The classification path's cleaning is untouched: it feeds fitted vectorizers. (M05)
+  last. The classification path changed only for new models, since its cleaning feeds
+  fitted vectorizers (T09). (M05)
 - **`/metadata` proposals keep closer to the text.** A keyword no longer runs across
   punctuation ("Mathematik, Physik, Chemie" gave the keyword "Mathematik Physik Chemie"); a
   PDF ligature is read as its letters ("FLüssige Phase" becomes "Flüssige Phase"); the title
@@ -122,48 +166,6 @@ brackets are its finding numbers.
   where a tag starts with `<` and a letter, `/`, `!` or `?`. A bundle records its version as
   `text_cleaning`, and serving and evaluation clean with the version the model was trained
   with: existing models (version 1) behave exactly as before. (T09)
-
-### Fixed
-
-- **The Training tab loads a dataset's columns again.** The debounce wrapper handed its
-  listener's `change` event to the handler as the `isCurrent` predicate; the first call threw,
-  and no training could be started from the admin UI in 4.0.1. The Evaluate form kept the
-  previous dataset's columns the same way. The UI handlers are now executed under node in the
-  suite, not pattern-matched. (U01)
-- **GitLab's test stage can pass.** `tests/test_helm_chart.py` refuses to skip under `CI`, and
-  GitLab's `pytest` job had no helm: eight render tests failed in every pipeline, so neither
-  image nor chart ever reached the company registry, not even for `v4.0.1`. The job installs
-  helm 3.16.4, verified against its published checksum. (B01)
-- **A label on every row no longer produces a model that cannot be loaded.** scikit-learn fits
-  such a label as a `_ConstantPredictor`, which the skops guard refuses: the run reported
-  `completed` and every `/predict` answered 422 — realistic for a parent subject in a
-  hierarchical vocabulary. A label now needs `min_samples_per_label` rows without it as well
-  as with it (in the train split, for a holdout run); the ones that fail are listed in the
-  bundle as `ubiquitous_labels` and on the model card, and a run with nothing else left stops
-  and says why. Every staged bundle is checked against the loader's type allowlist before it
-  is published. (T01)
-- **One broken byte no longer turns a UTF-8 dataset into cp1252 garbage.** Every reader tried
-  UTF-8 and, on the first undecodable byte anywhere, read the whole file as cp1252: one
-  truncated umlaut made every `ä` of every row `Ã¤`, invisibly to the metrics, and with a
-  curly quote in the file the run failed with "see server logs". The encoding is now decided
-  once per file from its bytes (`app/csv_encoding.py`) by training, the dataset views and
-  `/predict/csv` alike: up to 10 stray bytes in a UTF-8 file are read as `�`, a file with
-  more or with both encodings mixed is refused with the offset of the first bad byte, and
-  the bundle records the result as `csv_encoding`. (T02)
-- **`/predict/csv` no longer cuts its answer short on a broken row.** The input was parsed in
-  500-row chunks while the answer streamed, so a parser error past the first chunk ended the
-  stream after the 200: 500 of 700 rows, a clean end of transfer, `/metrics` counting a
-  success, the error only in the server log. The whole file is now parsed before the first
-  byte — a broken row is a 400 naming it — and the response carries `X-Input-Rows`, the
-  number of input rows the answer covers, exposed to cross-origin clients as well. (V06)
-- **The admin UI no longer reports a CSV answer cut short as done.** It compares the rows
-  the answer covers with `X-Input-Rows` and says "incomplete: N of M input rows" where it
-  used to say "Fertig … 500 Eingabezeilen" for a 700-row file. (U02)
-- **A text column the dataset lacks is refused, not skipped.** The loader dropped it without a
-  word and the bundle recorded it anyway: `/predict/csv` then refused CSVs in the training
-  data's own format, and a later export that has the column would feed the model a field it
-  never saw. `/train` now answers 400 naming the column before the run can queue, and the
-  loader refuses it for queued runs and evaluations too. (T03)
 
 ## [4.0.1] — 2026-09-27
 
