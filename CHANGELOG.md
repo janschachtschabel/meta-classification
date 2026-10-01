@@ -410,6 +410,11 @@ brackets are its finding numbers.
   message, and gives up after three waits — another client on the same address can keep the
   window full. The UI guide no longer claims both that the tab may close and that the queue
   lives in it. (U05, W08)
+- **A picked dataset or column is sent as it is named.** Four pickers built their options
+  without a `value`, so the browser submitted the option's text — stripped and with runs of
+  spaces collapsed: a column `"title "` or a file `two  spaces.csv` came back as `title` and
+  `two spaces.csv`, and the server answered 400 or 404 for a name it had listed itself. Every
+  option now carries its name as its value. (U07)
 
 ## [4.0.1] — 2026-09-27
 

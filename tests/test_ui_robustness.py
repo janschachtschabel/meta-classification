@@ -285,3 +285,17 @@ def test_the_model_picker_is_not_a_multi_select():
     assert 'id="query-models"' in INDEX, (
         "the picker's container id is gone: loadQueryTab needs it"
     )
+
+
+# --- U07: an option submits exactly the name it shows -------------------------------------
+
+
+def test_every_option_carries_its_value():
+    """U07 (audit 2026-09-30): an <option> without `value` submits its TEXT, which the browser
+    strips and collapses on the way -- a column "title " or a file "two  spaces.csv" came
+    back as "title" and "two spaces.csv", and the server answered 400 or 404 for a name it
+    had listed itself. With `value`, what is sent is the name, byte for byte."""
+    bare = [f"{name}: {tag}" for name, source in MODULES.items()
+            for tag in re.findall(r"<option\b[^>]*>", source) if "value=" not in tag]
+
+    assert not bare, bare

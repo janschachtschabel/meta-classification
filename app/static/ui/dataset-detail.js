@@ -13,7 +13,7 @@ const analyzeState = { columns: [], name: "" };
 
 function columnPickers(columns) {
   const options = (selected) => columns.map((c) =>
-    `<option${selected === c ? " selected" : ""}>${esc(c)}</option>`).join("");
+    `<option value="${esc(c)}"${selected === c ? " selected" : ""}>${esc(c)}</option>`).join("");
   return `<div class="row">
     <div>
       <label for="ds-text-cols">${t("common.textColumnsMulti")}</label>

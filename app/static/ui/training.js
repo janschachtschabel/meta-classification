@@ -8,7 +8,7 @@ async function loadTrainingTab() {
   try {
     const [datasets, profiles] = await Promise.all([Api.get("/datasets"), Api.get("/train/profiles")]);
     dsSel.innerHTML = `<option value="">${esc(t("train.dataset.choose"))}</option>` +
-      datasets.map((d) => `<option>${esc(d.name)}</option>`).join("");
+      datasets.map((d) => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("");
     // The profile descriptions are server configuration (config.yaml), not UI text:
     // they are shown as the deployment wrote them rather than translated here.
     $("#train-profile").innerHTML = profiles.profiles.map((p) =>

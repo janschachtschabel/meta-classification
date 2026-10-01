@@ -58,7 +58,7 @@ async function openEvaluateForm(name, frame) {
   frame.insertAdjacentHTML("beforeend", `<div class="evaluate-form">
     <label for="ev-dataset">${t("evaluate.scoreAgainst")}</label>
     <select id="ev-dataset">${datasets.map((d) =>
-      `<option>${esc(d.name)}</option>`).join("")}</select>
+      `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("")}</select>
     <div class="row">
       <div><label for="ev-text-cols">${t("common.textColumnsMulti")}</label>
         <select id="ev-text-cols" multiple size="5"></select></div>
@@ -76,7 +76,7 @@ async function openEvaluateForm(name, frame) {
     try {
       const info = await Api.get(`/datasets/${encodeURIComponent(chosen)}`);
       if (!isCurrent()) return;   // a newer dataset was picked while this read was running
-      const options = (info.columns || []).map((c) => `<option>${esc(c)}</option>`).join("");
+      const options = (info.columns || []).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
       box.querySelector("#ev-text-cols").innerHTML = options;
       box.querySelector("#ev-label-col").innerHTML = options;
     } catch (err) {
