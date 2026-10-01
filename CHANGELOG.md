@@ -588,6 +588,11 @@ it found.
   does, per model for `/predict/multi`. A record with none of the model's fields is refused
   (400): an empty text gets the base-rate answer, which reads like a classification.
   `texts` works as before; a request sends exactly one of the two. (Improvement 1)
+- **`PUT /label-names`: the label file as an upload.** In a container `label_names.json`
+  had to be copied into the volume with `docker cp` or `kubectl cp`, which not every
+  cluster allows. An admin uploads the mapping as JSON; it replaces the file whole or not
+  at all, an empty mapping is refused, and `GET /label-names` shows what training will use.
+  An upload only — the app fetches no URL. (Improvement 9)
 
 ## [4.0.1] — 2026-09-27
 

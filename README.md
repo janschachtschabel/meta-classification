@@ -360,6 +360,10 @@ docker exec metaclassify python scripts/patch_bundle_labels.py --apply
 
 (`kubectl cp` / `kubectl exec` likewise.)
 
+Or upload it, where copying into the volume is not an option: `PUT /label-names` (admin) takes
+the mapping as JSON and replaces the file whole; `GET /label-names` shows what training will
+use. It applies to trainings from then on — existing bundles still need the repair above.
+
 Both repairs may run beside the server. They touch models only — never a staging directory,
 a backup or a deleted bundle — and replace a bundle whole or not at all: the old one is
 renamed aside first, and a replace cut short is undone at the next start. A request that

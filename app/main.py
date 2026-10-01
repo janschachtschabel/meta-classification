@@ -20,7 +20,18 @@ from .errors import ShareStoreWriteError
 from .lifecycle import lifespan
 from .limiter import limiter
 from .log_filters import RedactShareTokens
-from .routes import datasets, feedback, metadata, models, predict, predict_bulk, share, system, training
+from .routes import (
+    datasets,
+    feedback,
+    label_names,
+    metadata,
+    models,
+    predict,
+    predict_bulk,
+    share,
+    system,
+    training,
+)
 from .settings import get_settings
 
 # Boot-time, but deliberately NOT in `lifecycle`: this has to run at import, before anything
@@ -188,6 +199,7 @@ def create_app() -> FastAPI:
     app.include_router(models.router)
     app.include_router(share.router)
     app.include_router(datasets.router)
+    app.include_router(label_names.router)
     app.include_router(feedback.router)
 
     if settings.ui_enabled:

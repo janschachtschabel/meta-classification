@@ -246,6 +246,9 @@ python scripts/fetch_vocab_labels.py                        # -> data/label_name
 python scripts/patch_bundle_labels.py --apply               # repair EXISTING bundles
 ```
 
+Over the API: `PUT /label-names` (admin) takes the mapping as JSON and replaces the file whole
+(at least one entry; an empty mapping is refused); `GET /label-names` (readonly) returns it.
+
 In a container the data directory is the volume (`/data/datasets`): copy the file there
 (`docker cp`, `kubectl cp`) and run the repair inside the container (`docker exec … python
 scripts/patch_bundle_labels.py --apply`). The image carries both bundle repairs; they take
