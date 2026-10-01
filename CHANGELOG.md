@@ -73,6 +73,12 @@ brackets are its finding numbers.
   store holds it; otherwise the answer is 503 naming `APIV3_SHARE_LINKS_FILE`, and nothing
   changed. A delete revokes the links first, so a revocation that cannot be written leaves
   the resource in place rather than its links. (S05)
+- **The corrections export hands a spreadsheet no formula.** `GET /feedback/export` wrote a
+  correction's text and labels as they came, and any readonly key can send one: a text like
+  `=HYPERLINK(…)` stayed a live formula for whoever opened the file in Excel. A cell that
+  would start one (`= + - @`, tab, CR) now gets a leading tab, as the admin UI's own download
+  does; training cleans and trims it away, so a run reads exactly the rows it read before.
+  (S08)
 
 ### Fixed
 

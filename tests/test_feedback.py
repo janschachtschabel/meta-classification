@@ -152,6 +152,34 @@ def test_the_export_actually_loads_as_a_dataset(store, tmp_path):
     assert data.label_lists == [["uri:hist"], ["uri:math", "uri:stats"]]
 
 
+def test_the_export_hands_a_spreadsheet_no_formula_and_training_the_same_rows(store, tmp_path):
+    """S08 (audit 2026-09-30): any readonly key can send a correction, and the export wrote
+    its text and labels as they came -- `=HYPERLINK(...)` stayed a live formula for whoever
+    opened the file in a spreadsheet. A cell that would start one gets a leading tab, as the
+    UI's own download does (`query.js`, FORMULA_LEAD). Training cleans and trims it away
+    again, so the run reads exactly the rows it read before."""
+    from app.data import clean_text
+    from app.dataset_load import load_dataset
+
+    formula = '=HYPERLINK("https://example.org/x";"Lösung ansehen")'
+    feedback.append(_correction(formula, ["@uri:math", "uri:hist"]))
+    feedback.append(_correction("-5 Grad am Morgen, +3 Grad am Mittag", ["uri:geo"]))
+    feedback.append(_correction("Der Wiener Kongress von 1815", ["uri:hist"]))
+
+    exported = "".join(feedback.iter_csv())
+    rows = list(csv.reader(io.StringIO(exported), delimiter=feedback.CSV_SEPARATOR))[1:]
+    for cell in (cell for row in rows for cell in row):
+        assert cell[0] not in "=+-@", f"starts a formula: {cell!r}"
+
+    path = tmp_path / "feedback.csv"
+    path.write_text(exported, encoding="utf-8")
+    data = load_dataset(path, ["text"], "labels", separator=feedback.CSV_SEPARATOR,
+                        label_separator=feedback.LABEL_SEPARATOR)
+    assert data.texts == [clean_text(formula), "-5 Grad am Morgen, +3 Grad am Mittag",
+                          "Der Wiener Kongress von 1815"]
+    assert data.label_lists == [["@uri:math", "uri:hist"], ["uri:geo"], ["uri:hist"]]
+
+
 def test_the_export_streams_without_holding_the_file(store):
     """Row by row, not file-then-list-then-string.
 

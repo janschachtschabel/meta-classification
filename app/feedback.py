@@ -30,6 +30,20 @@ logger = logging.getLogger("api_v3.feedback")
 EXPORT_COLUMNS = ("text", "labels")
 CSV_SEPARATOR = ";"
 LABEL_SEPARATOR = ","
+# What makes a spreadsheet read a cell as a formula: OWASP's list, and the one the admin UI's
+# own download guards with (`query.js`, FORMULA_LEAD).
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _spreadsheet_safe(cell: str) -> str:
+    """``cell`` with a leading tab where a spreadsheet would read it as a formula.
+
+    The export is opened in a spreadsheet as often as it is trained on, and any readonly key
+    can write a correction: `=HYPERLINK(...)` was exported as a live formula (audit
+    2026-09-30, S08). A tab, not the usual apostrophe: the loader cleans the text and trims
+    the labels, so a training run reads exactly the rows it read before.
+    """
+    return f"\t{cell}" if cell.startswith(_FORMULA_LEAD) else cell
 
 _lock = threading.Lock()
 # How many corrections are on disk. Counted once from the file and then kept, because
@@ -184,6 +198,6 @@ def iter_csv(limit: int | None = None, offset: int = 0):
         seen += 1
         if seen <= offset:
             continue
-        writer.writerow([text, LABEL_SEPARATOR.join(labels)])
+        writer.writerow([_spreadsheet_safe(text), _spreadsheet_safe(LABEL_SEPARATOR.join(labels))])
         written += 1
         yield drain()
