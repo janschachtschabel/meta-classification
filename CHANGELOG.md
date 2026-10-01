@@ -320,6 +320,12 @@ brackets are its finding numbers.
   limits and share links live in one process: with several workers, share links made in one
   were unknown to the next. The image's command now pins one worker, and a start with
   `WEB_CONCURRENCY` above 1 logs that the app runs as one process. (R07)
+- **A stop pressed as one queued run hands over to the next is kept.** The next run was
+  taken off the queue in one locked step and launched in another, and the launch cleared the
+  stop flag — which `stop` set before taking the lock. A stop arriving in between was erased
+  and the run it was meant to prevent started anyway. Taking a run off the queue and
+  launching it is now one step, and `stop` sets its flag under the same lock; the same
+  closes a gap in which two starts could both pass the busy check. (R10)
 
 ## [4.0.1] — 2026-09-27
 

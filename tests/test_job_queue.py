@@ -191,3 +191,46 @@ def test_a_run_accepted_while_the_last_thread_winds_down_still_runs():
         f"a run accepted at position {position} must still run, not strand in the queue"
     )
     assert job.snapshot()["queued"] == []
+
+
+
+def test_a_stop_landing_while_the_next_run_leaves_the_queue_still_stops_it():
+    """R10 (audit 2026-09-30): the dispatcher took the next run off the queue, let go of the
+    lock, and cleared the stop flag as it launched the run -- while `stop` set that flag
+    before taking the lock. A stop arriving in between was erased, and the run it was meant
+    to prevent started anyway. Forced here: the stop is issued from inside the queue's own
+    pop, and given half a second to land (a stop that waits for the lock gets it later)."""
+    import collections
+
+    job = JobRunner()
+    started, release = threading.Event(), threading.Event()
+    job.submit(_blocking_target(started, release), model_name="first")
+    assert started.wait(2)
+    stop_returned, done = threading.Event(), threading.Event()
+    seen = {}
+
+    def second(*, on_progress, should_stop):
+        stop_returned.wait(5)
+        seen["stop"] = should_stop()
+        done.set()
+        return {} if should_stop() else {"model_name": "second", "metrics": {}}
+
+    job.submit(second, model_name="second")
+
+    class StopDuringPop(collections.deque):
+        def popleft(self):
+            entry = super().popleft()
+
+            def stopper():
+                job.stop()
+                stop_returned.set()
+
+            threading.Thread(target=stopper, daemon=True).start()
+            job._stop.wait(0.5)
+            return entry
+
+    job._queue = StopDuringPop(job._queue)
+    release.set()
+
+    assert done.wait(5)
+    assert seen == {"stop": True}, "the run taken off the queue never heard the stop"

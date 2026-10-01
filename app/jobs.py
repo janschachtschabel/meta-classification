@@ -279,8 +279,10 @@ class JobRunner:
                         self._thread = None
                     return
                 target, args, model_name, request, kind = self._queue.popleft()
+                # In the same section as the pop: see _begin_locked.
+                thread = self._begin_locked(target, args, model_name, request, kind)
             try:
-                self._launch(target, args, model_name, request, kind)
+                thread.start()
                 return
             except Exception:  # noqa: BLE001 - one bad entry must not strand the queue
                 logger.exception("Queued run %r could not be started; skipping it.", model_name)
@@ -318,15 +320,22 @@ class JobRunner:
                     "A training job is already running (or a hard-stopped one is "
                     "still finishing in the background); retry once it completes."
                 )
-        self._launch(target, args, model_name, request, kind)
+            thread = self._begin_locked(target, args, model_name, request, kind)
+        thread.start()
 
-    def _launch(
+    def _begin_locked(
         self, target: Callable, args: tuple, model_name: str, request: dict | None,
         kind: str = "training",
-    ) -> None:
-        """Set the state up and put the run on a thread. No liveness guard: the two
-        callers each establish it their own way — ``start`` by checking, and
-        ``_dispatch_next`` by being the finishing thread itself."""
+    ) -> threading.Thread:
+        """Set the state up for a run and make its thread, which the caller starts once it
+        has let go of ``self._lock`` -- held for this call.
+
+        No liveness guard: the two callers each establish it their own way -- ``start`` by
+        checking, ``_dispatch_next`` by being the finishing thread itself -- and each in the
+        SAME lock section as this. Taken off the queue in one section and launched in the
+        next, a run cleared the stop flag a stop had set in between, and started anyway
+        (audit 2026-09-30, R10); two starts could both pass the check the same way.
+        """
 
         def runner() -> None:
             try:
@@ -362,38 +371,37 @@ class JobRunner:
                 # behind a run that failed in a way nobody anticipated.
                 self._dispatch_next()
 
-        with self._lock:
-            self._stop.clear()
-            self._hard.clear()
-            self._state = _idle_state()
-            self._state.update(
-                status="running",
-                phase="starting",
-                model_name=model_name,
-                # Without it an evaluation reads as a training that somehow produced
-                # no model — in the history above all, where the two sit side by side.
-                kind=kind,
-                started_at=datetime.now(UTC).isoformat(),
-            )
-            self._start_ts = time.monotonic()
-            # A run that hangs before its first progress update must still show
-            # a growing heartbeat age, so the clock starts at launch.
-            self._heartbeat_ts = self._start_ts
-            self._generation += 1
-            generation = self._generation
-            self._last_model_name = model_name
-            self._last_request = request
-            # Register the thread INSIDE the same lock block as the state
-            # transition: a hard stop + new start in the gap between two separate
-            # blocks could otherwise pass the liveness guard and run two
-            # trainings at once. Only thread.start() happens outside.
-            thread = threading.Thread(target=runner, daemon=True)
-            self._thread = thread
+        # The caller holds self._lock: state, generation and thread change in one section.
+        self._stop.clear()
+        self._hard.clear()
+        self._state = _idle_state()
+        self._state.update(
+            status="running",
+            phase="starting",
+            model_name=model_name,
+            # Without it an evaluation reads as a training that somehow produced
+            # no model — in the history above all, where the two sit side by side.
+            kind=kind,
+            started_at=datetime.now(UTC).isoformat(),
+        )
+        self._start_ts = time.monotonic()
+        # A run that hangs before its first progress update must still show
+        # a growing heartbeat age, so the clock starts at launch.
+        self._heartbeat_ts = self._start_ts
+        self._generation += 1
+        generation = self._generation
+        self._last_model_name = model_name
+        self._last_request = request
+        # Registered in the same section as the state transition: a hard stop + new start
+        # in a gap between two sections could otherwise pass the liveness guard and run
+        # two trainings at once. Only thread.start() happens outside.
+        thread = threading.Thread(target=runner, daemon=True)
+        self._thread = thread
 
         def on_progress(**fields: object) -> None:
             self._update_if_current(generation, **fields)
 
-        thread.start()
+        return thread
 
     def stop(self, *, hard: bool = False) -> None:
         """Cancel the running run and everything waiting behind it.
@@ -402,8 +410,10 @@ class JobRunner:
         one". The browser-side queue behaved this way already, so the server keeps the
         promise the UI had been making.
         """
-        self._stop.set()
         with self._lock:
+            # Under the lock a launch takes: set before it, the flag could be cleared by a
+            # launch already under way, and the stop was lost (audit 2026-09-30, R10).
+            self._stop.set()
             self._queue.clear()
         if hard:
             self._hard.set()
