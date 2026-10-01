@@ -151,7 +151,7 @@ async function showDatasetDetail(name) {
     <div class="table-wrap" tabindex="0"><table>
       <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
       <tbody>${sample.map((row) => `<tr>${columns.map(
-        (c) => `<td>${esc(String(row[c] ?? "")).slice(0, 120)}</td>`).join("")}</tr>`).join("")}</tbody>
+        (c) => `<td>${esc(String(row[c] ?? "").slice(0, 120))}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
 
     <h3>${t("datasetDetail.beforeTraining")}</h3>

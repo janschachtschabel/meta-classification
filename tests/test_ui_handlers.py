@@ -12,6 +12,7 @@ build dependency.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -506,3 +507,21 @@ def test_a_late_answer_for_one_dataset_does_not_retarget_another(tmp_path):
 
     assert result["errors"] == []
     assert result["analyzed"] == ["b.csv"]
+
+
+@needs_node
+def test_a_long_sample_cell_is_cut_before_it_is_escaped(tmp_path):
+    """U08 (audit 2026-09-30): the sample table escaped a cell and then cut it to 120
+    characters, so the cut could land inside an entity -- "...&b" was shown as "...&a", half
+    of "&amp;". The real escape.js here: the prelude's pass-through would hide exactly this."""
+    result = _run(tmp_path, modules=("escape.js", "dataset-detail.js"),
+                  prelude=_PRELUDE.replace("const esc = (s) => String(s);\n", ""),
+                  body=_DATASET_PANEL + """
+        const shown = showDatasetDetail("a.csv");
+        answers["/datasets/a.csv"]({ columns: ["text"], sample: [{ text: "a".repeat(118) + "&b<c" }] });
+        await shown;
+        report({ html: frames[0].innerHTML, errors });
+    """)
+
+    cells = re.findall(r"<td>(.*?)</td>", result["html"])
+    assert cells == ["a" * 118 + "&amp;b"]

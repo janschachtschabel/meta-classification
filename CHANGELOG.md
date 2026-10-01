@@ -420,6 +420,9 @@ brackets are its finding numbers.
   reading, open B — and A's late answer pointed B's "Analyse" button at A. The name now
   belongs to the panel that shows it, and an answer for a panel that was replaced is
   dropped. (U08)
+- **A long sample cell is cut before it is escaped.** The dataset panel's sample table escaped
+  a cell and then cut it to 120 characters, so the cut could land inside an entity and show
+  half of one (`&a` for `&amp;`). (U08)
 
 ## [4.0.1] — 2026-09-27
 
