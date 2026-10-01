@@ -480,6 +480,20 @@ def test_dependabot_keeps_the_pinned_base_image_current():
     assert ("docker", "/") in ecosystems, ecosystems
 
 
+def test_dependabot_moves_the_base_digest_not_the_python_version():
+    """B10's docker entry proposed python 3.11 -> 3.14 the day it shipped (PR #8): Dependabot
+    moves an image's TAG as well as its digest. requirements-hashes.lock is compiled for Python
+    3.11, so a new Python is a deliberate change -- recompile the lock, rerun the suite -- not a
+    bot PR. The digest of the pinned tag is what this entry exists to move."""
+    config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    docker = next(entry for entry in config["updates"] if entry["package-ecosystem"] == "docker")
+    ignored = {(rule["dependency-name"], kind) for rule in docker.get("ignore", [])
+               for kind in rule.get("update-types", [])}
+
+    assert ("python", "version-update:semver-major") in ignored, docker
+    assert ("python", "version-update:semver-minor") in ignored, docker
+
+
 def test_the_image_workflow_claims_no_signature_it_does_not_make():
     """B10: a comment at `provenance: true` read "Sign build provenance (Sigstore via OIDC)" --
     a signature nothing in the workflow makes. Whoever relies on that comment checks for a

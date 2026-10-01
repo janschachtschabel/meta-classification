@@ -25,5 +25,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # The digest of the pinned tag, not the next Python: Dependabot moves a tag as well and
+    # proposed python 3.11 -> 3.14 the day this entry shipped (PR #8). requirements-hashes.lock
+    # is compiled for 3.11, so a new Python is a deliberate change (recompile the lock, rerun
+    # the suite), not a bot PR.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "build"

@@ -2,6 +2,16 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased]
+
+### Fixed
+
+- **Dependabot proposes the next base-image digest, not the next Python.** The docker entry
+  added for B10 also moves an image's tag, and opened "python 3.11-slim-trixie -> 3.14" the
+  day 4.1.0 shipped (PR #8). `requirements-hashes.lock` is compiled for Python 3.11, so a new
+  Python is a deliberate change -- recompile the lock, rerun the suite -- not a bot PR: minor
+  and major updates of `python` are ignored, digest updates still come.
+
 ## [4.1.0] — 2026-10-01
 
 The findings of the audit of 2026-09-30 (`docs/audits/2026-09-30-audit.md`), all 85 of them;
