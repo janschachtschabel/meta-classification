@@ -190,3 +190,28 @@ def test_the_copied_curl_command_runs_nothing_but_curl(tmp_path, name):
     body = json.loads(argv[argv.index("-d") + 1])
     assert body["model_name"] == name
     assert "X-API-Key: test-key" in argv, "the key still comes from the shell variable"
+
+
+
+# --- S09: signing out leaves nothing of the session on the page -------------------------------
+
+
+@needs_node
+def test_signing_out_hands_the_next_person_a_fresh_page(tmp_path):
+    """S09 (audit 2026-09-30): signing out cleared the key and hid the app -- and the next
+    person to sign in found the previous one's query text, its result and a share link, a
+    bearer capability, still on the page. A reload is the only state that stays clean as views
+    are added; the forms are reset first, because Firefox puts field values back on one."""
+    result = _run(tmp_path, helpers=("app.js:signOut",), body="""
+        const calls = [];
+        Api.clearKey = () => calls.push("clearKey");
+        globalThis.showLogin = () => calls.push("showLogin");
+        const forms = [{ reset: () => calls.push("reset query-form") },
+                       { reset: () => calls.push("reset train-form") }];
+        document.querySelectorAll = (selector) => (selector === "form" ? forms : []);
+        globalThis.location = { reload: () => calls.push("reload") };
+        signOut();
+        report({ calls });
+    """)
+
+    assert result["calls"] == ["clearKey", "reset query-form", "reset train-form", "reload"]

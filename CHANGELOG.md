@@ -113,6 +113,11 @@ brackets are its finding numbers.
   archive's file name — ran its command in the shell of whoever pasted the snippet, readonly
   key or not. The name is now a JSON string inside a properly quoted shell word; the suite
   pastes the generated command into a real shell to check. (S06)
+- **Signing out of the admin UI leaves nothing of the session behind.** It cleared the key
+  and hid the app, so whoever signed in next found the previous user's query text, its
+  result and a valid share link on the page. Signing out now resets the forms and reloads
+  the page. (A 401 in the middle of a session still only asks for the key again, keeping
+  what was typed.) (S09)
 
 ### Fixed
 

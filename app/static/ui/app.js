@@ -150,7 +150,7 @@ function closer(close) {
 async function boot() {
   window.addEventListener("apiv3-unauthorized", showLogin);
   $("#login-form").addEventListener("submit", onLogin);
-  $("#logout-btn").addEventListener("click", () => { Api.clearKey(); showLogin(); });
+  $("#logout-btn").addEventListener("click", signOut);
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
   document.querySelector('[role="tablist"]').addEventListener("keydown", onTablistKeydown);
   $("#query-form").addEventListener("submit", onQuery);
@@ -185,6 +185,18 @@ async function boot() {
   // everything works without a key, so the UI must not force a sign-in either.
   try { await Api.get("/models"); showApp(true); return; } catch { /* auth is on */ }
   showLogin();
+}
+
+/* Signing out hands the page to the next person, so nothing of this session may stay on it.
+   Hiding the app left the query text, its result and any share link -- a bearer capability --
+   in place for whoever signed in next (audit 2026-09-30, S09). A fresh page is the only state
+   that stays clean as views are added; the forms are reset first, because Firefox puts field
+   values back on a reload. (A 401 mid-session still just shows the sign-in: that is the same
+   person, whose typed text should survive re-entering a key.) */
+function signOut() {
+  Api.clearKey();
+  document.querySelectorAll("form").forEach((form) => form.reset());
+  location.reload();
 }
 
 function showLogin() {
