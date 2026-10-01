@@ -539,6 +539,12 @@ brackets are its finding numbers.
   `combine_text_columns`. And with no label shared by the models and the holdout, or no
   weak one among them, the macro averages divided by zero after the whole holdout had been
   classified: the first now stops before any request, the second is said. (W05)
+- **`build_hochschule_dataset.py` names only the subjects it kept.** It filtered the label
+  column to the higher-education vocabulary and copied the name column whole, so the names
+  of the dropped subjects — or another field's names — stayed in front, and whenever the
+  counts happened to line up every kept subject got its neighbour's name. Each field's URIs
+  are now paired with that field's own names (`pair_names`), and a row carries names for
+  exactly its kept URIs, or none. (W06)
 
 ## [4.0.1] — 2026-09-27
 

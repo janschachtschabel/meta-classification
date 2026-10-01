@@ -141,3 +141,56 @@ def test_nothing_to_average_is_said_rather_than_divided(holdout, monkeypatch):
     assert scores["macro"] is None
     assert holdout.mean([]) is None
     assert holdout.mean([0.5, 1.0]) == 0.75
+
+
+# --- W06: build_hochschule_dataset.py ---------------------------------------------------------
+
+HS = "http://w3id.org/openeduhub/vocabs/hochschulfaechersystematik/"
+SCHOOL = "http://w3id.org/openeduhub/vocabs/discipline/"
+NAMES = {f"{HS}n1": "Informatik", f"{HS}n2": "Physik", f"{HS}n3": "Chemie"}
+
+
+def test_a_built_row_names_only_the_subjects_it_kept(tmp_path):
+    """W06 (audit 2026-09-30): the vocabulary filter dropped the school subjects from the label
+    column and the name column was copied whole -- so it still began with the dropped
+    subject's name, and when the counts happened to line up every kept subject got its
+    neighbour's name: a confident wrong name, not a missing one. Run as the script runs, on a
+    staging node and an export row; the output is read back the way training pairs it."""
+    import csv
+    import json
+    import subprocess
+
+    from app.data import split_labels
+    from app.label_names import pair_names
+
+    staging = tmp_path / "staging.jsonl"
+    staging.write_text(json.dumps({"isPublic": True, "properties": {
+        "ccm:educationalcontext": ["http://w3id.org/openeduhub/vocabs/educationalContext/hochschule"],
+        "ccm:taxonid": [f"{SCHOOL}380", f"{HS}n1"],
+        "ccm:taxonid_DISPLAYNAME": ["Mathematik", "Informatik"],
+        "cclom:title": ["Staging"], "ccm:wwwurl": ["https://staging.example/1"],
+    }}) + "\n", encoding="utf-8")
+    export = tmp_path / "export.csv"
+    with export.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=";")
+        writer.writerow(["properties.cclom:title", "properties.ccm:taxonid",
+                         "properties.ccm:taxonid_DISPLAYNAME", "properties.ccm:oeh_taxonid_university",
+                         "properties.ccm:wwwurl"])
+        writer.writerow(["Export", f"{SCHOOL}380, {HS}n1, {HS}n2", "Mathematik, Informatik, Physik",
+                         f"{HS}n3", "https://export.example/1"])
+    out = tmp_path / "out.csv"
+
+    subprocess.run([sys.executable, str(SCRIPTS / "build_hochschule_dataset.py"), "--jsonl", str(staging),  # noqa: S603
+                    "--export", str(export), "--out", str(out)],
+                   check=True, capture_output=True, text=True, timeout=120)
+
+    with out.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter=";"))
+    assert len(rows) == 2
+    for row in rows:
+        pairs = pair_names(split_labels(row["properties.ccm:taxonid"]),
+                           split_labels(row["properties.ccm:taxonid_DISPLAYNAME"]))
+        wrong = [(uri, name) for uri, name in pairs if NAMES.get(uri) != name]
+        assert not wrong, f"{row['properties.cclom:title']}: {wrong}"
+    staged = next(r for r in rows if r["properties.cclom:title"] == "Staging")
+    assert staged["properties.ccm:taxonid_DISPLAYNAME"] == "Informatik"
