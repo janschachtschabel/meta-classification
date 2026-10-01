@@ -471,6 +471,11 @@ brackets are its finding numbers.
   spec, the pod never rolled, and `helm rollback` restored the same `:main` — the immutable
   `sha-` tag the build pushes for exactly this was never referenced. The chart now names it,
   under a version that differs per pipeline (`0.0.0-main.<pipeline>`). (B03)
+- **docker compose hands the container what `.env` says.** Compose passed on a fixed list of
+  variables, so fifteen settings `.env.example` documents — the rate limits, the upload cap,
+  the UI switch — and `FORWARDED_ALLOW_IPS` never reached the container. `.env` is now the
+  container's environment (optional, so keys exported in the shell still work); the volume
+  paths stay pinned over it. `.env.example` documents `FORWARDED_ALLOW_IPS`. (B04)
 
 ## [4.0.1] — 2026-09-27
 

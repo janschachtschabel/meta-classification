@@ -41,6 +41,13 @@ services:
     ports:
       # Bind to localhost only — nginx/caddy should sit in front.
       - "127.0.0.1:8000:8000"
+    # Every setting `.env` names reaches the container; the list below pins only what must
+    # NOT come from it (the volume paths) and states the defaults. A fixed list alone kept
+    # fifteen documented settings and FORWARDED_ALLOW_IPS out of the container (audit
+    # 2026-09-30, B04). Optional, so keys exported in the shell instead still work.
+    env_file:
+      - path: .env
+        required: false
     environment:
       # ---- Auth (required unless APIV3_AUTH_ENABLED=false) ----
       APIV3_AUTH_ENABLED: ${APIV3_AUTH_ENABLED:-true}

@@ -10,6 +10,7 @@ files must agree, and the release gate must run every step the push gate runs â€
 edit that re-opens one of these gaps fails here instead of in production.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -294,3 +295,47 @@ def test_every_main_pipeline_rolls_out_the_image_it_built():
     assert first_app != "main", "the chart still names the mutable branch tag"
     assert first_app != second_app and first_chart != second_chart, (
         "two pipelines produce the same chart, so an upgrade does not roll the pod")
+
+
+# --- B04: compose hands the container what .env says ------------------------------------------
+
+_PATHS = ("APIV3_DATA_DIR", "APIV3_MODELS_DIR", "APIV3_SHARE_LINKS_FILE",
+          "APIV3_FEEDBACK_FILE", "APIV3_JOB_HISTORY_FILE")
+
+
+def test_compose_reads_every_setting_from_env_and_keeps_the_volume_paths():
+    """B04 (audit 2026-09-30): compose passed on a fixed list of variables, so fifteen settings
+    `.env.example` documents -- the rate limits, the upload cap, the UI switch -- and
+    `FORWARDED_ALLOW_IPS` never reached the container. `.env` is now the container's
+    environment; the volume paths stay pinned over it, so a `.env` written for a local run
+    cannot point the container inside its own filesystem. Optional, so keys exported in the
+    shell instead still work."""
+    service = _service()
+    entries = service.get("env_file") or []
+    env_files = [entry if isinstance(entry, dict) else {"path": entry} for entry in
+                 (entries if isinstance(entries, list) else [entries])]
+
+    assert any(e["path"] == ".env" and e.get("required") is False for e in env_files), env_files
+    environment = service["environment"]
+    assert all(environment.get(name, "").startswith("/data/") for name in _PATHS), (
+        "a volume path is no longer pinned over .env")
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="no docker CLI to render compose with")
+def test_a_setting_in_env_reaches_the_container(tmp_path):
+    """The same, as compose itself renders it -- from a copy with a placeholder `.env`, so a
+    real one beside the repository's compose file is never read."""
+    (tmp_path / "docker-compose.yml").write_bytes((ROOT / "docker-compose.yml").read_bytes())
+    (tmp_path / ".env").write_text(
+        "APIV3_API_KEY_ADMIN=render-test\nAPIV3_API_KEY_READONLY=render-test\n"
+        "FORWARDED_ALLOW_IPS=10.42.0.0/16\nAPIV3_MAX_UPLOAD_MB=99\nAPIV3_DATA_DIR=./local-data\n",
+        encoding="utf-8")
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(("APIV3_", "FORWARDED_"))}
+
+    done = subprocess.run(["docker", "compose", "config", "--format", "json"], cwd=tmp_path,  # noqa: S603, S607
+                          capture_output=True, text=True, timeout=60, env=clean, check=True)
+
+    environment = json.loads(done.stdout)["services"]["classification-api"]["environment"]
+    assert environment.get("FORWARDED_ALLOW_IPS") == "10.42.0.0/16"
+    assert environment.get("APIV3_MAX_UPLOAD_MB") == "99"
+    assert environment.get("APIV3_DATA_DIR") == "/data/datasets", "the volume path lost to .env"
