@@ -147,10 +147,12 @@ def safe_name(name: str, kind: str = "name") -> str:
         or "\\" in name
         or ":" in name  # Windows drive-relative ("D:x") + NTFS ADS ("x:stream") escape the dir
         or name.startswith(".")
-        # A quote or semicolon ends the filename parameter of the Content-Disposition
-        # header the model export builds by hand, so `x";filename="setup.exe` would serve
-        # the bundle under a name of the caller's choosing — and that handler also serves
-        # share links, i.e. it is reachable without a key.
+        # A quote or semicolon ends the filename parameter of a Content-Disposition header,
+        # so `x";filename="setup.exe` served the bundle under a name of the caller's choosing
+        # while the model export built that header by hand (SEC-8) -- and the handler also
+        # serves share links, i.e. it is reachable without a key. Starlette writes it now
+        # (audit 2026-09-30, S03); the rule stays, so no header built from a name has to
+        # get its own quoting right.
         or '"' in name
         or ";" in name
         # Every control character, not just NUL: the name reaches a Content-Disposition
