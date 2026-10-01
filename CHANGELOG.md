@@ -271,6 +271,12 @@ brackets are its finding numbers.
   which has no UTF-8 form, or a JSON `NaN` — made the 422 itself fail, so `/predict`,
   `/predict/explain` and `/metadata` answered 500. `input` is left out; `loc`, `msg`, `type`
   and `ctx` remain. (V05)
+- **A 500 is counted, and carries the security headers.** Starlette builds the response to an
+  unhandled error outside the middleware stack, and both the request counter and the header
+  middleware worked on the response the stack returned — so a 500 had no
+  `Content-Security-Policy` or `nosniff`, and `/metrics` never showed a `status="500"`
+  series, the one an "API is failing" alert needs. The counter now records it before the
+  error travels on, and the 500 handler sets the same headers. (R05)
 
 ## [4.0.1] — 2026-09-27
 

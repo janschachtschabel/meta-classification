@@ -89,6 +89,42 @@ def _refusal(status: int, detail: str, headers: Mapping[str, str] | None = None)
     return JSONResponse(status_code=status, content={"detail": detail}, headers=headers)
 
 
+def hardening_headers(path: str) -> dict[str, str]:
+    """The baseline hardening headers for a response to ``path``. No HSTS (TLS is terminated
+    at the reverse proxy, which should set it).
+
+    A function as well as a middleware: the 500 for an unhandled error is built OUTSIDE the
+    middleware stack (Starlette's ServerErrorMiddleware), so the handler that builds it adds
+    them itself -- it went out without them (audit 2026-09-30, R05).
+    """
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+    }
+    # Everything is same-origin now (the admin UI and the self-hosted Swagger
+    # page both load only vendored assets, no inline JS), so CSP applies
+    # everywhere. Swagger UI injects its own styles and inline SVG/data: icons
+    # at runtime, so /docs alone needs style-src 'unsafe-inline' + img-src data:;
+    # every other route keeps the strict same-origin policy.
+    if path.startswith("/docs"):
+        headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'self'; form-action 'self'; "
+            "frame-ancestors 'none'; object-src 'none'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+        )
+    else:
+        headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'self'; form-action 'self'; "
+            "frame-ancestors 'none'; object-src 'none'"
+        )
+    if path.startswith("/ui"):
+        # Always revalidate UI assets (304 when unchanged): browsers otherwise
+        # keep executing a stale app.js from the heuristic cache after updates.
+        headers["Cache-Control"] = "no-cache"
+    return headers
+
+
 def install(app: FastAPI, settings: Settings) -> None:
     """Register the body guard, the request counters, the security headers and the
     correlation id, in that order.
@@ -111,41 +147,28 @@ def install(app: FastAPI, settings: Settings) -> None:
         number of permanent series in a process that never restarts.
         """
         started = time.perf_counter()
-        response = await call_next(request)
-        route = request.scope.get("route")
-        template = getattr(route, "path", None) or telemetry.UNMATCHED
-        telemetry.record(request.method, template, response.status_code,
-                         time.perf_counter() - started)
+
+        def count(status: int) -> None:
+            route = request.scope.get("route")
+            template = getattr(route, "path", None) or telemetry.UNMATCHED
+            telemetry.record(request.method, template, status, time.perf_counter() - started)
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Unhandled: the 500 is built outside this stack, so it is counted here or not at
+            # all -- and "the API is returning 500s" is the alert this counter exists for
+            # (audit 2026-09-30, R05).
+            count(500)
+            raise
+        count(response.status_code)
         return response
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
-        """Baseline hardening headers on every response. No HSTS (TLS is
-        terminated at the reverse proxy, which should set it)."""
+        """Baseline hardening headers on every response (``hardening_headers``)."""
         response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        # Everything is same-origin now (the admin UI and the self-hosted Swagger
-        # page both load only vendored assets, no inline JS), so CSP applies
-        # everywhere. Swagger UI injects its own styles and inline SVG/data: icons
-        # at runtime, so /docs alone needs style-src 'unsafe-inline' + img-src data:;
-        # every other route keeps the strict same-origin policy.
-        if request.url.path.startswith("/docs"):
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; base-uri 'self'; form-action 'self'; "
-                "frame-ancestors 'none'; object-src 'none'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-            )
-        else:
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; base-uri 'self'; form-action 'self'; "
-                "frame-ancestors 'none'; object-src 'none'"
-            )
-        if request.url.path.startswith("/ui"):
-            # Always revalidate UI assets (304 when unchanged): browsers otherwise
-            # keep executing a stale app.js from the heuristic cache after updates.
-            response.headers["Cache-Control"] = "no-cache"
+        response.headers.update(hardening_headers(request.url.path))
         return response
 
     # Registered last, so it is the OUTERMOST: every response gets an id, including the

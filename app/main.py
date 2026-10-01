@@ -52,12 +52,12 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     """
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     request_id = correlation.of_request(request)
-    # The header is set here rather than by the middleware because this response never
-    # passes through it: ServerErrorMiddleware is outside the whole stack.
+    # The headers are set here rather than by the middleware because this response never
+    # passes through it: ServerErrorMiddleware is outside the whole stack (audit R05).
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error.", "request_id": request_id},
-        headers={"X-Request-ID": request_id},
+        headers={"X-Request-ID": request_id, **middleware.hardening_headers(request.url.path)},
     )
 
 
