@@ -47,10 +47,10 @@ def test_a_staged_bundle_stays_invisible_until_it_is_published(tmp_path):
     model, metadata = _trained_model(tmp_path)
     registry = Registry(tmp_path / "models", 2)
 
-    registry.stage("staged", model, metadata)
+    staged = registry.stage("staged", model, metadata)
     assert not registry.exists("staged") and "staged" not in registry.list()
 
-    registry.publish("staged")
+    registry.publish("staged", staged)
     assert registry.exists("staged") and not _hidden(registry)
     assert registry.get("staged").classes == model.classes
 
@@ -64,15 +64,15 @@ def test_publishing_refuses_a_name_that_appeared_meanwhile_and_cleans_up(tmp_pat
     shutil.copytree(staged, registry.dir / "taken")  # a bundle took the name meanwhile
 
     with pytest.raises(FileExistsError):
-        registry.publish("taken")
+        registry.publish("taken", staged)
     assert not _hidden(registry)
 
 
 def test_discarding_removes_a_staged_bundle(tmp_path):
     model, metadata = _trained_model(tmp_path)
     registry = Registry(tmp_path / "models", 2)
-    registry.stage("dropped", model, metadata)
-    registry.discard_staged("dropped")
+    staged = registry.stage("dropped", model, metadata)
+    registry.discard_staged(staged)
     assert not _hidden(registry)
     assert not registry.exists("dropped")
 
@@ -111,3 +111,42 @@ def test_a_delete_cut_short_leaves_the_name_free_and_nothing_visible(tmp_path, m
     registry.import_archive("m", archive)
     assert registry.get("m").classes == model.classes, "the name took a new bundle"
     assert registry.sweep_stale_tmp() == 1, "and the next start removes the leftover"
+
+
+
+# --- R01: one staging directory per operation ----------------------------------------------------
+
+
+def test_a_failing_import_leaves_a_trainings_staged_bundle_alone(tmp_path):
+    """R01 (audit 2026-09-30): an import and a training of one name both staged in
+    `.{name}.tmp`, and each removed what it found there as a crash leftover. An import that
+    failed took the training's finished bundle with it -- the training's publish then had
+    nothing to publish -- and two that overlapped published a mix (the audit's: 200 on import,
+    "X has 182 features" on every prediction)."""
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+    staged = registry.stage("m", model, metadata)  # a training of "m", about to publish
+    broken = tmp_path / "broken.zip"
+    broken.write_bytes(b"not a zip archive")
+
+    with pytest.raises(Exception):  # noqa: B017 - which refusal is model_archive's business
+        registry.import_archive("m", broken)  # an import of "m" that fails meanwhile
+    registry.publish("m", staged)
+
+    assert registry.get("m").classes == model.classes
+
+
+def test_two_stagings_of_one_name_get_two_directories(tmp_path):
+    """Neither can remove or overwrite what the other writes; whichever publishes second is
+    refused, as a name taken meanwhile always was."""
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+
+    first = registry.stage("m", model, metadata)
+    second = registry.stage("m", model, metadata)
+
+    assert first != second and first.exists() and second.exists()
+    registry.publish("m", first)
+    with pytest.raises(FileExistsError):
+        registry.publish("m", second)
+    assert not second.exists(), "the refused one's staging is removed"

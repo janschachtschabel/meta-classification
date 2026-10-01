@@ -340,6 +340,13 @@ brackets are its finding numbers.
   that were asked for). And every `asyncio.to_thread` ran on the event loop's default
   executor, min(32, CPUs + 4) threads — eight on four cores — where an export and eight
   model reads kept a prediction waiting 4.3 s; it now has 40, as Starlette's own pool. (R04)
+- **An import and a training of one name no longer destroy or mix each other's bundle.** Both
+  staged in the same hidden directory, and each removed what it found there as a crash
+  leftover: an import that failed took a training's finished bundle with it, and two that
+  overlapped published a mix that answered every prediction with a 500. Every write now
+  stages in a directory of its own (a training in a child process writes into the one its
+  parent made); whichever publishes second is refused, its staging removed, and leftovers of
+  a crash are the startup sweep's. (R01)
 
 ## [4.0.1] — 2026-09-27
 

@@ -59,12 +59,18 @@ def _before_and_after(events: list[tuple[str, str]], renamed: str) -> tuple[list
     return events[:at], events[at + 1:]
 
 
+def _staging_synced(events: list[tuple[str, str]], name: str) -> bool:
+    """A staging directory of ``name`` -- `.{name}.<random>.tmp`, one per operation -- was synced."""
+    return any(kind == "dir" and entry.startswith(f".{name}.") and entry.endswith(".tmp")
+               for kind, entry in events)
+
+
 def test_a_trained_bundle_is_on_disk_before_its_name_is(tmp_path, events):
     _train(tmp_path / "models")
 
     before, after = _before_and_after(events, "m")
     assert {name for kind, name in before if kind == "file"} >= MEMBERS
-    assert ("dir", ".m.tmp") in before, "the staging directory's entries too"
+    assert _staging_synced(before, "m"), "the staging directory's entries too"
     assert ("dir", "models") in after, "and the rename itself, in the directory holding it"
 
 
@@ -79,7 +85,7 @@ def test_an_imported_bundle_is_on_disk_before_its_name_is(tmp_path, events):
 
     before, after = _before_and_after(events, "copy")
     assert {name for kind, name in before if kind == "file"} >= MEMBERS
-    assert ("dir", ".copy.tmp") in before
+    assert _staging_synced(before, "copy")
     assert ("dir", "models") in after
 
 

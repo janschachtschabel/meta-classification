@@ -112,10 +112,18 @@ class Registry:
                     removed += 1
         return removed
 
-    def _tmp_path(self, name: str) -> Path:
-        """Hidden staging dir for atomic writes (safe_name rejects leading dots,
-        so a real model can never collide with it)."""
-        return self.dir / f".{name}.tmp"
+    def new_staging(self, name: str) -> Path:
+        """A fresh hidden directory to write one bundle of ``name`` into -- its own, whatever
+        else is staging the same name.
+
+        One per operation (audit 2026-09-30, R01): a training and an import of one name shared
+        `.{name}.tmp`, and each removed what it found there as a crash leftover, so a failing
+        import took a training's finished bundle with it and two that overlapped published a
+        mix. A leading dot (which ``safe_name`` refuses, so no model collides) and a `.tmp`
+        end: invisible to list()/exists(), and the startup sweep's if nothing publishes it.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=f".{name}.", suffix=".tmp", dir=self.dir))
 
     def _evict(self) -> None:
         while len(self._cache) > self.max:
@@ -151,8 +159,8 @@ class Registry:
         training job routes it into progress updates so even a very slow save
         keeps emitting a liveness heartbeat.
         """
-        self.stage(name, model, metadata, on_step, overwrite=overwrite)
-        self.publish(name, model=model, overwrite=overwrite, on_step=on_step)
+        staged = self.stage(name, model, metadata, on_step, overwrite=overwrite)
+        self.publish(name, staged, model=model, overwrite=overwrite, on_step=on_step)
 
     def stage(
         self,
@@ -162,22 +170,23 @@ class Registry:
         on_step: Callable[[str], None] = lambda _msg: None,
         *,
         overwrite: bool = False,
+        into: Path | None = None,
     ) -> Path:
-        """Write the bundle into its hidden staging dir — invisible until :meth:`publish`.
+        """Write the bundle into a hidden staging dir — invisible until :meth:`publish` — and
+        return it: ``into`` (one :meth:`new_staging` made), or a new one.
 
         Separate from publishing so a training in a CHILD process can stage while the
         API process publishes under its own disk lock: a second Registry in the child
-        would bring a second lock, and bypass the one this registry serialises on.
+        would bring a second lock, and bypass the one this registry serialises on. The
+        parent makes the directory and hands it over, so it can discard it whatever
+        becomes of the child.
         """
         if not overwrite and self.exists(name):
             raise FileExistsError(name)
-        tmp = self._tmp_path(name)
+        tmp = into if into is not None else self.new_staging(name)
         # Stage the (possibly multi-minute) skops dump WITHOUT the disk lock: the
-        # tmp dir is uniquely named and invisible to readers (list()/exists() skip
-        # dot-dirs), so a concurrent read of ANOTHER model is not blocked by it.
-        # Only one training runs at a time, so no concurrent save writes this tmp.
-        if tmp.exists():
-            shutil.rmtree(tmp)  # leftover from a previous crash
+        # tmp dir is this operation's own and invisible to readers (list()/exists()
+        # skip dot-dirs), so nothing else reads or writes it meanwhile.
         _write_bundle(tmp, model, metadata, on_step)
         try:
             # Before anything can publish it: a bundle the loader would refuse must not
@@ -194,12 +203,13 @@ class Registry:
     def publish(
         self,
         name: str,
+        staged: Path,
         *,
         model: ClassifierModel | None = None,
         overwrite: bool = False,
         on_step: Callable[[str], None] = lambda _msg: None,
     ) -> None:
-        """Move the staged bundle into place atomically, under the disk lock.
+        """Move the bundle staged in ``staged`` into place atomically, under the disk lock.
 
         ``model`` goes straight into the cache when this process has it; a bundle
         staged by another process is loaded on first use instead.
@@ -207,18 +217,17 @@ class Registry:
         :raises FileExistsError: if the name was taken meanwhile (and ``overwrite`` is
             off); the staged bundle is removed rather than left behind.
         """
-        tmp = self._tmp_path(name)
         with self._disk_lock:
             target = self._path(name)
             if target.exists():
                 if not overwrite:  # appeared while we staged
-                    shutil.rmtree(tmp, ignore_errors=True)
+                    shutil.rmtree(staged, ignore_errors=True)
                     raise FileExistsError(name)
                 shutil.rmtree(target)
             # Stepping again after the dumps marks them finished — otherwise a
             # stall here would be indistinguishable from one inside the last dump.
             on_step("Publishing bundle (atomic rename)")
-            os.replace(tmp, target)
+            os.replace(staged, target)
             durability.sync_dir(self.dir)  # the rename itself (R13)
             if model is None:
                 return
@@ -232,9 +241,9 @@ class Registry:
                 self._cache.move_to_end(name)
                 self._evict()
 
-    def discard_staged(self, name: str) -> None:
+    def discard_staged(self, staged: Path) -> None:
         """Remove a staged bundle that will not be published (a stopped or killed run)."""
-        shutil.rmtree(self._tmp_path(name), ignore_errors=True)
+        shutil.rmtree(staged, ignore_errors=True)
 
     def load_fresh(self, name: str) -> tuple[ClassifierModel, dict]:
         with self._disk_lock:
@@ -454,10 +463,7 @@ class Registry:
         # Under the disk lock so a concurrent load/save/delete can never observe
         # the tmp dir or the exists()->replace window mid-flight.
         with self._disk_lock:
-            tmp = self._tmp_path(name)
-            if tmp.exists():
-                shutil.rmtree(tmp)
-            tmp.mkdir(parents=True)
+            tmp = self.new_staging(name)
             try:
                 # Writes the members straight into the staging dir, one at a time, and
                 # removes them all again if any check fails.

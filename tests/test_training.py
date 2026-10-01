@@ -1010,7 +1010,12 @@ def test_import_rejects_unsafe_archive(tmp_path):
 
 def test_crashed_save_leaves_no_visible_model(tmp_path):
     """Bundles are written atomically: a leftover hidden tmp dir (crashed save)
-    is invisible to list()/exists() and gets cleaned up by the next save."""
+    is invisible to list()/exists(), and the startup sweep removes it.
+
+    The next save used to remove it as well -- and that was the bug of audit 2026-09-30,
+    R01: a save cannot tell a crash's leftover from another operation's staging in
+    progress, and an import took a training's finished bundle that way. A save now writes
+    into a directory of its own and leaves the others alone."""
     settings = _settings(tmp_path)
     registry = Registry(settings.models_dir, settings.max_models_in_memory)
     stale = Path(settings.models_dir) / ".tiny_model.tmp"
@@ -1025,10 +1030,11 @@ def test_crashed_save_leaves_no_visible_model(tmp_path):
         _request(), settings, config, config.get("fast"), _registry(settings),
         on_progress=lambda **_: None, should_stop=lambda: False,
     )
-    assert not stale.exists()  # next save cleaned the stale tmp dir
     bundle = Path(settings.models_dir) / "tiny_model"
     for required in ("config.json", "metrics.json", "head.skops", "vectorizer.skops"):
         assert (bundle / required).exists()  # rename only publishes complete bundles
+    assert stale.exists(), "a save leaves stagings it did not make alone"
+    assert registry.sweep_stale_tmp() == 1 and not stale.exists(), "the startup sweep removes it"
 
 
 def test_training_aborts_with_an_actionable_message_when_no_label_has_enough_rows(tmp_path):
