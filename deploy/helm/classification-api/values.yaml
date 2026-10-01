@@ -325,7 +325,10 @@ resources:
   requests:
     ## @param resources.requests.cpu Set CPU for requests on resources
     cpu: 500m
-    ## @param resources.requests.memory Set memory for requests on resources
-    memory: 1Gi
+    ## @param resources.requests.memory Set memory for requests on resources — equal to the
+    ## limit: a training plans with 85 % of the limit, and a pod that requested 1Gi was placed
+    ## where 1Gi was free and, under node pressure, evicted first, mid-run (audit 2026-09-30,
+    ## B08). Lower both together for a predict-only deployment.
+    memory: 8Gi
 
 ########################################################################################################################

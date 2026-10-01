@@ -140,7 +140,9 @@ same upgrade. Either way the keys map to the app's
 | `resources.limits.cpu`                      | CPU limit (bounds training parallelism)                            | `4000m`              |
 | `resources.limits.memory`                   | Memory limit (sized for ~600k-row training)                        | `8Gi`                |
 | `resources.requests.cpu`                    | CPU request                                                        | `500m`               |
-| `resources.requests.memory`                 | Memory request                                                     | `1Gi`                |
+| `resources.requests.memory`                 | Memory request — equal to the limit, which training plans with      | `8Gi`                |
 
 For predict-only or small-data deployments, `resources.limits` of `1000m` / `2Gi`
-are sufficient — training is what needs the headroom.
+are sufficient — training is what needs the headroom. Lower `resources.requests.memory`
+with the limit: a training plans with 85 % of the limit, so a smaller request lets the
+scheduler place the pod where that memory is not free, and node pressure evicts it first.

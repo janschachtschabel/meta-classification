@@ -487,6 +487,10 @@ brackets are its finding numbers.
   labels, which the normal and the headless Service both carry, so every pod was scraped
   through both and each counter arrived twice. The headless Service is now marked and left
   out. (B07)
+- **The pod requests the memory its training plans with.** It requested 1 Gi under an 8 Gi
+  limit, while a training plans with 85 % of the limit: the scheduler could place it where
+  1 Gi was free, and under node pressure a pod above its request is the first evicted —
+  mid-run. The default request now equals the limit. (B08)
 
 ## [4.0.1] — 2026-09-27
 

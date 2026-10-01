@@ -268,3 +268,28 @@ def test_the_service_monitor_scrapes_each_pod_once():
 
     assert len(scraped) == 1, [s["metadata"]["name"] for s in scraped]
     assert scraped[0]["spec"].get("clusterIP") != "None", "it scrapes the headless Service"
+
+
+# --- B08: the pod asks for the memory its training plans with --------------------------------
+
+_BINARY = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+
+
+def _bytes(quantity: str) -> int:
+    for suffix, factor in _BINARY.items():
+        if quantity.endswith(suffix):
+            return int(float(quantity[: -len(suffix)]) * factor)
+    return int(quantity)
+
+
+def test_the_pod_requests_the_memory_its_training_plans_with():
+    """B08 (audit 2026-09-30): the pod requested 1 Gi under an 8 Gi limit, and a training
+    plans with 85 % of the limit (APIV3_TRAIN_MEMORY_MB=auto) -- 6.8 Gi. The scheduler placed
+    it where 1 Gi was free, and under node pressure a pod above its request is the first one
+    evicted, mid-run."""
+    [statefulset] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "StatefulSet")
+    [container] = statefulset["spec"]["template"]["spec"]["containers"]
+    resources = container["resources"]
+
+    planned = 0.85 * _bytes(resources["limits"]["memory"])
+    assert _bytes(resources["requests"]["memory"]) >= planned, resources
