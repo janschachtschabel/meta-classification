@@ -44,9 +44,10 @@ def staged_zip_response(name: str) -> FileResponse:
 
     The archive is not built in memory: a production bundle is 50-180 MB and the byte path
     peaked at 2.78x that (measured). `Registry.stage_export` owns where the file goes and
-    why; this owns the response that streams it and deletes it once the body is sent.
+    why, and shares it between downloads of the same bundle; this owns the response that
+    streams it and releases this download's hold once the body is sent.
     """
-    path = get_registry().stage_export(name)
+    path, release = get_registry().stage_export(name)
     try:
         return FileResponse(
             path, media_type="application/zip",
@@ -55,10 +56,12 @@ def staged_zip_response(name: str) -> FileResponse:
             # made every export of that model a 500 (audit 2026-09-30, S03). `safe_name`,
             # which runs on every path to here, keeps quotes and line breaks out (SEC-8).
             filename=f"{name}.zip",
-            background=BackgroundTask(path.unlink, missing_ok=True),
+            # Also after a client disconnects: uvicorn then drops the remaining body
+            # silently, the response runs to its end, and the task runs.
+            background=BackgroundTask(release),
         )
     except BaseException:
-        # Ours until a response owns it: each failed attempt used to leave a whole bundle
+        # Ours until a response holds it: each failed attempt used to leave a whole bundle
         # copy behind, which only the next start's sweep removed.
-        path.unlink(missing_ok=True)
+        release()
         raise

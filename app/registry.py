@@ -35,6 +35,7 @@ from .model_io import (
     check_loadable,
 )
 from .settings import get_settings
+from .staged_archives import StagedArchives
 
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
@@ -62,6 +63,8 @@ class Registry:
         # acquires `_disk_lock` while holding `_lock` — no ordering cycle/deadlock.
         self._lock = threading.Lock()
         self._disk_lock = threading.Lock()
+        # Taken only while `_disk_lock` is held, never the other way round (see stage_export).
+        self._staged = StagedArchives(self.dir)
 
     def _path(self, name: str) -> Path:
         return self.dir / name
@@ -345,26 +348,26 @@ class Registry:
                 for cached in [k for k in self._cache if k.casefold() == key]:
                     del self._cache[cached]
 
-    def stage_export(self, name: str) -> Path:
-        """Pack the bundle into a staging file beside the bundles and return its path.
+    def stage_export(self, name: str) -> tuple[Path, Callable[[], None]]:
+        """The bundle's archive in a staging file beside the bundles, and its release.
 
         Here rather than in the route (audit ARC-1) because *where* the staging file goes
         is this class's business: on a container ``/tmp`` is often tmpfs, i.e. RAM, which
         would give back exactly what streaming to a file removes — and the hidden
         ``.*.tmp`` name is the one ``sweep`` already cleans, so a download that dies
-        mid-flight leaks nothing permanently. The caller owns deleting it once sent.
+        mid-flight leaks nothing permanently.
+
+        Downloads of one bundle state share one file (``staged_archives``; each used to pack
+        its own, audit 2026-09-30 S02). The caller calls the release once the body is sent;
+        the last one deletes the file. Raises ``FileNotFoundError`` for an unknown name.
         """
-        self.dir.mkdir(parents=True, exist_ok=True)
-        handle, staged = tempfile.mkstemp(prefix=".export-", suffix=".zip.tmp", dir=self.dir)
-        os.close(handle)
-        path = Path(staged)
-        try:
-            with path.open("wb") as stream:
-                self.export_to(name, stream)
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
-        return path
+        with self._disk_lock:
+            sources = self._packable(name)
+            # What the archive is packed from, down to each member's size and mtime: after an
+            # `update_info` or a re-publish, a download gets a fresh archive, not the old one.
+            state = (name, tuple((member, stat.st_size, stat.st_mtime_ns)
+                                 for member, stat in ((m, p.stat()) for m, p in sources.items())))
+            return self._staged.acquire(state, lambda stream: model_archive.pack_into(stream, name, sources))
 
     def export_to(self, name: str, target: BinaryIO) -> None:
         """Write the bundle's archive into ``target`` (card + manifest added by ``model_archive``).
@@ -383,16 +386,19 @@ class Registry:
         alternative, holding open handles outside the lock, would make ``delete``
         fail outright on Windows.
         """
-        packable = model_archive.ALLOWED_MEMBERS - {MANIFEST_FILE, CARD_FILE}
         with self._disk_lock:
-            if not self.exists(name):
-                raise FileNotFoundError(name)
-            sources = {
-                file.name: file
-                for file in sorted(self._path(name).iterdir())
-                if file.is_file() and file.name in packable
-            }
-            model_archive.pack_into(target, name, sources)
+            model_archive.pack_into(target, name, self._packable(name))
+
+    def _packable(self, name: str) -> dict[str, Path]:
+        """The members an export packs, by name. The caller holds ``_disk_lock``."""
+        if not self.exists(name):
+            raise FileNotFoundError(name)
+        packable = model_archive.ALLOWED_MEMBERS - {MANIFEST_FILE, CARD_FILE}
+        return {
+            file.name: file
+            for file in sorted(self._path(name).iterdir())
+            if file.is_file() and file.name in packable
+        }
 
     def import_zip(self, name: str, data: bytes) -> dict:
         """Install a model from archive bytes already in memory.

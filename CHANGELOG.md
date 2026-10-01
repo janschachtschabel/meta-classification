@@ -53,6 +53,13 @@ brackets are its finding numbers.
   a whole bundle copy behind until the next restart — repeatable without a key. The header
   is now written RFC 5987-encoded where the name needs it (an ASCII name keeps the old form),
   and a staged copy is deleted when the response cannot be built. (S03)
+- **Stalled share-link downloads no longer fill the volume.** Every export, a public share
+  link's included, packed its own full copy of the bundle and kept it until the client had
+  read the last byte: twelve connections that never read held twelve copies (measured: 98 MB
+  for an 8 MB archive), and with the chart's defaults about twenty filled the volume —
+  without a key — after which trainings, feedback and new links failed. Downloads of the
+  same bundle state now share one staged file, which the last of them deletes; a changed
+  bundle (`PUT …/info`, a new model under the name) is packed anew. (S02)
 
 ### Fixed
 
