@@ -992,3 +992,45 @@ def test_a_model_ticked_while_the_list_reloads_stays_ticked(tmp_path):
     """)
 
     assert result == {"checked": ["m1", "m2"], "errors": []}
+
+
+
+@needs_node
+def test_the_focus_stays_on_the_card_when_a_finished_run_hides_stop(tmp_path):
+    """Review of U10 (2026-10-01): after a confirmed stop the button keeps the focus, and the
+    next poll hides it -- which drops the focus to <body>, the U09 symptom over again. The
+    card's heading takes it instead."""
+    result = _run(tmp_path, modules=("train-status.js",), helpers=("app.js:applyBarWidths",),
+                  prelude=_STATUS_PRELUDE, body=_STATUS_CARD + """
+        const stop = el("#train-stop");
+        const heading = el("#train-status-heading");
+        heading.focus = () => { document.activeElement = heading; };
+        renderTrainStatus(running(100));
+        document.activeElement = stop;
+        renderTrainStatus({ ...running(130), status: "stopped", queued: [] });
+        report({ onHeading: document.activeElement === heading, stopHidden: stop.hidden, errors });
+    """)
+
+    assert result == {"onHeading": True, "stopHidden": True, "errors": []}
+
+
+@needs_node
+def test_the_queue_line_is_written_only_when_it_changes(tmp_path):
+    """Review of U10: the line naming the queued runs was rewritten on every poll, so a name
+    being selected to copy lost its selection every 2.5 s, as the rows did -- and the live
+    region it is got a fresh node each time."""
+    result = _run(tmp_path, modules=("train-status.js",), helpers=("app.js:applyBarWidths",),
+                  prelude=_STATUS_PRELUDE, body=_STATUS_CARD + """
+        const line = el("#train-queue");
+        let text = "", writes = 0;
+        Object.defineProperty(line, "textContent", { get: () => text,
+                                                     set: (value) => { writes += 1; text = value; } });
+        renderTrainStatus(running(100));
+        renderTrainStatus(running(102.5));
+        renderTrainStatus(running(105));
+        report({ writes, text, errors });
+    """)
+
+    assert result["writes"] == 1, f"the queue line was written {result['writes']} times"
+    assert "fach_b" in result["text"]
+    assert result["errors"] == []

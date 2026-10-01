@@ -144,7 +144,7 @@
       <section id="tab-training" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-training" tabindex="0" hidden>
         <h2 data-i18n="train.heading"></h2>
         <div class="card" id="train-status-card">
-          <h3 data-i18n="train.status.heading"></h3>
+          <h3 id="train-status-heading" tabindex="-1" data-i18n="train.status.heading"></h3>
           <!-- Shown after three failed polls. The card keeps its last state on purpose —
                one dropped tick should not blank a running job — but without this it kept
                that state forever, and a dead backend read exactly like a live run. -->

@@ -119,7 +119,12 @@ function renderTrainStatus(s) {
     $("#train-status-notes").innerHTML = notes;
     shownNotes = notes;
   }
-  $("#train-stop").hidden = s.status !== "running";
+  const stop = $("#train-stop");
+  const finished = s.status !== "running";
+  // Hiding the focused Stop would drop the focus to <body> -- after a confirmed stop it still
+  // has it when the next poll ends the run (review of U10). The card's heading keeps it.
+  if (finished && !stop.hidden && document.activeElement === stop) $("#train-status-heading").focus();
+  stop.hidden = finished;
 }
 
 function renderStatusRows(list, rows) {
@@ -194,10 +199,11 @@ function threadsLine(s) {
    tab being closed, which is the whole reason the queue moved out of the page. */
 function renderQueueLine(queued) {
   const el = $("#train-queue");
+  const text = queued.length ? t("trainStatus.queuedOnServer", { names: queued.join(", ") }) : "";
   el.hidden = !queued.length;
-  el.textContent = queued.length
-    ? t("trainStatus.queuedOnServer", { names: queued.join(", ") })
-    : "";
+  // Only when it changed, like the rows: rewritten every poll, it took a selection with it and
+  // handed its live region a fresh node every 2.5 s (review of U10).
+  if (el.textContent !== text) el.textContent = text;
 }
 
 
