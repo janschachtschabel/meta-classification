@@ -147,6 +147,10 @@ class Settings(BaseSettings):
     # (48 MiB of `[{},...]` held 1.25 GB), so it gets a cap of its own far below an upload's:
     # 1,000 texts of 10,000 characters still fit (audit 2026-09-30, S01).
     max_json_mb: int = Field(10, ge=1)
+    # The corrections file never drops a line -- it is training data -- but a readonly key can
+    # append 24-60 MB a minute within the rate limit. At this size new corrections are
+    # refused (503), so the volume the models live on cannot fill (audit 2026-09-30, R02).
+    max_feedback_mb: int = Field(1024, ge=1)
     random_seed: int = 42
 
     # --- Compute resources ---

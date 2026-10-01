@@ -4,11 +4,12 @@ The recognition rate improves with use, or it improves only when somebody produc
 new export. This is the first half of that loop: what a person noticed, written down in
 a shape ``/train`` can consume directly.
 
-Append-only, and deliberately uncapped — unlike ``job_history``, which is a log bounded
-at 200 entries. This is not a log: it IS the data the next run learns from, and the
-oldest correction is worth exactly as much as the newest. So a line is appended and the
-file is never rewritten, which also means a crash can cost at most the line being
-written rather than the whole collection.
+Append-only, and never pruned — unlike ``job_history``, which is a log bounded at 200
+entries. This is not a log: it IS the data the next run learns from, and the oldest
+correction is worth exactly as much as the newest. So a line is appended and the file is
+never rewritten, which also means a crash can cost at most the line being written rather
+than the whole collection. What is bounded is growth: at ``APIV3_MAX_FEEDBACK_MB`` new
+corrections are refused, because a readonly key could otherwise fill the volume.
 """
 
 from __future__ import annotations
@@ -58,6 +59,10 @@ def _feedback_path():
     return get_settings().feedback_file
 
 
+def _max_bytes() -> int:
+    return get_settings().max_feedback_mb * 2**20
+
+
 def _ends_mid_line(path) -> bool:
     """Was the last write cut short? A non-empty file whose last byte is not a newline.
 
@@ -100,8 +105,18 @@ def append(record: dict) -> int:
             # Ending a torn line first costs that line, which was lost already -- and keeps
             # this correction a line of its own.
             torn = "\n" if _ends_mid_line(path) else ""
+            line = torn + json.dumps(entry, ensure_ascii=False) + "\n"
+            size = path.stat().st_size if path.exists() else 0
+            if size + len(line.encode("utf-8")) > _max_bytes():
+                # Checked before the write, so the file is left exactly as it was (R02).
+                raise FeedbackWriteError(
+                    "The correction was NOT recorded: the corrections file has reached its cap "
+                    f"(APIV3_MAX_FEEDBACK_MB, {get_settings().max_feedback_mb} MB). Everything "
+                    "collected so far is kept: export it (GET /feedback/export), then raise the "
+                    "cap, or move the file aside and restart the server."
+                )
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(torn + json.dumps(entry, ensure_ascii=False) + "\n")
+                handle.write(line)
         except OSError as exc:
             # The one write in this app that may NOT degrade to a logged warning. The job
             # history can: by the time it is written the run is finished and saved, so the

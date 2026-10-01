@@ -293,6 +293,11 @@ brackets are its finding numbers.
   corrections on disk by loading the whole file as a list, on the event loop: with 240 MB of
   corrections that took 2.9 s, during which not even `/health` answered, and 769 MB of
   memory. The count now streams over the lines, in a worker thread. (R02)
+- **The corrections file stops growing at `APIV3_MAX_FEEDBACK_MB` (default 1024).** It never
+  drops a line — it is training data — but a readonly key could append 24–60 MB a minute
+  within the rate limit until the volume the models live on was full. At the cap a new
+  correction answers 503 and the file is left as it is; what was collected stays exportable.
+  Chart: `config.limits.maxFeedbackMb`. (R02)
 
 ## [4.0.1] — 2026-09-27
 

@@ -133,6 +133,34 @@ def test_the_first_count_streams_the_file_instead_of_holding_it(store):
     assert peak < 4 * 2**20, f"{peak / 2**20:.1f} MiB for a {store.stat().st_size / 2**20:.0f} MiB file"
 
 
+def test_the_corrections_file_stops_growing_at_its_cap(store, monkeypatch):
+    """R02 (audit 2026-09-30): the file is uncapped on purpose -- every correction is training
+    data -- and a readonly key can append 24-60 MB a minute within the rate limit, until the
+    volume the models live on is full. At APIV3_MAX_FEEDBACK_MB a new correction is refused
+    and nothing on disk changes; what was collected stays, for the export."""
+    feedback.append(_correction("Der Wiener Kongress", ["uri:hist"]))
+    size = store.stat().st_size
+    monkeypatch.setattr(feedback, "_max_bytes", lambda: size + 10)
+
+    with pytest.raises(FeedbackWriteError, match="APIV3_MAX_FEEDBACK_MB"):
+        feedback.append(_correction("Bruchrechnung und Gleichungen", ["uri:math"]))
+
+    assert store.stat().st_size == size
+    assert [entry["text"] for entry in feedback.read_all()] == ["Der Wiener Kongress"]
+
+
+def test_the_cap_is_the_setting(monkeypatch):
+    from app.settings import Settings, get_settings
+
+    assert Settings().max_feedback_mb == 1024
+    monkeypatch.setenv("APIV3_MAX_FEEDBACK_MB", "3")
+    get_settings.cache_clear()
+    try:
+        assert feedback._max_bytes() == 3 * 2**20
+    finally:
+        get_settings.cache_clear()
+
+
 def test_a_correction_that_cannot_be_saved_fails_instead_of_vanishing(tmp_path, monkeypatch):
     """The one failure this module must not swallow.
 
