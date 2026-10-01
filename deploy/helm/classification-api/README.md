@@ -18,9 +18,10 @@ kubectl create secret generic classify-api-keys \
   --from-literal=APIV3_API_KEY_ADMIN=<strong-random-key> \
   --from-literal=APIV3_API_KEY_READONLY=<strong-random-key>
 
-# The tls values are not optional — see "TLS is not optional here" below.
+# Neither the tls values nor forwardedAllowIps are optional — see the two notes below.
 helm install classify deploy/helm/classification-api \
   --set config.auth.existingSecret=classify-api-keys \
+  --set config.limits.forwardedAllowIps=10.42.0.0/16 \
   --set ingress.hosts[0]=classify.example.de \
   --set ingress.tls[0].hosts[0]=classify.example.de \
   --set ingress.tls[0].secretName=classify-api-tls
@@ -35,15 +36,30 @@ Without it, `config.auth.adminKey` and `config.auth.readonlyKey` are **required*
 `config.auth.enabled=true` — rendering fails without them — and are stored in the
 chart-managed `Secret`. That path is fine for a throwaway cluster and poor beyond one: a
 key passed with `--set` ends up in shell history, in the log of whatever CI ran the
-command, and in any values file used to install. Either way the keys map to the app's
+command, and in any values file used to install. Changing them is a restart on this path
+too: the pod carries no hash of the keys (anyone allowed to read pods could test guesses
+against it), so an upgrade that only changes keys rolls nothing — follow it with
+`kubectl rollout restart statefulset/<release>`, or change a `podAnnotations` value in the
+same upgrade. Either way the keys map to the app's
 `X-API-Key` roles (admin = train/manage, readonly = predict/status). Swagger UI:
 `https://<host>/docs`.
 
 > **TLS is not optional here.** Every authenticated call sends `X-API-Key` as a plain
 > header, so an ingress without TLS publishes the credential to anything on the network path.
 > With `ingress.enabled: true` the chart therefore refuses to render until either
-> `ingress.tls` is filled in or `ingress.allowInsecure: true` says TLS is terminated above
-> the ingress (a service mesh, a cloud load balancer) — something the chart cannot detect.
+> `ingress.tls` names every host in `ingress.hosts` (exactly or by a `*.` wildcard) or
+> `ingress.allowInsecure: true` says TLS is terminated above the ingress (a service mesh, a
+> cloud load balancer) — something the chart cannot detect.
+
+> **Name the proxy the rate limiter may believe.** Behind the ingress every request reaches
+> the pod from the controller, so unless uvicorn may take the client address from
+> `X-Forwarded-For`, all clients share one rate-limit bucket and one busy client throttles
+> everyone. With `ingress.enabled` and `config.limits.rateLimitEnabled` the chart therefore
+> refuses to render without `config.limits.forwardedAllowIps` — the controller's addresses,
+> as narrow as you can name them (`10.42.0.0/16` above is k3s's whole pod range: every pod in
+> it may then claim any client address, so pair a range like that with a NetworkPolicy that
+> admits only the controller). `"*"` is refused. If you cannot name the controller, set
+> `config.limits.rateLimitEnabled=false` and limit at the ingress instead.
 
 ## Parameters
 
@@ -72,7 +88,7 @@ command, and in any values file used to install. Either way the keys map to the 
 | `fullnameOverride` | Fully override the generated resource name                         | `""`                           |
 | `image.name`       | Override image repository (defaults to registry/repository)        | `""`                           |
 | `image.tag`        | Set image tag (defaults to `.Chart.AppVersion`)                    | `""`                           |
-| `replicaCount`     | Amount of replicas — MUST stay 1 (process-local state, one PVC)    | `1`                            |
+| `replicaCount`     | Amount of replicas — 1, or 0 to scale down; more is refused (process-local state, one PVC) | `1` |
 | `service.type`     | Set service type                                                   | `ClusterIP`                    |
 | `service.port`     | Set service port (cluster-internal)                                | `8000`                         |
 | `ingress.enabled`  | Enable ingress                                                     | `true`                         |
@@ -87,7 +103,7 @@ command, and in any values file used to install. Either way the keys map to the 
 | Name                                    | Description                                                              | Value         |
 | --------------------------------------- | ------------------------------------------------------------------------ | ------------- |
 | `ingress.allowInsecure`                 | Allow an ingress with no TLS (see below)                                  | `false`       |
-| `config.auth.enabled`                   | Enable API-key authentication                                            | `true`        |
+| `config.auth.enabled`                   | Enable API-key authentication; `false` serves `kubectl port-forward` only (refused with an ingress) | `true`        |
 | `config.auth.existingSecret`            | Secret holding both keys; set this instead of the two below               | `""`          |
 | `config.auth.adminKey`                  | Admin API key (**REQUIRED** when auth enabled and no existingSecret)      | `""`          |
 | `config.auth.readonlyKey`               | Readonly API key (**REQUIRED** when auth enabled and no existingSecret)   | `""`          |
@@ -103,6 +119,7 @@ command, and in any values file used to install. Either way the keys map to the 
 | `config.limits.maxUploadMb`             | Upload cap in MB (keep ingress body-size in sync)                        | `200`         |
 | `config.limits.maxModelsInMemory`       | Trained models kept resident (LRU)                                       | `2`           |
 | `config.limits.rateLimitEnabled`        | Enable the in-process rate limiter                                       | `true`        |
+| `config.limits.forwardedAllowIps`       | Addresses whose `X-Forwarded-For` uvicorn believes: the ingress controller's. **Required** with ingress and rate limiter on (see below) | `""` |
 | `config.extraEnv`                       | Extra plain environment variables (map)                                  | `{}`          |
 
 ### Storage, scheduling & runtime
@@ -120,11 +137,13 @@ command, and in any values file used to install. Either way the keys map to the 
 | `securityContext.runAsUser`                 | User id to run as (image's `appuser`)                              | `1000`               |
 | `securityContext.*`                         | non-root, no privilege escalation, drop ALL capabilities           | see `values.yaml`    |
 | `terminationGracePeriod`                    | Grace period in seconds (training cancels cooperatively)           | `60`                 |
-| `startupProbe.*` / `livenessProbe.*` / `readinessProbe.*` | Probe tuning (`GET /health`)                        | see `values.yaml`    |
+| `startupProbe.*` / `livenessProbe.*` / `readinessProbe.*` | Probe tuning (startup and liveness `GET /health`, readiness `GET /ready`) | see `values.yaml`    |
 | `resources.limits.cpu`                      | CPU limit (bounds training parallelism)                            | `4000m`              |
 | `resources.limits.memory`                   | Memory limit (sized for ~600k-row training)                        | `8Gi`                |
 | `resources.requests.cpu`                    | CPU request                                                        | `500m`               |
-| `resources.requests.memory`                 | Memory request                                                     | `1Gi`                |
+| `resources.requests.memory`                 | Memory request — equal to the limit, which training plans with      | `8Gi`                |
 
 For predict-only or small-data deployments, `resources.limits` of `1000m` / `2Gi`
-are sufficient — training is what needs the headroom.
+are sufficient — training is what needs the headroom. Lower `resources.requests.memory`
+with the limit: a training plans with 85 % of the limit, so a smaller request lets the
+scheduler place the pod where that memory is not free, and node pressure evicts it first.

@@ -1,21 +1,28 @@
 /* Configuring and starting a training run: the form, the column pickers, the planned
-   model names, and the browser-side queue that runs several label fields one after
-   another.
-
-   The queue lives here rather than with the status view because it is "what I asked
-   for", not "what is happening" — and it is the part a server-side queue would replace. */
+   model names, and sending one run per label field. The queue those runs wait in lives on
+   the server (train-status.js shows it); what a run would cost is preflight.js. */
 "use strict";
 
 async function loadTrainingTab() {
-  const dsSel = $("#train-dataset");
+  const dsSel = $("#train-dataset"), profileSel = $("#train-profile");
   try {
     const [datasets, profiles] = await Promise.all([Api.get("/datasets"), Api.get("/train/profiles")]);
+    // Both lists are rebuilt on every visit to the tab, which reset the dataset and the
+    // profile whenever someone looked at another tab (audit 2026-09-30, U08). A choice stays
+    // while it still exists -- read now, not before the fetch: one made while the lists were
+    // loading is the newest (review of U08).
+    const dataset = dsSel.value, profile = profileSel.value;
     dsSel.innerHTML = `<option value="">${esc(t("train.dataset.choose"))}</option>` +
-      datasets.map((d) => `<option>${esc(d.name)}</option>`).join("");
+      datasets.map((d) => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join("");
     // The profile descriptions are server configuration (config.yaml), not UI text:
     // they are shown as the deployment wrote them rather than translated here.
-    $("#train-profile").innerHTML = profiles.profiles.map((p) =>
+    profileSel.innerHTML = profiles.profiles.map((p) =>
       `<option value="${esc(p.name)}" ${p.name === profiles.default_profile ? "selected" : ""}>${esc(p.name)} — ${esc(p.description)}</option>`).join("");
+    if (profiles.profiles.some((p) => p.name === profile)) profileSel.value = profile;
+    if (datasets.some((d) => d.name === dataset)) dsSel.value = dataset;
+    // Deleted meanwhile: the pickers must not go on offering the columns of a dataset the
+    // list no longer shows as chosen.
+    else if (dataset) loadDatasetColumns();
     // Pre-fill the field weights with the server's configured default instead of a
     // hard-coded guess, so the form shows what a request would actually do.
     defaultColWeights = profiles.default_text_column_weights || {};
@@ -29,25 +36,35 @@ async function loadTrainingTab() {
    agree on what happens. */
 let defaultColWeights = {};
 
-function textColumnWeights() {
+/* Every weight on the form, the 1s included: a 1 is a choice too. The rebuild used to read
+   only the values above 1 and filled the gap with the server's default, so a deliberate 1 on
+   "title" (default 2) jumped back to 2 the moment another column was picked, and the run
+   trained with 2 (audit 2026-09-30, U04). */
+function typedColumnWeights() {
   const out = {};
   document.querySelectorAll("#textcol-weights-fields [data-weight]").forEach((el) => {
     const n = Number(el.value);
-    if (Number.isFinite(n) && n > 1) out[el.dataset.weight] = n;  // 1 = default, omit
+    if (Number.isFinite(n) && n >= 1) out[el.dataset.weight] = n;
   });
   return out;
+}
+
+/* What a request sends. A dict sent at all is taken as it is, so a column left out of it
+   weighs 1 -- which is how a 1 is said. */
+function textColumnWeights() {
+  return Object.fromEntries(Object.entries(typedColumnWeights()).filter(([, n]) => n > 1));
 }
 
 function renderTextColWeights(cols) {
   const box = $("#textcol-weights");
   const fields = $("#textcol-weights-fields");
-  const previous = textColumnWeights();
+  const previous = typedColumnWeights();
   box.hidden = !cols.length;
   fields.innerHTML = cols.map((c, i) => `
     <label for="weight-${i}">
       <span class="col-name">${esc(c)}</span>
       <input id="weight-${i}" type="number" min="1" max="10" step="1"
-             value="${previous[c] || defaultColWeights[c] || 1}" data-weight="${esc(c)}"
+             value="${previous[c] ?? defaultColWeights[c] ?? 1}" data-weight="${esc(c)}"
              aria-describedby="textcol-weights-help">
     </label>`).join("");
 }
@@ -125,6 +142,45 @@ function renderNamePreview() {
                      { count: plan.length, names: plan.map((p) => p.name).join(", ") });
 }
 
+/* /train is rate-limited (5 a minute by default) below the number of label fields a batch may
+   hold: seven fields ended in a 429 at the sixth, a retry hit the limit again, and later
+   "already exists" for the runs the first attempt had queued (audit 2026-09-30, U05). A 429
+   now waits the window the server names and sends the same run again -- a bounded number of
+   times, because another client on the same address can keep the window full. */
+const TRAIN_LIMIT_WAITS = 3;
+
+/* The runs of a batch this page has not sent yet. Stopping a training ends the batch too: the
+   server clears its queue, and a page still waiting out the limit sent the rest after the
+   stop as if nothing had happened (review of U05/U10). `stopTraining` (train-status.js)
+   counts them in its question and cancels them, which also cuts the current wait short. */
+const sending = { unsent: 0, cancelled: false, wake: null };
+const unsentRuns = () => sending.unsent;
+
+function cancelUnsentRuns() {
+  sending.cancelled = true;
+  if (sending.wake) sending.wake();
+}
+
+/* The answer to the run, or null when the batch was cancelled while waiting. */
+async function submitRun(body, run, total) {
+  for (let waits = 0; ; waits += 1) {
+    try {
+      return await Api.post("/train", body);
+    } catch (err) {
+      if (err.status !== 429 || waits === TRAIN_LIMIT_WAITS) throw err;
+      const seconds = err.retryAfter ?? 60;
+      toast(t("train.waitingForLimit", { run, total, wait: t("common.seconds", { count: seconds }) }));
+      // On the button too: the message fades, the wait does not.
+      const button = $("#train-btn");
+      button.textContent = t("train.waitingButton", { run, total });
+      await new Promise((resolve) => { sending.wake = resolve; setTimeout(resolve, seconds * 1000); });
+      sending.wake = null;
+      button.textContent = t(button.dataset.i18n);
+      if (sending.cancelled) return null;
+    }
+  }
+}
+
 async function onTrainStart(ev) {
   ev.preventDefault();
   const errEl = $("#train-error"), btn = $("#train-btn");
@@ -167,15 +223,21 @@ async function onTrainStart(ev) {
     if (raw !== "") shared[field] = Number(raw);
   }
   const bodies = plan.map((p) => ({ ...shared, model_name: p.name, label_column: p.label_column }));
-  btn.disabled = true;
+  const idle = busy(btn);
   try {
     // Every run is submitted right away and the SERVER holds the order. This page used
     // to keep the rest in an array and post them as the status changed, which meant a
     // closed tab lost them; sending them now is what makes the tab disposable.
     // Sequentially, because a position is only meaningful against a known queue.
     const accepted = [];
-    for (const body of bodies) {
-      const answer = await Api.post("/train", body);
+    sending.cancelled = false;
+    for (const [at, body] of bodies.entries()) {
+      sending.unsent = bodies.length - at;
+      const answer = await submitRun(body, at + 1, bodies.length);
+      if (answer === null) {
+        toast(t("train.batchCancelled", { count: bodies.length - at }));
+        return;
+      }
       accepted.push(answer);
     }
     const queued = accepted.filter((a) => a.status === "queued").length;
@@ -185,94 +247,8 @@ async function onTrainStart(ev) {
   } catch (err) {
     // Some may already be queued: say so rather than implying nothing happened.
     showError(errEl, { message: t("train.partialFailure", { message: err.message }) });
-  } finally { btn.disabled = false; }
-}
-
-
-/* ---------- pre-flight ---------- */
-
-/* On demand, not on every change of the label field: this parses the whole CSV, and a
-   300 k export costs half a minute each time. The button says what it costs. */
-async function runPreflight() {
-  const box = $("#train-preflight-out"), button = $("#train-preflight");
-  const dataset = $("#train-dataset").value;
-  const textColumns = textColPicker.values();
-  const labelFields = labelPicker.values();
-  if (!dataset || !textColumns.length || !labelFields.length) {
-    // role="alert" announces it; the summary element stays out of the way so the two
-    // do not say the same thing twice.
-    box.innerHTML = `<p class="error" role="alert">${t("train.error.preflightInputs")}</p>`;
-    $("#train-preflight-announce").textContent = "";
-    return;
-  }
-  button.disabled = true;
-  button.textContent = t("common.readingEveryRow");
-  try {
-    const body = await Api.post("/datasets/analyze", {
-      dataset_name: dataset, text_columns: textColumns, label_column: labelFields[0],
-      // The training form offers no separator field, so a run uses the request
-      // default; the pre-flight has to read the file the same way or its numbers
-      // describe a different parse than the one that will happen.
-      label_filter: $("#train-filter").value.trim() || null,
-    });
-    box.innerHTML = preflightSummary(body, labelFields) + analysisHtml(body);
-    // The first paragraph is the headline — rows, labels and what the run will cost.
-    // Read out of the rendered block rather than built a second time, so what is
-    // announced is what is shown. The tables below it are for reading, not hearing.
-    $("#train-preflight-announce").textContent =
-      (box.querySelector("p")?.textContent || "").replace(/\s+/g, " ").trim();
-    box.querySelector("[data-use-threshold]")?.addEventListener("click", (ev) => {
-      $("#train-minsamples").value = ev.target.dataset.useThreshold;
-      ev.target.closest("p").textContent =
-        t("train.preflight.thresholdSet", { value: Number(ev.target.dataset.useThreshold) });
-    });
-  } catch (err) {
-    box.innerHTML = `<p class="error" role="alert">${esc(err.message)}</p>`;
-    $("#train-preflight-announce").textContent = "";
   } finally {
-    button.disabled = false;
-    button.textContent = t("train.preflight.button");   // see explain.js: not a copy
+    sending.unsent = 0;
+    idle();
   }
-}
-
-/* German writes no second period after an abbreviation that ends a sentence, and the
-   duration labels are abbreviations ("12 Min.", "1,5 Std.") — appending one printed
-   "12 Min..". The labels keep their period: the cost table shows them on their own. */
-const endSentence = (text) => (text.endsWith(".") ? text : `${text}.`);
-
-function preflightSummary(body, labelFields) {
-  const profile = $("#train-profile").value;
-  const minutes = (body.estimated_minutes || {})[profile];
-  const current = Number($("#train-minsamples").value);
-  const kept = body.label_threshold_analysis[`labels_with_${current}+_samples`];
-  const recommended = body.recommended_min_samples_per_label;
-  // One sentence per case rather than one sentence with a swapped fragment: the
-  // hedge belongs to a number, and "that is about no estimate for this profile"
-  // was what folding it into the wrapper produced.
-  const cost = !Number.isFinite(minutes)
-    ? t("train.preflight.noEstimateFor", { profile: esc(profile) })
-    : minutes < 1
-      ? t("train.preflight.underAMinuteOn", { profile: esc(profile) })
-      : t("train.preflight.onProfile", { profile: esc(profile), cost: costLabel(minutes) });
-  // Said only when the memory budget holds the run back: that is what makes a long
-  // estimate long, and a full thread count is not news.
-  const planned = (body.planned_head_fit_threads || {})[profile];
-  const held = Number.isFinite(minutes) && planned < body.threads_requested
-    ? t("train.preflight.threadsLimited", { used: planned, requested: body.threads_requested })
-    : "";
-  const perModel = labelFields.length > 1
-    ? t("train.preflight.perModel", { count: labelFields.length }) : "";
-  return `<p><strong>${t("train.preflight.size", {
-      rows: body.total_samples, labels: body.unique_labels })}</strong>
-      ${endSentence(`${cost}${held}${perModel}`)}</p>
-    <p>${kept === undefined
-      ? t("train.preflight.keepsUnknown", { threshold: current })
-      : t("train.preflight.keeps", { threshold: current, kept, total: body.unique_labels })}${
-      current === recommended ? ""
-      : ` ${t("train.preflight.heuristicPicks", { recommended })}
-          <button type="button" class="small" data-use-threshold="${recommended}">${
-            t("train.preflight.useValue", { value: recommended })}</button>`}</p>
-    <p class="muted">${endSentence(
-      t("train.preflight.checkedAgainst", { field: esc(labelFields[0]) })
-      + (labelFields.length > 1 ? t("train.preflight.firstFieldOnly") : ""))}</p>`;
 }

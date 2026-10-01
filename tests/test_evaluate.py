@@ -24,6 +24,7 @@ class _StubModel:
         self.global_threshold = 0.5
         self.per_label_thresholds = {}
         self.uri_to_label = {uri: uri.upper() for uri in classes}
+        self.text_cleaning = 2  # a model trained with the current clean_text (T09)
         self._rows = np.array(rows, dtype=float)
         self._served = 0
         self.batches: list[int] = []
@@ -302,3 +303,19 @@ def test_an_evaluation_that_fits_is_not_refused(monkeypatch):
 
     monkeypatch.setattr(evaluate, "memory_limit_bytes", lambda: None)
     assert evaluate.evaluate_model(*_spread(40))["n_rows"] == 40
+
+
+
+def test_an_evaluation_time_survives_the_wall_clock_being_set_back(tmp_path, monkeypatch):
+    """R15 (audit 2026-09-30): like the training, the evaluation timed itself with
+    `time.time()`, and a clock set back during the run recorded a negative duration."""
+    import itertools
+    import time
+
+    now, steps = time.time(), itertools.count()
+    monkeypatch.setattr(evaluate.time, "time", lambda: now - 10 * next(steps))
+
+    _, registry = _evaluate_csv(tmp_path, ["title;labels", "Bruchrechnung Aufgabe;a",
+                                           "Photosynthese Versuch;b"])
+
+    assert registry.records[0]["duration_seconds"] >= 0

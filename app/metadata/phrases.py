@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from functools import lru_cache
 
 from wordfreq import zipf_frequency
 
-from .textprep import GENERIC_TERMS, is_stopword, is_task_verb, stem, tokenize
+from .textprep import GENERIC_TERMS, MAX_TOKEN_CHARS, is_stopword, is_task_verb, stem, tokenize
 from .types import Document
 
 # Attributive adjectives carry a derivational suffix plus an inflection ending ("chemische").
@@ -30,6 +31,11 @@ _ADJECTIVE_RE = re.compile(
     r"(?:isch|lich|ig|al|iv|ar|bar|los|voll|haft|sam|ell|ös|end)(?:e|en|er|es|em)$", re.IGNORECASE
 )
 _STOP, _CAP, _ADJ, _LOW = "stop", "cap", "adj", "low"
+# Punctuation between two words ends a phrase: "Mathematik, Physik, Chemie" holds three
+# candidates, not the keyword "Mathematik Physik Chemie", which the text does not contain
+# (audit 2026-09-30, M06). None of these can occur inside a token, so splitting at them leaves
+# every token as it was.
+_PHRASE_BREAK_RE = re.compile(r"[,;:()\[\]{}„“”\"»«–—/]")
 _EDGE_PUNCTUATION = " .,;:!?\"'()[]{}„“”»«–-"
 
 
@@ -42,7 +48,9 @@ class Candidate:
 
 
 def _tag(token: str, index: int, lowercase_forms: set[str]) -> str:
-    if is_stopword(token):
+    # A fragment longer than any word ends a phrase like a stopword: never part of a keyword,
+    # never in the caches behind stem() and _idf() (audit 2026-09-30, M04).
+    if len(token) > MAX_TOKEN_CHARS or is_stopword(token):
         return _STOP
     if token[0].isupper():
         # A capitalised sentence opener that also occurs in lower case is no noun ("Besonders").
@@ -72,15 +80,24 @@ def _keep(words: list[str], count: int) -> bool:
     return first[0].islower() or count >= 2 or bool(_ADJECTIVE_RE.search(first))
 
 
-def _tagged_sentences(doc: Document) -> list[tuple[list[str], list[str]]]:
-    """Tokens and word-class tags per sentence (cached per document)."""
+def _tagged_sentences(doc: Document) -> list[list[tuple[list[str], list[str]]]]:
+    """Per sentence, its stretches between punctuation marks as (tokens, word-class tags)
+    (cached per document). A tag is decided by the token's place in the whole SENTENCE --
+    a capitalised sentence opener is judged as one -- while a phrase stays inside one stretch.
+    """
     if "tagged_sentences" not in doc.cache:
-        sentence_tokens = [tokenize(s) for s in doc.sentences]
-        lowercase_forms = {t for tokens in sentence_tokens for t in tokens if t[0].islower()}
-        doc.cache["tagged_sentences"] = [
-            (tokens, [_tag(t, i, lowercase_forms) for i, t in enumerate(tokens)])
-            for tokens in sentence_tokens
-        ]
+        sentence_parts = [[tokenize(part) for part in _PHRASE_BREAK_RE.split(s)] for s in doc.sentences]
+        lowercase_forms = {t for parts in sentence_parts for tokens in parts for t in tokens
+                           if t[0].islower()}
+        tagged = []
+        for parts in sentence_parts:
+            offset, stretches = 0, []
+            for tokens in parts:
+                stretches.append((tokens, [_tag(t, offset + i, lowercase_forms)
+                                           for i, t in enumerate(tokens)]))
+                offset += len(tokens)
+            tagged.append(stretches)
+        doc.cache["tagged_sentences"] = tagged
     return doc.cache["tagged_sentences"]
 
 
@@ -108,7 +125,8 @@ def heuristic_candidates(doc: Document, max_len: int = 3) -> list[Candidate]:
     if cache_key not in doc.cache:
         occurrences = (
             (tuple(stem(t) for t in phrase), " ".join(phrase), pos)
-            for pos, (tokens, tags) in enumerate(_tagged_sentences(doc))
+            for pos, stretches in enumerate(_tagged_sentences(doc))
+            for tokens, tags in stretches
             for phrase in _phrases(tokens, tags, max_len)
         )
         doc.cache[cache_key] = [
@@ -117,8 +135,27 @@ def heuristic_candidates(doc: Document, max_len: int = 3) -> list[Candidate]:
     return doc.cache[cache_key]
 
 
+# wordfreq loads its German table on first use behind an lru_cache, which is thread-safe but
+# not single-flight: eight simultaneous first requests each read it -- 3.3 s and a 554 MB peak
+# against 0.3 s and 101 MB for one load (audit 2026-09-30, M07). The first use is serialised;
+# after it, the flag is all anyone reads.
+_table_lock = threading.Lock()
+_table_loaded = False
+
+
+def _load_table_once() -> None:
+    global _table_loaded
+    if _table_loaded:
+        return
+    with _table_lock:
+        if not _table_loaded:
+            zipf_frequency("und", "de")
+            _table_loaded = True
+
+
 @lru_cache(maxsize=100_000)
 def _idf(token: str) -> float:
+    _load_table_once()
     # Zipf 7 ≈ "der", 3 ≈ rare word, 0 = unknown word: rare words weigh more, never below 0.5.
     return max(0.5, 7.5 - zipf_frequency(token, "de"))
 

@@ -2,6 +2,608 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased]
+
+The findings of the audit of 2026-09-30 (`docs/audits/2026-09-30-audit.md`); the IDs in
+brackets are its finding numbers.
+
+### Security
+
+- **No request body is read before its API key checks out.** FastAPI parses a body before any
+  dependency runs, and the key check is one: a caller without a key made the server parse up
+  to the upload cap — 48 MiB of JSON took the process from 232 to 1,485 MiB for a 401 — or
+  spool a chunked upload, which declares no size for the old ceiling to check, whole into
+  `/tmp` (the chart's 1 Gi emptyDir, whose overflow evicts the pod and its training). A pure
+  ASGI guard now authenticates every request that carries a body before reading a byte, and
+  counts the bytes as they arrive, chunked included: uploads against `APIV3_MAX_UPLOAD_MB`,
+  every other body against the new `APIV3_MAX_JSON_MB` (default 10; Helm
+  `config.limits.maxJsonMb`; reported by `GET /config`). (S01)
+- **`/metadata` joins wrapped lines in linear time.** Joining a line to the one before
+  searched the whole text joined so far for a final hyphen and copied it, once per line; lines
+  that start in lower case (vocabulary lists, "der … und die …") all join, so 100k characters
+  took 4.0 s and a request at the documented caps 13–60 CPU-minutes, with a readonly key. Only
+  the end of the last line is read now, and the pieces are joined once: 0.06 s. The joined
+  text is unchanged, checked against the old code on 20,000 generated inputs. (M01)
+- **Parallel `/metadata` requests no longer corrupt each other.** pysbd keeps the text it is
+  segmenting on the segmenter object, and the Snowball stemmer keeps its word on the stemmer,
+  and each existed once for every request thread: in parallel, results differed from the
+  sequential ones, descriptions held sentences the input did not contain, some requests
+  answered 500 (an `IndexError` inside the stemmer), and a stem computed mid-race stayed in
+  the cache. Each thread now has its own. (M02)
+- **What one `/metadata` request may cost is bounded.** The per-text caps allowed 100 texts of
+  100,000 characters, about eight CPU-minutes in the shapes the sentence splitter is slowest
+  on, and nothing bounded how many ran at once in the worker pool every route shares. A
+  request now carries at most 1,000,000 characters across its texts (422 beyond), and at most
+  `APIV3_MAX_CONCURRENT_METADATA` (default 2) batches run at once — the next gets 503 with
+  `Retry-After`, like `/predict/csv`. (M03)
+- **A token longer than any word is neither a keyword nor cached.** The stem and word-rarity
+  caches count entries, not bytes, and a token could be as long as a text line: 25 such
+  tokens in each of 200 texts added 55 MiB, over 2 GB at the caches' caps — memory the
+  training's budget does not see. Such a 4,000-character fragment could also come back as a
+  keyword. Past 64 characters a token now ends a phrase like a stopword and is stemmed
+  without being remembered. (M04; the keyword half of M06)
+- **The README's interop example no longer switches off skops' safety check.** It loaded a
+  bundle with `trusted=sio.get_untrusted_types(file=…)`, which trusts every type the file
+  declares — the way a crafted `.skops` file runs code, and the one the API's own loader
+  refuses. A bundle of this app declares none, so the example passes `trusted=[]` and says
+  why; the suite now runs the snippet against a freshly trained bundle. (S07)
+- **A model name outside Latin-1 no longer breaks its export and share link — or fills the
+  disk.** The download header was built by hand, and a header is Latin-1: a model called
+  "Fächer–2026" made the export and its public share link answer 500, and every attempt left
+  a whole bundle copy behind until the next restart — repeatable without a key. The header
+  is now written RFC 5987-encoded where the name needs it (an ASCII name keeps the old form),
+  and a staged copy is deleted when the response cannot be built. (S03)
+- **Stalled share-link downloads no longer fill the volume.** Every export, a public share
+  link's included, packed its own full copy of the bundle and kept it until the client had
+  read the last byte: twelve connections that never read held twelve copies (measured: 98 MB
+  for an 8 MB archive), and with the chart's defaults about twenty filled the volume —
+  without a key — after which trainings, feedback and new links failed. Downloads of the
+  same bundle state now share one staged file, which the last of them deletes; a changed
+  bundle (`PUT …/info`, a new model under the name) is packed anew. (S02)
+- **A share link's model name is checked again before the public download.** The dataset
+  branch re-validated the name read back from the link store; the model branch joined it
+  onto the models directory as stored, so an altered store entry such as `../elsewhere/m`
+  exported a bundle from outside it to anyone holding the link. It now answers 404, like an
+  unknown link. (S11)
+- **A revoked share link stays revoked.** A revocation removed the link in memory before the
+  store was written, so on a full volume it answered 500, a second attempt 404 ("already
+  expired") — and after the next start the link served again, in time even a new model
+  under the same name. Deleting a model or dataset had the same pattern, and also deleted
+  the resource before revoking its links. Every link change is now adopted only once the
+  store holds it; otherwise the answer is 503 naming `APIV3_SHARE_LINKS_FILE`, and nothing
+  changed. A delete revokes the links first, so a revocation that cannot be written leaves
+  the resource in place rather than its links. (S05)
+- **The corrections export hands a spreadsheet no formula.** `GET /feedback/export` wrote a
+  correction's text and labels as they came, and any readonly key can send one: a text like
+  `=HYPERLINK(…)` stayed a live formula for whoever opened the file in Excel. A cell that
+  would start one (`= + - @`, tab, CR) now gets a leading tab, as the admin UI's own download
+  does; training cleans and trims it away, so a run reads exactly the rows it read before.
+  (S08)
+- **The API refuses to start with a key that cannot work or protect.** A configured key
+  outside ASCII made every request carrying a key a 500 — the readonly key's too, as the
+  admin key is compared first — and could not be matched reliably anyway, since clients
+  encode such a header differently. The `change-me-…` placeholders from `.env.example` were
+  accepted as they are: keys anyone who has read the repository knows. Both now stop the
+  start with a message naming the variable (never the value) and how to make a key. (S10)
+- **Invented HTTP methods no longer mint `/metrics` series.** The method was a label taken as
+  sent, and to uvicorn's h11 parser any token is a method: 200 invented ones made 600 series
+  in a process that never restarts. A method HTTP does not define now counts as `OTHER`, as
+  an unmatched path counts as `<unmatched>`. (S13)
+- **The chart no longer publishes a hash of the API keys.** The pod's `checksum/secret-env`
+  annotation was a SHA-256 of the rendered key Secret, readable by anyone allowed to read
+  pods; with the rest of that manifest public, a weak key could be confirmed offline. The
+  annotation is gone, so a `helm upgrade` that only changes the chart-managed keys no longer
+  restarts the pod by itself: follow it with `kubectl rollout restart`, or change a
+  `podAnnotations` value in the same upgrade (chart README). (S12)
+- **A proxy can no longer vouch for loopback, and the chart makes the rate limiter's proxy
+  explicit.** uvicorn rewrites a request's peer from `X-Forwarded-For` for every peer in
+  `FORWARDED_ALLOW_IPS`, and the chart suggested the ingress controller's pod range there:
+  any pod in it sending `X-Forwarded-For: 127.0.0.1` was keyless admin
+  (`APIV3_AUTH_ENABLED=false`), and could pick its own rate-limit bucket or exhaust
+  another's. Keyless mode now serves no request that carries a forwarding header
+  (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`) — a reverse proxy on the same machine
+  relays someone else too. **Chart, breaking:** with the ingress and the rate limiter on
+  (both default) it now refuses to render without `config.limits.forwardedAllowIps` — until
+  now every client behind the ingress shared one rate-limit bucket — and refuses `"*"`.
+  Name the controller's addresses (pair a whole pod range with a NetworkPolicy), or set
+  `config.limits.rateLimitEnabled=false` and limit at the ingress. (S04)
+- **"curl kopieren" no longer pastes a model's name as shell code.** The admin UI put the
+  name between single quotes as it is, and model names may contain `'`, `$`, `(` and
+  backticks: a model called `m'$(touch x)'` — named on training or taken from an imported
+  archive's file name — ran its command in the shell of whoever pasted the snippet, readonly
+  key or not. The name is now a JSON string inside a properly quoted shell word; the suite
+  pastes the generated command into a real shell to check. (S06)
+- **Signing out of the admin UI leaves nothing of the session behind.** It cleared the key
+  and hid the app, so whoever signed in next found the previous user's query text, its
+  result and a valid share link on the page. Signing out now resets the forms and reloads
+  the page. (A 401 in the middle of a session still only asks for the key again, keeping
+  what was typed.) (S09)
+
+### Fixed
+
+- **The Training tab loads a dataset's columns again.** The debounce wrapper handed its
+  listener's `change` event to the handler as the `isCurrent` predicate; the first call threw,
+  and no training could be started from the admin UI in 4.0.1. The Evaluate form kept the
+  previous dataset's columns the same way. The UI handlers are now executed under node in the
+  suite, not pattern-matched. (U01)
+- **GitLab's test stage can pass.** `tests/test_helm_chart.py` refuses to skip under `CI`, and
+  GitLab's `pytest` job had no helm: eight render tests failed in every pipeline, so neither
+  image nor chart ever reached the company registry, not even for `v4.0.1`. The job installs
+  helm 3.16.4, verified against its published checksum. (B01)
+- **A label on every row no longer produces a model that cannot be loaded.** scikit-learn fits
+  such a label as a `_ConstantPredictor`, which the skops guard refuses: the run reported
+  `completed` and every `/predict` answered 422 — realistic for a parent subject in a
+  hierarchical vocabulary. A label now needs `min_samples_per_label` rows without it as well
+  as with it (in the train split, for a holdout run); the ones that fail are listed in the
+  bundle as `ubiquitous_labels` and on the model card, and a run with nothing else left stops
+  and says why. Every staged bundle is checked against the loader's type allowlist before it
+  is published. (T01)
+- **One broken byte no longer turns a UTF-8 dataset into cp1252 garbage.** Every reader tried
+  UTF-8 and, on the first undecodable byte anywhere, read the whole file as cp1252: one
+  truncated umlaut made every `ä` of every row `Ã¤`, invisibly to the metrics, and with a
+  curly quote in the file the run failed with "see server logs". The encoding is now decided
+  once per file from its bytes (`app/csv_encoding.py`) by training, the dataset views and
+  `/predict/csv` alike: up to 10 stray bytes in a UTF-8 file are read as `�`, a file with
+  more or with both encodings mixed is refused with the offset of the first bad byte, and
+  the bundle records the result as `csv_encoding`. (T02)
+- **`/predict/csv` no longer cuts its answer short on a broken row.** The input was parsed in
+  500-row chunks while the answer streamed, so a parser error past the first chunk ended the
+  stream after the 200: 500 of 700 rows, a clean end of transfer, `/metrics` counting a
+  success, the error only in the server log. The whole file is now parsed before the first
+  byte — a broken row is a 400 naming it — and the response carries `X-Input-Rows`, the
+  number of input rows the answer covers, exposed to cross-origin clients as well. (V06)
+- **The admin UI no longer reports a CSV answer cut short as done.** It compares the rows
+  the answer covers with `X-Input-Rows` and says "incomplete: N of M input rows" where it
+  used to say "Fertig … 500 Eingabezeilen" for a 700-row file. (U02)
+- **A text column the dataset lacks is refused, not skipped.** The loader dropped it without a
+  word and the bundle recorded it anyway: `/predict/csv` then refused CSVs in the training
+  data's own format, and a later export that has the column would feed the model a field it
+  never saw. `/train` and `/models/{name}/evaluate` now answer 400 naming the column before
+  the job can queue, and the loader refuses it for queued runs too. (T03)
+
+- **The word-frequency table is loaded once, however many first requests arrive together.**
+  wordfreq's cache is thread-safe but not single-flight: eight simultaneous first `/metadata`
+  requests read the German table eight times — 3.3 s and a 554 MB peak instead of 0.3 s and
+  101 MB. The first load is serialised now. (M07)
+- **`/metadata` no longer invents sentences or splits words out of markup.** Entities were
+  decoded before tags were removed, so `x &lt; 5 … y &gt; 3` became a tag that swallowed the
+  prose between it — and the description was a sentence the text does not have. A literal
+  `<script>`, `<nav>` or `<footer>` in running text deleted the rest of the document; a
+  commented-out banner became the title; `<b>Bruch</b>rechnung` came back as "Bruch rechnung";
+  a `\r\n` kept `###` in a heading. The metadata path now normalises line endings first,
+  drops comments, drops non-prose bodies only with their closing tag, takes as a tag only `<`
+  plus a letter, `/`, `!` or `?`, removes inline tags without a space, and decodes entities
+  last. The classification path changed only for new models, since its cleaning feeds
+  fitted vectorizers (T09). (M05)
+- **`/metadata` proposals keep closer to the text.** A keyword no longer runs across
+  punctuation ("Mathematik, Physik, Chemie" gave the keyword "Mathematik Physik Chemie"); a
+  PDF ligature is read as its letters ("FLüssige Phase" becomes "Flüssige Phase"); the title
+  template joins with "und" only where the text has the word, else with a comma — it was the
+  one word the endpoint returned that the input lacked, English texts included; after a
+  sentence too long for the budget is skipped, a following one that opens by pointing back
+  ("Er", "Dies", "Damit") is not taken; and the boilerplate phrases mark only lines short
+  enough to be page chrome, so a paragraph about data protection is no longer dropped for
+  saying "Datenschutzerklärung". The source pipeline's five reference documents come out
+  unchanged. (M06)
+- **The task type is that of the labels actually trained.** It was read off the raw label
+  cells, where `uri:a,uri:a` counted as two labels and so did a second label too rare to
+  train: one such row made a single-label dataset "multilabel", decided by thresholds instead
+  of argmax, and a nonsense text then got every label. It is now read off the target matrix
+  after every drop, and a label named twice in one cell counts once. (T04)
+- **A label no threshold can hit keeps the global threshold.** The guard looked only at
+  whether a label had validation positives. One whose positives all score below the lowest
+  cut has F1 0 at every cut, and the argmax then chose that lowest cut, 0.05: in the audit's
+  runs 20 of 379 per-label thresholds sat there and fired on 12.8 % of test rows for labels
+  on 0.7 %. (T05)
+- **A training run that cannot finish is stopped before its first fit, not after the last.**
+  The deploy fit comes last and has the most rows, and the memory check weighed it only
+  when it came — and weighed it with the out-of-fold buffers the cross-validation had
+  already released (858 MB of phantom demand at 250,000 rows × 300 labels × 3 C
+  candidates). A run near the budget computed every k × C-grid fit and was then refused,
+  with advice (shorten the C grid) that no longer helped. The first fit now weighs the
+  deploy fit too, projected from its own matrix, and the deploy fit is weighed without the
+  buffers. (T06)
+- **A duplicate is what the vectorizer cannot tell apart.** The dedupe compared texts
+  exactly while the vectorizer lower-cases and strips accents, so "BRUCHRECHNUNG" stayed
+  beside "Bruchrechnung" and could land in the test split while its twin trained — flattering
+  the metrics. Texts are now compared the way the vectorizer sees them. (T07)
+- **A duplicate whose labels differ is counted, not dropped in silence.** The first row still
+  wins (merging would turn a single-label dataset multilabel for a few noisy copies), but the
+  number of copies whose labels disagreed is logged and recorded in the bundle as
+  `conflicting_duplicates`. (T10)
+- **A label called "NA", "None" or "null" is a label.** pandas read such cells as missing,
+  and their rows vanished from training; the label column is now read as written, like the
+  provenance marks already were. (T08)
+- **An omitted `min_samples_per_label` is the configured one, as `/train/profiles` says.** The
+  request's own default (20) won whenever the field was left out, so `config.yaml`'s value
+  never applied, while `/train/profiles` announced it as the default. Now: the request's
+  value (or `null` for auto-scaling), else `config.yaml`'s, else 20 — and the run records the
+  number it used. Without `config.yaml`, the built-in profiles also lost `stratified_splits`
+  and the text-column weights; they now match the shipped file field for field. (T11)
+- **Training with the `saga` solver is repeatable.** It visits samples in a random order and
+  drew it from the global generator, so two runs on the same data gave two models; the
+  head's `random_state` is fixed now. (`newton-cg`, the default, was never affected.) (T12)
+- **"confidence" is no longer described as calibrated.** Balanced class weights lift rare
+  labels' probabilities (up to 3.9× their real frequency); the code, the README and the
+  model comparison said they were natively calibrated. Decisions are unaffected — the
+  thresholds are tuned on the same scores — but a displayed percentage is a score to compare
+  with the label's threshold. Calibration itself is listed as a later improvement. (T13)
+- **Evaluation weights are bounded like training weights.** `/train` caps a text-column weight
+  at 10; `/models/{name}/evaluate` took any number, and a typo like `1000000` made the API
+  process build a million column names per row. Over 10 is now a 422. (T15)
+- **Row counts survive a quote inside an unquoted field.** The dataset views counted quote
+  parity per line, so an inch mark (`24" Diagonale`) opened a "field" that swallowed the
+  following lines: 10 rows were shown as 3. Rows are counted with a CSV reader now, which
+  takes a quote as one only where a field starts — using the dataset's separator where the
+  request names one, else the one its header line uses. (T14)
+- **A comparison in the text survives the cleaning, for new models.** The classification
+  path's cleaning took any `<…>` for a tag, so "Für alle x < y gilt: Wenn a > b" lost "y gilt:
+  Wenn a" — in training and prediction alike. New models are trained with cleaning version 2,
+  where a tag starts with `<` and a letter, `/`, `!` or `?`. A bundle records its version as
+  `text_cleaning`, and serving and evaluation clean with the version the model was trained
+  with: existing models (version 1) behave exactly as before. (T09)
+- **`/predict/csv` bounds `top_k` and `threshold` as `/predict` does.** The form fields took
+  any number: `top_k=-1` sliced the ranking from its far end, `threshold=5` or `nan` passed
+  no label, and each answered 200. Both transports now share one definition of the bounds
+  (`top_k` 0–1000, `threshold` 0–1); outside them is a 422 before the upload is spooled. (V01)
+- **A line break is refused as a CSV separator.** It is one character, so the length guard let
+  it through, and pandas refuses `\n` as a delimiter: `GET /datasets/{name}` and
+  `/predict/csv` answered 500 even to a readonly key, `/train`, `/datasets/analyze` and
+  `/validate` did too, an evaluation ended as a job error without a reason, and `\r` read
+  every row as a single column. All six separator inputs share one rule now — the query and
+  form parameters answer 400, the request bodies 422. (V02)
+- **The explanation's influential words are words.** `/predict/explain` took them from the raw
+  text while the model reads it cleaned, so an HTML input listed `div`, `class`, `p` or `href`
+  among its most influential words, each variant fed them to the model as words, and they
+  took places in the 60-word budget. The words are now those of the text the model reads,
+  cleaned with the version the bundle was trained with. (V03)
+- **`EXPORT.CSV` can be imported, and is listed.** The import compared the suffix
+  case-sensitively and refused the upper-case name Windows tools write, although every
+  other route takes a dataset name regardless of case; and the listing globbed `*.csv`,
+  which on Linux misses such a file even where it was copied onto the volume. Both now
+  apply the rule the other routes do, so the name is kept as uploaded, and a `new_name`
+  ending in `.CSV` no longer gets `.csv` appended. (V04)
+- **`FAECHER.ZIP` can be imported as a model.** The model import compared `.zip`
+  case-sensitively as well and refused the bundle as not being a ZIP. (Found beside V04.)
+- **A 422 no longer mirrors the input, and no longer turns into a 500.** Each entry of
+  `errors` carried the refused value as `input`: a text over the cap came back whole (10.4 MB
+  in, 10.4 MB out), and a value no response can carry — a lone surrogate such as `\udc00`,
+  which has no UTF-8 form, or a JSON `NaN` — made the 422 itself fail, so `/predict`,
+  `/predict/explain` and `/metadata` answered 500. `input` is left out; `loc`, `msg`, `type`
+  and `ctx` remain. (V05)
+- **A 500 is counted, and carries the security headers.** Starlette builds the response to an
+  unhandled error outside the middleware stack, and both the request counter and the header
+  middleware worked on the response the stack returned — so a 500 had no
+  `Content-Security-Policy` or `nosniff`, and `/metrics` never showed a `status="500"`
+  series, the one an "API is failing" alert needs. The counter now records it before the
+  error travels on, and the 500 handler sets the same headers. (R05)
+- **A model deleted while its export starts is a 404.** The export and the public share link
+  check that the model exists and then pack it; a delete in between answered 500. It is now
+  the same 404 as a missing model — on the share link without the model's name. (R09)
+- **A mistyped solver or joblib backend stops the start.** `APIV3_SOLVER` and
+  `APIV3_PARALLEL_BACKEND` took any string, so a typo surfaced as a failed training, minutes in.
+  Both now accept only what works — the solvers sklearn offers but `newton-cholesky`, whose
+  dense Hessian cannot fit TF-IDF's dimensions, and joblib's own backends. (R14)
+- **A correction written after a torn line is kept.** A write cut short — a full volume, a
+  kill — leaves the corrections file's last line without its newline, and the next
+  correction was appended onto it: one merged line the reader drops, so the correction was
+  lost, including the retry the 503 tells the editor to send. A torn line is now ended
+  before the next correction is written. (R06)
+- **The first correction after a start no longer holds the server.** It counted the
+  corrections on disk by loading the whole file as a list, on the event loop: with 240 MB of
+  corrections that took 2.9 s, during which not even `/health` answered, and 769 MB of
+  memory. The count now streams over the lines, in a worker thread. (R02)
+- **The corrections file stops growing at `APIV3_MAX_FEEDBACK_MB` (default 1024).** It never
+  drops a line — it is training data — but a readonly key could append 24–60 MB a minute
+  within the rate limit until the volume the models live on was full. At the cap a new
+  correction answers 503 and the file is left as it is; what was collected stays exportable.
+  Chart: `config.limits.maxFeedbackMb`. (R02)
+- **A published bundle survives a power cut.** Bundles were written and renamed into place
+  without an fsync; a rename reaching the disk before the data blocks leaves names pointing
+  at empty files, so a bundle could come back with empty skops files. Every member and the
+  staging directory are now synced before the rename exposes them — for a training outside
+  the disk lock, in the process that wrote it — and the models directory after; the same
+  for an import and for `metrics.json` edits. (R13)
+- **A bundle whose files come from different models is refused.** An archive's members were
+  each checked, never against each other: a head from another training installed with 200,
+  and every prediction then failed with a 500 ("X has 182 features, but LogisticRegression
+  is expecting 7"). Loading — which an import runs before publishing — now checks that the
+  head takes the features the vectorizer makes and scores the classes `config.json` names;
+  a mixed archive is refused on import, a mixed bundle on disk answers 422. (R08)
+- **A delete cut short no longer blocks the model's name.** Deleting was one recursive
+  removal; cut short — a file another process holds, an I/O error — it left part of the
+  bundle under the name, no longer a model but in the way, so an import under that name
+  failed with a 500. The bundle is now renamed aside first, which frees the name at once,
+  and then removed; a leftover is hidden and the next start sweeps it. (R11)
+- **The image runs one worker, whatever `WEB_CONCURRENCY` says.** Without `--workers`,
+  uvicorn takes its worker count from that variable, and the training job, model cache, rate
+  limits and share links live in one process: with several workers, share links made in one
+  were unknown to the next. The image's command now pins one worker, and a start with
+  `WEB_CONCURRENCY` above 1 logs that the app runs as one process. (R07)
+- **A stop pressed as one queued run hands over to the next is kept.** The next run was
+  taken off the queue in one locked step and launched in another, and the launch cleared the
+  stop flag — which `stop` set before taking the lock. A stop arriving in between was erased
+  and the run it was meant to prevent started anyway. Taking a run off the queue and
+  launching it is now one step, and `stop` sets its flag under the same lock; the same
+  closes a gap in which two starts could both pass the busy check. (R10)
+- **A dataset a waiting run will read cannot be deleted from under it.** Queued runs read
+  their dataset by name when their turn comes, and deleting a dataset ignored the queue:
+  deleted and uploaded anew under the same name, the waiting run trained — or evaluated —
+  on the new file without a word. `DELETE /datasets/{name}` now answers 409 while a running
+  or queued run names the dataset. (R12)
+- **A cold model is loaded once, a multi-model call finds its models cached, and awaited work
+  has threads.** Requests waiting for a model nobody had loaded yet each loaded it again once
+  the one before them finished (eight requests, eight loads); the cache is now checked again
+  under the disk lock. `/predict/multi` may name five models while the cache held two, so
+  each call evicted what the next needed — five calls with the same three models made
+  fifteen loads and no hit; the cache now holds at least five (it only ever holds models
+  that were asked for). And every `asyncio.to_thread` ran on the event loop's default
+  executor, min(32, CPUs + 4) threads — eight on four cores — where an export and eight
+  model reads kept a prediction waiting 4.3 s; it now has 40, as Starlette's own pool. (R04)
+- **An import and a training of one name no longer destroy or mix each other's bundle.** Both
+  staged in the same hidden directory, and each removed what it found there as a crash
+  leftover: an import that failed took a training's finished bundle with it, and two that
+  overlapped published a mix that answered every prediction with a 500. Every write now
+  stages in a directory of its own (a training in a child process writes into the one its
+  parent made); whichever publishes second is refused, its staging removed, and leftovers of
+  a crash are the startup sweep's. An import also holds its model's name from before its
+  upload until it is installed: a training — or a second import — of that name is refused
+  with 409 at once, not after minutes of work. (R01)
+- **A shutdown waits for the running training and records what it ends.** It asked the run
+  to stop and returned at once: uvicorn was gone in 0.16 s, and neither the run nor anything
+  queued behind it left a trace in the history — on every rollout, node drain and key
+  rotation. Queued runs are now recorded as `interrupted` at once, the running run is given
+  `APIV3_SHUTDOWN_WAIT_SECONDS` (50; chart: `terminationGracePeriod` − 10) to stop at its
+  next checkpoint, and is recorded as `interrupted` if it is still running then. Compose
+  stops with a 60 s grace instead of Docker's 10 s. (R03)
+- **Training and evaluation times survive the clock being set back.** Both were the difference
+  of two wall-clock readings, so a clock set back during a run (NTP after a suspend, a VM
+  migration) recorded a negative duration. They are measured on the monotonic clock now;
+  timestamps stay wall-clock. (R15)
+- **A hard-stopped run is in the history.** A hard stop resets the status at once and drops
+  the run's own finish, so the run left no record at all; it is now recorded as `stopped`
+  when it is stopped. (R15)
+- **A bundle keeps its newest 50 evaluations, not every one ever made.** Each evaluation was
+  appended to `metrics.json` for good — the document every model detail reads and every
+  export packs grew without end. (R15)
+- **A repair backup is not a model to any route.** The label repair keeps the untouched bundle
+  as `<name>.prebackup`; the listing hid it, but every other route served it by name —
+  exactly the weights the repair removed — and a model trained or imported under such a name
+  was invisible and live at once. Such names are now no model anywhere (404), and `/train`
+  and the import refuse them (400). (R15)
+- **A bundle rewritten on disk is served as rewritten.** The label repairs
+  (`scripts/patch_bundle_labels.py`, `prune_bundle_labels.py`) rewrite bundles beside a running
+  server, which kept serving the model it had cached until a restart or an eviction — and a
+  bundle removed by hand kept answering the same way. A cached model is now checked against
+  its `config.json` (modification time and size) on every request and reloaded when it
+  changed; a removed one answers 404. (R15)
+- **An upload cut off at the cap no longer leaks its temp file — Starlette 1.3.1 → 1.6.0.**
+  The body guard (S01) stops an oversized upload by raising 413 from the request stream, and
+  Starlette 1.3.1's multipart parser closed its spooled temp files only on its own errors:
+  each cut-off upload left one open until garbage collection, and the suite failed on
+  Linux with Python 3.11 — which is what the image and CI run. 1.6.0 closes them on any
+  error. Found by running the whole suite on Linux against the hashed lock: the local
+  environment had drifted to 1.6.0, so it never showed. `pip-audit`: no known
+  vulnerabilities.
+- **A single-text answer is about one text.** The classification was asked for the text in
+  the field, and the metadata and the "Why?" button read the field again once the answer was
+  back: a user who went on typing got the metadata of one text beside the classification of
+  another, and "Why?" explained an answer for a text the model never saw. The text is now
+  read once per query. (U06)
+- **A correction is saved with the text that was classified.** It read the text field at the
+  moment it was saved: classify "Pythagoras …", change the field to "Photosynthese …",
+  correct to Biologie, and the feedback file held "Photosynthese" beside the Mathematik
+  prediction — a row the next training reads as a true pair. The classified text now travels
+  with the answer, and once the field says something else the correction is refused with a
+  request to classify again, both when opening the form and when saving one opened before the
+  edit: the labels on screen belong to the old text, the user may mean the new one, and
+  neither guess belongs in the training data. (U03)
+- **A column weight set to 1 stays 1.** The training form rebuilds its weight fields whenever
+  the column selection changes, and the rebuild kept only the values above 1: a deliberate 1
+  on `title` (configured default 2) jumped back to 2 as soon as another column was picked,
+  and the run trained with 2. Every typed value now survives the rebuild. (U04)
+- **A batch of label fields outlasts the rate limit.** One model per label field means one
+  `POST /train` each, against a limit of 5 a minute: seven fields gave five accepted runs and a
+  429 that ended the batch, a retry hit the limit again, and later answered "already exists"
+  for the runs already queued. The page now waits the window the server names in
+  `Retry-After` (which the transport now hands on) and sends the same run again, says so in a
+  message, and gives up after three waits — another client on the same address can keep the
+  window full. The UI guide no longer claims both that the tab may close and that the queue
+  lives in it. (U05, W08)
+- **A picked dataset or column is sent as it is named.** Four pickers built their options
+  without a `value`, so the browser submitted the option's text — stripped and with runs of
+  spaces collapsed: a column `"title "` or a file `two  spaces.csv` came back as `title` and
+  `two spaces.csv`, and the server answered 400 or 404 for a name it had listed itself. Every
+  option now carries its name as its value. (U07)
+- **"Analyse" in a dataset's panel analyses that dataset.** The panel kept the open dataset's
+  name in a module-wide object that every answer wrote: open A, close it while it is still
+  reading, open B — and A's late answer pointed B's "Analyse" button at A. The name now
+  belongs to the panel that shows it, and an answer for a panel that was replaced is
+  dropped. (U08)
+- **A long sample cell is cut before it is escaped.** The dataset panel's sample table escaped
+  a cell and then cut it to 120 characters, so the cut could land inside an entity and show
+  half of one (`&a` for `&amp;`). (U08)
+- **A double click creates one share link.** "Share link" posted once per click, so a double
+  click created two links — two bearer capabilities, valid for a day, for one intent. A
+  resource being shared is now not shared again until the first answer is in. (U08)
+- **An answer that is not the API's says so.** A JSON call handed back the raw response when
+  a successful answer was not JSON — an SSO proxy's sign-in page, a captive portal — and the
+  caller failed on it as "names.map is not a function", or showed an empty list; a body that
+  claimed JSON and was not surfaced the browser's own parser message. Both now fail with one
+  translated sentence that names the likely cause. Downloads still get the answer itself.
+  (U08)
+- **A look at another tab keeps the choices made.** The Query and Training tabs rebuild their
+  lists on every visit, which put the check back on the first model and reset the dataset and
+  the profile — while the column pickers still offered the old dataset's columns. A choice now
+  survives the rebuild while it still exists (an empty model choice too: metadata alone needs
+  no model) — including one made while the lists were still loading — and a dataset deleted
+  meanwhile clears its columns. (U08)
+- **A training run's transitions are heard from every tab.** The element announcing them sat
+  inside the Training panel, which is hidden whenever another tab is shown — and a hidden
+  live region is not in the accessibility tree at all. A run that finished while its owner
+  classified texts was never announced, though the chip beside the tabs showed it. The
+  announcer now sits in the top bar beside that chip. (U09)
+- **A message raised in a dialog is shown in the dialog.** An open modal dialog makes
+  everything outside it inert and paints it under its backdrop — both message stacks
+  included, so "copied" or why a delete failed was neither heard nor properly seen while the
+  model or dataset panel was open. Each dialog now holds a pair of message stacks of its own,
+  inserted before it opens, and messages go there while it is open. (U09)
+- **The focus stays where the user pressed.** Every form disabled its button while the
+  request ran, and a focused button that turns disabled hands the focus to the page itself —
+  enabling it again does not give it back. After every submit a keyboard or screen-reader user
+  was back at the top of the page. The button now gets the focus back when the work is done,
+  unless the user has moved on meanwhile; a saved correction, whose Save stays disabled, hands
+  it to the form's Close button. (U09)
+- **Stopping a training asks first, and the status card keeps the focus.** "Stop training"
+  ended the run at once — and stopping also empties the queue, so one click could throw away
+  a whole batch. It now asks, saying how many runs would go with it — those queued on the
+  server and those the page has not sent yet while it waits out the rate limit (U05), which a
+  confirmed stop now cancels instead of sending them after it. The card it sits on was
+  rebuilt from scratch every 2.5 s while a run was going, so the focus fell off "Stop" between
+  Tab and Enter and a phase or model name being selected lost its selection; it is now updated
+  in place, and only the rows whose text changed are written. (U10)
+- **The model checkboxes no longer ask for a Ctrl-click.** Their label, and the UI guide,
+  still said "Ctrl-click for several" from the multi-select they replaced; a checkbox needs
+  no modifier. Found while checking U08 in the browser.
+- **A release pushes the image tag its chart names.** The chart names its image by
+  `appVersion` (4.0.1), and the GitLab tag build pushed only the git tag (v4.0.1): installed
+  from the repository as its README says, the chart pulled an image no pipeline had pushed to
+  that registry. The tag build now pushes both. (B02)
+- **Every main pipeline rolls out the image it built.** The branch chart named the image
+  `:main` under the same version every time, so `helm upgrade` changed nothing in the pod
+  spec, the pod never rolled, and `helm rollback` restored the same `:main` — the immutable
+  `sha-` tag the build pushes for exactly this was never referenced. The chart now names it,
+  under a version that differs per pipeline (`0.0.0-main.<pipeline>`). (B03)
+- **docker compose hands the container what `.env` says.** Compose passed on a fixed list of
+  variables, so fifteen settings `.env.example` documents — the rate limits, the upload cap,
+  the UI switch — and `FORWARDED_ALLOW_IPS` never reached the container. `.env` is now the
+  container's environment (optional, so keys exported in the shell still work); the volume
+  paths stay pinned over it. `.env.example` documents `FORWARDED_ALLOW_IPS`. (B04)
+- **The licence gate catches a GPL licence as its metadata spells it.** `--fail-on
+  "GPL;AGPL;LGPL"` compared whole licence names, and no package calls its licence "GPL":
+  Unidecode's metadata says "GNU General Public License v2 or later (GPLv2+)", and the gate
+  passed it. It now matches inside names (`--partial-match`), judges the hashed tree the image
+  installs rather than a fresh resolution of the direct pins, and runs a pinned pip-licenses
+  (now in `requirements-dev.txt`). A test runs the workflow's own command against a GPLv2+
+  and an MIT package. (B05)
+- **Prometheus scrapes each pod once.** The ServiceMonitor selected by the chart's selector
+  labels, which the normal and the headless Service both carry, so every pod was scraped
+  through both and each counter arrived twice. The headless Service is now marked and left
+  out. (B07)
+- **The pod requests the memory its training plans with.** It requested 1 Gi under an 8 Gi
+  limit, while a training plans with 85 % of the limit: the scheduler could place it where
+  1 Gi was free, and under node pressure a pod above its request is the first evicted —
+  mid-run. The default request now equals the limit. (B08)
+- **Keyless mode in the chart says what it is.** `config.auth.enabled=false` was offered "for
+  cluster-internal use", and since keyless mode serves loopback callers only, a pod answers
+  every caller but `kubectl port-forward` with 403 — other pods and the ingress included. The
+  chart now refuses keyless mode together with an ingress, and describes it as what it is.
+  (B09)
+- **The image installs nothing unpinned and cannot rewrite its own code.** The build upgraded
+  pip first — whatever pip was newest, unpinned and unhashed, beside a lock that refuses
+  exactly that; the base image's own pip now installs the lock. The base digest was three
+  months old: it is the current `python:3.11-slim-trixie` build (Python 3.11.16), and
+  Dependabot now proposes the next one. `chown -R appuser /app` let the serving process
+  rewrite its code; it owns `/data` and nothing else, and the image sets the five volume
+  paths itself, so an unconfigured `docker run` writes to the volume instead of beside the
+  code. A workflow comment promised a Sigstore signature of the build provenance that
+  nothing makes; it says what is attached. (B10)
+- **The label repairs work in a container.** `label_names.json` belongs in the data
+  directory — in a container, the volume — and the repairs that apply it to trained bundles
+  were neither in the image nor able to find the volume: they looked beside the code. The
+  image carries both, they take their directories from the app's settings, and the docs say
+  how the file gets into a container. (B06)
+- **The chart's guards check what they stand for.** `replicaCount` was documented as "must
+  stay 1" and nothing held it: 3 rendered three pods, each with its own training job, model
+  cache, rate limiter and share links. More than one replica now refuses the release (0 still
+  scales down). And the TLS guard only checked that `ingress.tls` was not empty, so an entry
+  without hosts, or one for another host, passed while the served host went unencrypted —
+  every host in `ingress.hosts` now has to be named by a TLS entry. (B11)
+- **The GitLab pipeline gates what GitHub's gates.** It feeds the deployed registry, and it
+  type-checked `app/` only, had no licence gate and kept no SBOM. It now type-checks the two
+  bundle-writing scripts as GitHub does, runs GitHub's licence gate verbatim, and keeps a
+  CycloneDX SBOM of the hashed tree with each pipeline. Its chart job ran `helm lint`, which
+  only logs a guard that fires and ends 0: it now lints strictly and renders values that
+  satisfy every guard (`ci/lint-values.yaml`, kept out of the packaged chart), so a guard
+  firing on them fails the job. (B11)
+- **`generate_synthetic.py` writes rows the app recognises, under the right names.** It
+  paired URIs and display names by position — the trap the README describes — so a name
+  holding the separator gave later subjects the wrong name in the prompt; it marked its rows
+  `source=synthetic`, which nothing reads, so they went into validation and the test split
+  like real rows; and it picked examples by substring, so `…/040` drew on `…/04003`. Names
+  now come from `label_names.json` or the pairs the CSV provably lines up, rows carry
+  `generated_for`, and examples match the label exactly. (W03)
+- **`eval_holdout.py` judges each model on its own input.** It joined every text column
+  once, so a model trained with the title twice was scored on a distribution it never saw;
+  each model's text is now assembled from its own columns and weights by the app's own
+  `combine_text_columns`. And with no label shared by the models and the holdout, or no
+  weak one among them, the macro averages divided by zero after the whole holdout had been
+  classified: the first now stops before any request, the second is said. (W05)
+- **`build_hochschule_dataset.py` names only the subjects it kept.** It filtered the label
+  column to the higher-education vocabulary and copied the name column whole, so the names
+  of the dropped subjects — or another field's names — stayed in front, and whenever the
+  counts happened to line up every kept subject got its neighbour's name. Each field's URIs
+  are now paired with that field's own names (`pair_names`), and a row carries names for
+  exactly its kept URIs, or none. (W06)
+- **The README installs the tree the suite was run against.** It installed
+  `requirements.txt -c requirements.lock`, which pins the direct dependencies and resolves
+  the rest fresh: a new venv got an anyio whose deprecation warning `filterwarnings = error`
+  turns into collection errors in ten test modules, while CI — on the hashed tree — stayed
+  green. Both install instructions now use `requirements-hashes.lock`; a fresh venv set up
+  that way on Windows (Python 3.12) passes the whole suite. (W01)
+- **`fetch_vocab_labels.py` cannot empty the label file.** A scheme without `hasTopConcept`
+  gave `{}`, written in place over a good `label_names.json`; and `--url file:///…` was read
+  despite the https allowlist the code claimed. A vocabulary yielding fewer than ten labels
+  now stops the run with nothing written, the file is replaced whole or not at all (temp
+  file, fsync, rename), and only https URLs are fetched. (W07)
+- **A bundle repair cannot lose the model it repairs.** Replacing a bundle — what
+  `prune_bundle_labels.py` does to a serving model — removed the old one and then renamed the
+  new one in: an error or a kill between the two left no model, and the next start swept the
+  staged copy as well. The old bundle is now renamed aside first and deleted only once the
+  new one is in place; an error between the renames puts it back at once, a kill at the next
+  start. And `patch_bundle_labels.py` rewrote every directory holding a `config.json` —
+  staging directories, delete tombstones and the `.prebackup` copy that exists to keep the
+  original — and now touches what the registry lists as models. (W04)
+- **The docs say what the code does.** The README listed 7 of the 13 profile fields as if
+  complete (a docs test now holds it to the loader) and claimed CI installs with
+  `--only-binary=:all:`, which only the image does; `config.yaml` said only `best` probes
+  past the C grid's ends and costs 20 head fits — `best` shares `auto`'s grid and fits 15
+  times; the chart README named `/health` for all three probes, where readiness asks
+  `/ready`. The UI guide's queue and CI's "13 pins" were corrected with U05 and B05. (W08)
+
+### Added
+
+Improvements the audit of 2026-09-30 proposed, taken where they are small and close a gap
+it found.
+
+- **A threshold in the query form.** `/predict` takes one confidence cut for every label in
+  place of the tuned ones, and the form offered no way to set it — stricter or looser
+  suggestions were a lever of the API only. Blank keeps the model's own; the CSV mode sends
+  it too. Multilabel models only, as the hint says. (Improvement 11)
+- **`records` for `/predict` and `/predict/multi`: the fields, assembled by the server.** A
+  model trained with column weights expects its input built the same way, and with one
+  opaque string per item every client had to rebuild that itself — or classified a
+  different text than the model was fit on. `records` takes each item as its fields; the
+  server assembles the text from the bundle's text columns and weights, as `/predict/csv`
+  does, per model for `/predict/multi`. A record with none of the model's fields is refused
+  (400): an empty text gets the base-rate answer, which reads like a classification.
+  `texts` works as before; a request sends exactly one of the two. (Improvement 1)
+- **`PUT /label-names`: the label file as an upload.** In a container `label_names.json`
+  had to be copied into the volume with `docker cp` or `kubectl cp`, which not every
+  cluster allows. An admin uploads the mapping as JSON; it replaces the file whole or not
+  at all, an empty mapping is refused, and `GET /label-names` shows what training will use.
+  An upload only — the app fetches no URL. (Improvement 9)
+- **The run history in the Training tab.** `GET /train/history` kept every finished run's
+  outcome — scores, duration, and for a failed run the only surviving reason — and the UI
+  never read it, so two models on one dataset could only be compared by opening each. The
+  tab now lists the last 20 runs, trainings and evaluations alike, and reloads the list when
+  a run ends. An interrupted run (R03) reads as such. (Improvement 8)
+- **CI starts the image it builds.** The image is what ships, and nothing ever ran it: a
+  `COPY` that misses a module, a path the read-only code cannot write, a `CMD` that does not
+  start would each have passed every gate. A job in `ci.yml` builds the Dockerfile, starts
+  the image with throwaway keys and waits for `/health` — on every push, pull request and
+  tag. (Improvement 10)
+
 ## [4.0.1] — 2026-09-27
 
 The findings of the audit of the same day (`docs/audits/2026-09-27-audit.md`): two security

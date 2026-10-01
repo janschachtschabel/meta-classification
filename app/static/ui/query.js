@@ -50,11 +50,17 @@ async function loadQueryTab() {
   const box = $("#query-models");
   try {
     const names = await Api.get("/models");
-    // The first is pre-checked, as the <select>'s first option was: the common case is one
-    // model, and an empty picker would make the primary screen look broken.
+    // Rebuilt on every visit to the tab, which put the check back on the first model whenever
+    // someone looked at another tab (audit 2026-09-30, U08). A choice made here survives it --
+    // an empty one too, since metadata alone needs no model -- read now rather than before the
+    // fetch, so a box ticked while the list was loading counts (review of U08).
+    const shownBefore = box.querySelector('input[name="query-model"]') !== null;
+    const picked = new Set(selectedModels());
+    // On the first visit the first is pre-checked, as the <select>'s first option was: the
+    // common case is one model, and an empty picker would make the primary screen look broken.
     box.innerHTML = names.map((n, at) => `
       <label class="check"><input type="checkbox" name="query-model" value="${esc(n)}"${
-        at === 0 ? " checked" : ""}> <span>${esc(n)}</span></label>`).join("");
+        (shownBefore ? picked.has(n) : at === 0) ? " checked" : ""}> <span>${esc(n)}</span></label>`).join("");
     if (!names.length) $("#query-results").innerHTML = `<p class="muted">${t("query.noModels")}</p>`;
   } catch (err) { $("#query-results").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
 }
@@ -68,6 +74,10 @@ function querySettings() {
   };
   const topk = $("#query-topk").value;
   if (topk !== "") body.top_k = Number(topk);
+  // One cut for every label instead of the tuned ones -- the lever for stricter or looser
+  // suggestions, which only the API offered (audit 2026-09-30, improvement 11).
+  const threshold = $("#query-threshold").value;
+  if (threshold !== "") body.threshold = Number(threshold);
   return body;
 }
 
@@ -210,7 +220,11 @@ async function predictOneText(models, body) {
 
 async function runSingle(models, plan, out) {
   const settings = querySettings();
-  const body = { ...settings, texts: [$("#query-text").value] };
+  // Read ONCE: every part of the answer is about this text. Reading the field again after
+  // the awaits gave a user who typed on the metadata of one text beside the classification
+  // of another, and a "Why?" for a text the model never saw (audit 2026-09-30, U06).
+  const text = $("#query-text").value;
+  const body = { ...settings, texts: [text] };
   // Nothing asked to classify: the metadata is the whole answer, and /predict/multi
   // with an empty list would be a request for nothing.
   const byModel = plan.classify ? await predictOneText(models, body) : {};
@@ -226,7 +240,6 @@ async function runSingle(models, plan, out) {
     // look like "the model had nothing close".
     catch (err) { nearest = {}; console.warn("near-miss follow-up failed", err); }
   }
-  const text = $("#query-text").value;
   // Requested before the answer is written so a failure here is a failure of the whole
   // submit: the user ticked a box, and silently leaving the card out would look like the
   // text simply yielded nothing.
@@ -237,7 +250,7 @@ async function runSingle(models, plan, out) {
   // Only here: both act on ONE text — the endpoint explains one, and a correction
   // records one. The bulk modes have nothing to bind.
   bindExplainButtons(out, text);
-  bindCorrectionButtons(out, byModel);
+  bindCorrectionButtons(out, byModel, text);
 }
 
 /* ---------- many texts ---------- */
@@ -369,18 +382,29 @@ async function runManyTexts(models, plan, out) {
 
 /* ---------- a CSV file ---------- */
 
-function csvSummary(text, filename) {
-  const lines = text.split("\n").slice(1).filter(Boolean);
-  // Only the row number is read out of the raw line, and that field is always a bare
-  // integer — quoting can affect the label and nothing before it. The file itself is
-  // what the user works with; this is the receipt.
-  const covered = new Set(lines.map((line) => line.slice(0, line.indexOf(","))));
+const answerLines = (text) => text.split("\n").slice(1).filter(Boolean);
+
+/* The input rows an answer covers. Every input row gets at least one line -- a refused
+   one with empty fields -- so the distinct row numbers ARE the rows that made it into the
+   file. Only the row number is read out of the raw line, and that field is always a bare
+   integer: quoting can affect the label and nothing before it. */
+const rowsCovered = (lines) => new Set(lines.map((line) => line.slice(0, line.indexOf(",")))).size;
+
+/* `expected` is the server's X-Input-Rows, null where it sent none. A stream cut short ends
+   like a finished one, so fewer rows than that is said where the success would have been
+   (audit 2026-09-30, U02: "Fertig … 500 Eingabezeilen" for a 700-row file). */
+function csvSummary(text, filename, expected = null) {
+  const lines = answerLines(text);
+  // The file itself is what the user works with; this is the receipt.
+  const covered = rowsCovered(lines);
   const refused = lines.filter((line) => /^\d+,,,,\r?$/.test(line)).length;
-  const counted = [t("query.csv.inputRows", { count: covered.size }),
+  const counted = [t("query.csv.inputRows", { count: covered }),
                    t("query.bulk.labelsAssigned", { count: lines.length - refused })];
   if (refused) counted.push(`<strong>${t("query.csv.rowsWithoutLabel", { count: refused })}</strong>`);
+  const cutShort = expected !== null && covered < expected
+    ? `<p class="error" role="alert">${t("query.csv.incomplete", { covered, expected })}</p>` : "";
   return `<div class="card">
-    <h3>${t("query.csv.heading", { name: esc(filename) })}</h3>
+    <h3>${t("query.csv.heading", { name: esc(filename) })}</h3>${cutShort}
     <p>${counted.join(" · ")}.</p>
     <p class="muted">${t("query.csv.note")}</p></div>`;
 }
@@ -397,13 +421,19 @@ async function runCsvFile(model, out) {
   form.append("separator", $("#query-separator").value || ";");
   const topk = $("#query-topk").value;
   if (topk !== "") form.append("top_k", topk);
+  const threshold = $("#query-threshold").value;
+  if (threshold !== "") form.append("threshold", threshold);
 
   const name = input.files[0].name.replace(/\.csv$/i, "") + "-predictions.csv";
   $("#query-status").textContent = t("query.csv.progress");
-  const blob = await Api.downloadForm("/predict/csv", form, name);
+  const { blob, headers } = await Api.downloadForm("/predict/csv", form, name);
   const text = await blob.text();
-  out.innerHTML = csvSummary(text, name);
-  return t("query.csv.done", { name });   // textContent: the caller does not re-escape
+  const sent = Number.parseInt(headers.get("X-Input-Rows") ?? "", 10);
+  const expected = Number.isInteger(sent) ? sent : null;
+  out.innerHTML = csvSummary(text, name, expected);
+  const complete = expected === null || rowsCovered(answerLines(text)) >= expected;
+  // textContent: the caller does not re-escape
+  return t(complete ? "query.csv.done" : "query.csv.cutShort", { name });
 }
 
 /* ---------- submit ---------- */
@@ -421,7 +451,7 @@ async function onQuery(ev) {
     out.innerHTML = `<p class="error" role="alert">${t("query.error.oneModelOnly")}</p>`;
     return;
   }
-  btn.disabled = true;
+  const idle = busy(btn);
   $("#query-status").textContent = t(plan.progress);
   try {
     let done = "";
@@ -434,5 +464,5 @@ async function onQuery(ev) {
   } catch (err) {
     out.innerHTML = queryErrorHtml(err);
     $("#query-status").textContent = "";
-  } finally { btn.disabled = false; }
+  } finally { idle(); }
 }

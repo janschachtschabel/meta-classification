@@ -58,6 +58,7 @@ const STATE_KEYS = {
   completed: "trainStatus.state.completed",
   error: "trainStatus.state.error",
   stopped: "trainStatus.state.stopped",
+  interrupted: "trainStatus.state.interrupted",
 };
 const stateLabel = (status) => (STATE_KEYS[status] ? t(STATE_KEYS[status]) : status);
 
@@ -86,12 +87,27 @@ function announceTrainState(s) {
   else el.textContent = "";
 }
 
+/* The card is updated in place, never rebuilt. It changes every 2.5 s while a run is going,
+   and replacing it took the focus off "Stop" between Tab and Enter, and any text being
+   selected to copy with it (audit 2026-09-30, U10). Its skeleton is markup (index.html);
+   a row is written only when its text changed, so a selection in the others survives. */
+let lastStatus = null;
+let shownNotes = "";
+
 function renderTrainStatus(s) {
+  // A run that just ended is a new row in the history (train-history.js).
+  if (lastStatus && lastStatus.status === "running" && s.status !== "running") loadTrainHistory();
+  lastStatus = s;
   renderTrainChip(s);
   announceTrainState(s);
   renderQueueLine(s.queued || []);
-  const el = $("#train-status");
-  const rows = [
+  $("#train-status-loading").hidden = true;
+  const bar = $("#train-progress");
+  bar.hidden = false;
+  bar.setAttribute("aria-valuenow", s.progress);
+  bar.querySelector("span").dataset.width = s.progress;
+  applyBarWidths(bar);
+  renderStatusRows($("#train-status-rows"), [
     [t("trainStatus.row.status"), stateLabel(s.status)],
     [t("trainStatus.row.phase"), s.phase || "–"],
     [t("trainStatus.row.detail"), s.phase_detail || "–"],
@@ -100,17 +116,34 @@ function renderTrainStatus(s) {
     [t("trainStatus.row.eta"), s.eta_seconds != null ? `~${t("common.seconds", { count: Math.round(s.eta_seconds) })}` : "–"],
     [t("trainStatus.row.memory"), memoryLine(s)],
     [t("trainStatus.row.threads"), threadsLine(s)],
-  ];
-  let html = `
-    <div class="progress" role="progressbar" aria-valuenow="${s.progress}" aria-valuemin="0"
-         aria-valuemax="100" aria-label="${esc(t("trainStatus.progressLabel"))}"><span data-width="${s.progress}"></span></div>
-    <dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+  ]);
+  const notes = statusNotes(s);
+  if (notes !== shownNotes) {
+    $("#train-status-notes").innerHTML = notes;
+    shownNotes = notes;
+  }
+  const stop = $("#train-stop");
+  const finished = s.status !== "running";
+  // Hiding the focused Stop would drop the focus to <body> -- after a confirmed stop it still
+  // has it when the next poll ends the run (review of U10). The card's heading keeps it.
+  if (finished && !stop.hidden && document.activeElement === stop) $("#train-status-heading").focus();
+  stop.hidden = finished;
+}
+
+function renderStatusRows(list, rows) {
+  if (list.children.length !== rows.length * 2) list.innerHTML = "<dt></dt><dd></dd>".repeat(rows.length);
+  rows.flat().forEach((text, at) => {
+    const node = list.children[at];
+    if (node.textContent !== text) node.textContent = text;
+  });
+}
+
+function statusNotes(s) {
+  let html = "";
   // elapsed keeps growing even when the thread is dead — only a stale heartbeat
   // (no progress signal from the training thread) reveals a silent stall.
   if (s.status === "running" && s.seconds_since_heartbeat > 120)
     html += `<p class="warn">${t("trainStatus.stalled", { seconds: Math.round(s.seconds_since_heartbeat) })}</p>`;
-  if (s.status === "running")
-    html += `<button class="small danger" id="train-stop">${t("trainStatus.stop")}</button>`;
   if (s.status === "error") html += `<p class="error">${esc(s.message || t("trainStatus.failed"))}</p>`;
   if (s.status === "completed" && s.results) {
     // An EVALUATION can finish with no metrics at all — when the dataset shares no
@@ -124,14 +157,25 @@ function renderTrainStatus(s) {
            micro: fmtScore(scores.f1_micro), labels: s.results.n_labels })}</p>`
       : `<p class="ok">${t("trainStatus.doneNoScores", { name: esc(s.results.model_name) })}</p>`;
   }
-  el.innerHTML = html;
-  applyBarWidths(el);
-  const stop = $("#train-stop");
-  if (stop) stop.addEventListener("click", async () => {
-    // The server clears the queue as part of stopping; the next poll shows it gone.
-    try { await Api.post("/train/stop"); toast(t("trainStatus.stopRequested")); }
-    catch (err) { toastError(err); }
-  });
+  return html;
+}
+
+/* Stopping ends the running run AND empties the queue, so one click could throw away a
+   whole batch; it asks first, and says how many runs go with it (audit 2026-09-30, U10) --
+   those waiting on the server and those this page has not sent yet (training.js), which it
+   cancels. Bound once in boot(): the button is part of the page, not of a render. */
+async function stopTraining() {
+  const s = lastStatus || {};
+  const name = s.model_name || "";
+  const dropped = (s.queued || []).length + unsentRuns();
+  const question = dropped
+    ? t("trainStatus.stopConfirmQueue", { name, count: dropped })
+    : t("trainStatus.stopConfirm", { name });
+  if (!confirm(question)) return;
+  cancelUnsentRuns();
+  // The server clears the queue as part of stopping; the next poll shows it gone.
+  try { await Api.post("/train/stop"); toast(t("trainStatus.stopRequested")); }
+  catch (err) { toastError(err); }
 }
 
 /* The process' memory now, and the most the run needed — the number that says whether
@@ -158,10 +202,11 @@ function threadsLine(s) {
    tab being closed, which is the whole reason the queue moved out of the page. */
 function renderQueueLine(queued) {
   const el = $("#train-queue");
+  const text = queued.length ? t("trainStatus.queuedOnServer", { names: queued.join(", ") }) : "";
   el.hidden = !queued.length;
-  el.textContent = queued.length
-    ? t("trainStatus.queuedOnServer", { names: queued.join(", ") })
-    : "";
+  // Only when it changed, like the rows: rewritten every poll, it took a selection with it and
+  // handed its live region a fresh node every 2.5 s (review of U10).
+  if (el.textContent !== text) el.textContent = text;
 }
 
 

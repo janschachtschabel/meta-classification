@@ -58,7 +58,7 @@ def test_the_ordering_helper_exists_once_and_drops_stale_answers():
 def test_the_toast_can_be_dismissed():
     """A 4 s auto-hide with no dismiss and no pause is a timing limit on reading (SC 2.2.1),
     and a long German error does not fit in 4 s."""
-    assert "data-toast-dismiss" in _js("app.js"), "no dismiss control on the toast"
+    assert "data-toast-dismiss" in _js("toasts.js"), "no dismiss control on the toast"
 
 
 def test_a_failure_announces_itself_as_one():
@@ -68,14 +68,14 @@ def test_a_failure_announces_itself_as_one():
     assert re.search(r'id="toast-alert"[^>]*role="alert"', INDEX), (
         "#toast-alert is not role=alert, so a failure is still announced politely"
     )
-    assert "function toastError" in _js("app.js"), "no toastError: errors still use toast()"
+    assert "function toastError" in _js("toasts.js"), "no toastError: errors still use toast()"
 
 
 def test_a_failure_does_not_time_out_on_its_own():
     """A confirmation may disappear; a failure the user has to act on may not."""
-    app = _js("app.js")
-    start = app.index("function toastError")
-    body = app[start:app.index("\nfunction ", start + 1)]
+    toasts = _js("toasts.js")
+    start = toasts.index("function toastError")
+    body = toasts[start:toasts.index("\n}\n", start) + 2]
 
     assert "setTimeout" not in body, (
         "toastError schedules a hide: an error the user must act on can vanish unread"
@@ -84,9 +84,9 @@ def test_a_failure_does_not_time_out_on_its_own():
 
 def test_a_second_message_does_not_silently_replace_the_first():
     """Two failures in a row showed one. The second overwrote the first before it was read."""
-    app = _js("app.js")
+    toasts = _js("toasts.js")
 
-    assert "insertAdjacentHTML" in app or "appendChild" in app, (
+    assert "insertAdjacentHTML" in toasts or "appendChild" in toasts, (
         "the toast still assigns textContent/innerHTML wholesale, so message N+1 erases N"
     )
 
@@ -285,3 +285,65 @@ def test_the_model_picker_is_not_a_multi_select():
     assert 'id="query-models"' in INDEX, (
         "the picker's container id is gone: loadQueryTab needs it"
     )
+    # The label outlived the control: it went on asking for a Ctrl-click a checkbox does
+    # not need (found while verifying U08 in the browser, 2026-10-01).
+    for language in ("de", "en"):
+        label = re.search(r'"query\.models\.label": "([^"]*)"', _js(f"strings-{language}.js"))
+        assert label and not re.search(r"strg|ctrl", label.group(1), re.IGNORECASE), label
+
+
+# --- U07: an option submits exactly the name it shows -------------------------------------
+
+
+def test_every_option_carries_its_value():
+    """U07 (audit 2026-09-30): an <option> without `value` submits its TEXT, which the browser
+    strips and collapses on the way -- a column "title " or a file "two  spaces.csv" came
+    back as "title" and "two spaces.csv", and the server answered 400 or 404 for a name it
+    had listed itself. With `value`, what is sent is the name, byte for byte."""
+    bare = [f"{name}: {tag}" for name, source in MODULES.items()
+            for tag in re.findall(r"<option\b[^>]*>", source) if "value=" not in tag]
+
+    assert not bare, bare
+
+
+# --- U09: a pressed button keeps the focus ---------------------------------------------------
+
+
+def test_no_module_disables_a_button_by_hand():
+    """U09 (audit 2026-09-30): a focused button that turns disabled hands the focus to <body>,
+    and enabling it again does not bring it back. `busy()` (app.js) disables for the work and
+    gives the focus back; a module doing it by hand loses it again. The one exception is not a
+    button: the label list of a saved correction, which stays disabled for good."""
+    allowed = {("app.js", "button"), ("feedback.js", 'box.querySelector("select")')}
+    by_hand = sorted(
+        f"{name}: {target}" for name, source in MODULES.items()
+        for target in re.findall(r'([\w.$()"\[\]#-]+)\.disabled = true', source)
+        if (name, target) not in allowed
+    )
+
+    assert not by_hand, by_hand
+
+
+
+# --- review of U09/U10: wiring the handler tests cannot see ------------------------------------
+
+
+def test_the_stop_button_is_bound_where_the_page_starts():
+    """U10 moved the Stop button into the markup and its listener into `boot()`; the handler
+    tests stub the button, so deleting that one line would leave Stop dead with every test
+    green (review of U10, 2026-10-01)."""
+    app = _js("app.js")
+    boot = app[app.index("async function boot()"):app.index("\n}\n", app.index("async function boot()"))]
+
+    assert re.search(r'\$\("#train-stop"\)\.addEventListener\("click", stopTraining\)', boot), (
+        "boot() no longer binds the Stop button")
+
+
+def test_every_dialog_opens_through_open_modal():
+    """A dialog opened with `showModal()` directly has no message stacks of its own, and
+    everything a message says while it is open lands under its backdrop again (U09). The
+    handler tests stub `openModal`, so a module going back to `showModal()` would pass them."""
+    direct = [name for name, source in MODULES.items()
+              if name != "toasts.js" and ".showModal(" in source]
+
+    assert not direct, f"opens a dialog without its message stacks: {direct}"

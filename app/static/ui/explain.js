@@ -61,7 +61,7 @@ function explanationHtml(body) {
 }
 
 async function explainAnswer(modelName, text, card, button) {
-  button.disabled = true;
+  const idle = busy(button);
   button.textContent = t("explain.button.busy");
   card.querySelector(".explain")?.remove();
   try {
@@ -75,7 +75,7 @@ async function explainAnswer(modelName, text, card, button) {
     card.insertAdjacentHTML("beforeend",
       `<div class="explain"><p class="error" role="alert">${esc(err.message)}</p></div>`);
   } finally {
-    button.disabled = false;
+    idle();
     // From the key, not from a copy taken before the request: the language may
     // have been switched while it was in flight.
     button.textContent = t("query.explainButton");

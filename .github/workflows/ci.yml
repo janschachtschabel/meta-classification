@@ -140,8 +140,16 @@ jobs:
         #
         # pip-licenses reads *installed* metadata, so the tree has to be present; it is
         # installed here rather than reusing the api job's venv because that one also
-        # holds the dev tools, which do not ship. requirements.lock (the 13 direct pins,
-        # resolved fresh) is the tree the next recompile gets.
+        # holds the dev tools, which do not ship. It is the fully hashed tree the image
+        # installs: a fresh resolution of requirements.lock's 17 direct pins is the tree
+        # the next recompile would get, and the gate judged that one instead of the one
+        # that ships (audit 2026-09-30, B05). The tool comes first, pinned with the other
+        # dev tools, so the tree's own pins win over anything it pulls in.
+        #
+        # --partial-match: the denylist is matched inside licence names. Without it whole
+        # names were compared, and no package calls its licence "GPL" -- Unidecode's
+        # metadata says "GNU General Public License v2 or later (GPLv2+)", and it passed
+        # (B05; tests/test_deployment_config.py runs this very command against one).
         #
         # Runs last so a failure in the licence tooling cannot mask a CVE finding.
         #
@@ -152,6 +160,31 @@ jobs:
         # allow-list therefore fails on this tree today; verified, not assumed.
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
-          pip install pip-licenses
-          pip install -r requirements.lock
-          python -m piplicenses --fail-on "GPL;AGPL;LGPL" --format markdown --order license
+          pip install pip-licenses==5.5.5
+          pip install --require-hashes -r requirements-hashes.lock
+          python -m piplicenses --fail-on "GPL;AGPL;LGPL" --partial-match --format markdown --order license
+
+  image:
+    name: Image — builds, starts and answers /health
+    runs-on: ubuntu-latest
+    # A cold build installs the whole hashed tree (~2-3 min); start-up takes seconds.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image and start it once
+        # The image is what ships, and nothing ran it: a COPY that misses a module, a path the
+        # read-only code cannot write, a CMD that does not start would each have passed every
+        # gate (audit 2026-09-30, improvement 10). Throwaway keys, never printed.
+        run: |
+          docker build -t metaclassify:ci .
+          docker run -d --name smoke -p 127.0.0.1:8000:8000 \
+            -e APIV3_API_KEY_ADMIN="$(openssl rand -hex 24)" \
+            -e APIV3_API_KEY_READONLY="$(openssl rand -hex 24)" \
+            metaclassify:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs smoke
+          exit 1

@@ -9,6 +9,7 @@ the model endpoints; what several route modules share already lives in ``routes/
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -30,10 +31,12 @@ from fastapi import (
 )
 
 from .. import data as data_mod
+from ..dataset_load import require_columns
+from ..errors import TrainingInputError
 from ..evaluate import run_evaluation
 from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter, train_limit
-from ..registry import UnsafeModelError, get_registry
+from ..registry import BACKUP_SUFFIX, UnsafeModelError, get_registry, is_backup_name
 from ..responses import TrainStartedResponse
 from ..schemas import EvaluateRequest, ExportRequest, ModelInfo
 from ..security import require_role, safe_name, spool_upload_capped
@@ -158,16 +161,21 @@ async def set_model_info(
 @limiter.limit(default_limit)
 async def delete_model(request: Request, model_name: ModelName, _: str = Depends(require_role("admin"))) -> dict:
     """Remove a model from the in-memory cache and from disk (irreversible), and revoke
-    its share links. **Auth:** admin · rate limit active."""
+    its share links first. If the link store cannot be written, 503 and nothing changes.
+    **Auth:** admin · rate limit active."""
     safe_name(model_name, "model name")
+    registry = get_registry()
+    if not registry.exists(model_name):
+        raise HTTPException(404, f"Model '{model_name}' not found.")
+    # A link names the model, not this bundle: left alive, it would hand out whatever is
+    # trained or imported under the name next. Revoked BEFORE the bundle goes, so a
+    # revocation the store cannot write (503) leaves the model, not its links (S05).
+    get_share_store().revoke_for("model", model_name)
     try:
         # rmtree of a large bundle is blocking disk work — off the event loop.
-        await asyncio.to_thread(get_registry().delete, model_name)
+        await asyncio.to_thread(registry.delete, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
-    # A link names the model, not this bundle: left alive, it would hand out
-    # whatever is trained or imported under the name next.
-    get_share_store().revoke_for("model", model_name)
     return {"status": "deleted", "model_name": model_name}
 
 
@@ -184,7 +192,8 @@ async def export_model(
 
     Without a body / `generate_share_url=false`: a direct ZIP download. With
     `generate_share_url=true`: an expiring share link (`expires_hours`, 1–168),
-    retrievable via `GET /share/{id}`. **Auth:** admin · rate limit active.
+    retrievable via `GET /share/{id}`; if the link store cannot be written, 503 and nothing
+    changes. **Auth:** admin · rate limit active.
     """
     safe_name(model_name, "model name")
     registry = get_registry()
@@ -221,43 +230,55 @@ async def import_model(
     loaded safely via skops — files with unknown/unsafe types are rejected.
     `new_name` overrides the model name. Size limit active. **Auth:** admin.
     """
-    if not file.filename or not file.filename.endswith(".zip"):
+    # In any letter case, like a dataset's suffix: `FAECHER.ZIP` is a ZIP too.
+    if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "File must be a .zip model bundle.")
     name = new_name or Path(file.filename).stem
     safe_name(name, "model name")
-    # A training still writing this name would race the import on the same
-    # staging dir (mutual clobber / franken-bundle). Two independent signals:
-    # the job STATUS (normal runs), and THREAD liveness — after stop(hard=true)
-    # the status lies ("idle") while the abandoned thread keeps saving its bundle.
-    status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
-    if status_busy or job_runner.active_model_name() == name:
-        raise HTTPException(409, f"A training for model '{name}' is currently running; retry after it finishes.")
-    # A QUEUED run holds the name too: it was accepted first, and the import
-    # would make it fail when its turn comes.
-    if name in job_runner.queued_names():
-        raise HTTPException(409, f"A training for model '{name}' is queued; retry after it finishes, "
-                                 "or import under another name.")
-    # Spooled to disk rather than joined in memory: `read_upload_capped` holds the chunks
-    # AND the joined copy, i.e. twice the 200 MB cap, before a byte lands — and the import
-    # only ever moves those bytes onto disk anyway (audit API-5). Beside the bundles, under
-    # the hidden `.*.tmp` name the startup sweep already cleans.
+    if is_backup_name(name):
+        raise HTTPException(400, f"A model name must not end in '{BACKUP_SUFFIX}': that marks the "
+                                 "backups the label repair keeps, which no route serves.")
     registry = get_registry()
-    registry.dir.mkdir(parents=True, exist_ok=True)
-    handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".zip.tmp", dir=registry.dir)
-    os.close(handle)
-    archive_path = Path(staged)
-    try:
-        await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, archive_path)
-        # Validation loads both skops files — seconds of CPU; off the event loop.
-        info = await asyncio.to_thread(registry.import_archive, name, archive_path)
-    except FileExistsError as exc:
-        raise HTTPException(409, f"Model '{name}' already exists.") from exc
-    except (UnsafeModelError, ValueError) as exc:
-        raise HTTPException(400, f"Invalid or unsafe model archive: {exc}") from exc
-    finally:
-        # The install copies what it keeps into the bundle dir, so the staged archive is
-        # never needed again — on success or on any failure.
-        archive_path.unlink(missing_ok=True)
+    with contextlib.ExitStack() as held:
+        # Held from before the upload until the bundle is installed, so a training (or a
+        # second import) of this name is refused now, not after minutes of work (R01).
+        try:
+            held.enter_context(registry.importing(name))
+        except FileExistsError as exc:
+            raise HTTPException(409, f"An import of model '{name}' is already in progress.") from exc
+        # A training of this name would publish under it too, and whichever came second
+        # would fail at the very end. Two independent signals: the job STATUS (normal
+        # runs), and THREAD liveness — after stop(hard=true) the status lies ("idle")
+        # while the abandoned thread keeps saving its bundle.
+        status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
+        if status_busy or job_runner.active_model_name() == name:
+            raise HTTPException(
+                409, f"A training for model '{name}' is currently running; retry after it finishes.")
+        # A QUEUED run holds the name too: it was accepted first, and the import
+        # would make it fail when its turn comes.
+        if name in job_runner.queued_names():
+            raise HTTPException(409, f"A training for model '{name}' is queued; retry after it finishes, "
+                                     "or import under another name.")
+        # Spooled to disk rather than joined in memory: `read_upload_capped` holds the chunks
+        # AND the joined copy, i.e. twice the 200 MB cap, before a byte lands — and the import
+        # only ever moves those bytes onto disk anyway (audit API-5). Beside the bundles, under
+        # the hidden `.*.tmp` name the startup sweep already cleans.
+        registry.dir.mkdir(parents=True, exist_ok=True)
+        handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".zip.tmp", dir=registry.dir)
+        os.close(handle)
+        archive_path = Path(staged)
+        try:
+            await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, archive_path)
+            # Validation loads both skops files — seconds of CPU; off the event loop.
+            info = await asyncio.to_thread(registry.import_archive, name, archive_path)
+        except FileExistsError as exc:
+            raise HTTPException(409, f"Model '{name}' already exists.") from exc
+        except (UnsafeModelError, ValueError) as exc:
+            raise HTTPException(400, f"Invalid or unsafe model archive: {exc}") from exc
+        finally:
+            # The install copies what it keeps into the bundle dir, so the staged archive is
+            # never needed again — on success or on any failure.
+            archive_path.unlink(missing_ok=True)
     return {"status": "imported", **info}
 
 
@@ -304,9 +325,16 @@ async def evaluate_model(
     # same way — this route was the one that did not.
     safe_name(body.dataset_name, "dataset name")
     try:
-        data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
+        dataset = data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.") from exc
+    # The header only, before the job can queue, as /train does: the loader would refuse a
+    # missing column anyway, but as a job error behind whatever runs first.
+    try:
+        await asyncio.to_thread(require_columns, dataset, body.text_columns, body.label_column,
+                                separator=body.csv_separator)
+    except TrainingInputError as exc:
+        raise HTTPException(400, str(exc)) from exc
     registry = get_registry()
     if not registry.exists(model_name):
         raise HTTPException(404, f"Model '{model_name}' not found.")

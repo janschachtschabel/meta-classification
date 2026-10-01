@@ -9,6 +9,7 @@ with a reason to change of its own (the memory model) and no use of deploy's int
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .errors import TrainingInputError
@@ -20,6 +21,26 @@ from .memory import (
     matrix_bytes,
     memory_limit_bytes,
 )
+
+
+@dataclass(frozen=True)
+class ProjectedMatrix:
+    """A matrix not built yet, as the gate below weighs one: a shape, and what it will hold
+    (``memory.matrix_bytes`` reads ``nbytes`` where there are no sparse arrays)."""
+
+    shape: tuple[int, int]
+    nbytes: int
+
+
+def projected(matrix: Any, rows: int) -> ProjectedMatrix:
+    """``matrix`` grown to ``rows`` rows at its own width and bytes per row.
+
+    How the first selection fit weighs the deploy fit that comes last: the same texts'
+    vocabulary over more rows. A wider vocabulary would come on top, so this errs towards
+    letting a run start -- the deploy fit is weighed again, for real, when it comes.
+    """
+    per_row = matrix_bytes(matrix) / max(1, matrix.shape[0])
+    return ProjectedMatrix((rows, matrix.shape[1]), int(per_row * rows))
 
 
 def refuse_if_the_run_cannot_fit(

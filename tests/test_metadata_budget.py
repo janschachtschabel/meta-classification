@@ -10,7 +10,7 @@ what is left before the ellipsis is the text's own beginning.
 
 import pytest
 
-from app.metadata.budget import clean_title, select_sentences, shorten
+from app.metadata.budget import clean_title, lead, shorten
 
 _EDGES = [
     ("clause", "Die Fotosynthese, ein Prozess in Pflanzenzellen, wandelt Licht in Energie um", 40),
@@ -42,14 +42,30 @@ def test_a_quoted_title_loses_its_quotes():
     assert clean_title("„Die Fotosynthese“", 90) == "Die Fotosynthese"
 
 
-def test_when_no_sentence_fits_the_best_one_is_shortened():
+def test_when_not_even_the_first_sentence_fits_it_is_shortened():
     long_sentence = "Ein einziger viel zu langer Satz ueber Pflanzen und Licht."
-    chosen = select_sentences([long_sentence], [1.0], 20)
+    chosen = lead([long_sentence], 20)
 
     assert len(chosen) <= 20 and chosen.endswith("…")
 
 
-def test_chosen_sentences_keep_document_order_whatever_their_scores():
+def test_the_lead_keeps_document_order():
     sentences = ["Erster Satz.", "Zweiter Satz.", "Dritter Satz."]
 
-    assert select_sentences(sentences, [0.1, 0.9, 0.5], 100) == "Erster Satz. Zweiter Satz. Dritter Satz."
+    assert lead(sentences, 100) == "Erster Satz. Zweiter Satz. Dritter Satz."
+
+
+def test_a_sentence_that_does_not_fit_is_skipped_and_a_later_one_may_follow():
+    """The source method's behaviour, which its measurements describe."""
+    sentences = ["Erster Satz.", "Ein zweiter, viel zu langer Satz fuer das Budget.", "Dritter."]
+
+    assert lead(sentences, 30) == "Erster Satz. Dritter."
+
+
+@pytest.mark.parametrize("opener", ["Sie", "Dies", "Damit", "„Er"])
+def test_after_a_skip_no_sentence_that_points_back_is_taken(opener):
+    """Its reference would be the sentence that was left out (audit 2026-09-30, M06)."""
+    sentences = ["Erster Satz.", "Ein zweiter, viel zu langer Satz fuer das Budget.",
+                 f"{opener} endet hier."]
+
+    assert lead(sentences, 40) == "Erster Satz."

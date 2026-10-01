@@ -33,9 +33,11 @@ from .. import data as data_mod
 from .. import dataset_stats as stats_mod
 from ..capacity import CapacityPlan
 from ..errors import TrainingInputError
+from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter
 from ..profiles import load_training_config
 from ..schemas import AnalyzeRequest, ExportRequest, ValidateRequest
+from ..schemas.common import separator_problem
 from ..security import require_role, safe_name, spool_upload_capped
 from ..settings import Settings, get_settings
 from ..sharing import get_share_store
@@ -96,7 +98,11 @@ def list_datasets(
     # for large datasets, not an exception.
     # Paged before the row counts are read, not after: each one reads a whole CSV, so
     # narrowing first is the difference between one file and all of them.
-    for csv in page(sorted([*data_dir.glob("*.csv"), *data_dir.glob("*.csv.gz")]), limit, offset):
+    # By `is_dataset_name`, the rule every other route applies, and not by glob: on Linux a
+    # glob is case-sensitive, so `EXPORT.CSV` was servable by name but never listed
+    # (audit 2026-09-30, V04).
+    datasets = sorted(path for path in data_dir.iterdir() if data_mod.is_dataset_name(path.name))
+    for csv in page(datasets, limit, offset):
         stat = csv.stat()
         out.append({"name": csv.name, "size_human": _format_size(stat.st_size),
                     "rows": data_mod.count_rows(csv)})
@@ -108,7 +114,8 @@ def list_datasets(
 def dataset_info(
     request: Request,
     dataset_name: DatasetName,
-    separator: str = Query(";", description="The CSV's field delimiter: exactly one character (else 400)."),
+    separator: str = Query(
+        ";", description="The CSV's field delimiter: exactly one character, not a line break (else 400)."),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -116,15 +123,14 @@ def dataset_info(
 
     `separator` is the CSV delimiter (default `;`). **Auth:** readonly.
     """
-    if len(separator) != 1:
-        # pandas treats a multi-char sep as a regex (python engine) -> ReDoS.
-        raise HTTPException(400, "separator must be a single character.")
+    if problem := separator_problem(separator):
+        raise HTTPException(400, problem)
     path = _dataset_path(dataset_name, settings)
     try:
         shaped = stats_mod.sample_rows(path, separator=separator)
     except TrainingInputError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"name": dataset_name, "rows": data_mod.count_rows(path), **shaped}
+    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped}
 
 
 @router.post("/datasets/analyze", summary="Analyze label distribution & text quality")
@@ -200,16 +206,16 @@ async def import_dataset(
 ) -> dict:
     """Upload a CSV (optionally gzipped) into the data directory (no URL fetch -> no SSRF).
 
-    Accepts `.csv` and `.csv.gz`; the compressed form is read natively everywhere and is the
-    practical choice for large exports. `new_name` overrides the file name (`.csv` is
-    appended if it carries neither suffix). Size limit active; existing names are rejected
-    with 409. **Auth:** admin.
+    Accepts `.csv` and `.csv.gz`, in any letter case (`EXPORT.CSV`); the compressed form is
+    read natively everywhere and is the practical choice for large exports. `new_name`
+    overrides the file name (`.csv` is appended if it carries neither suffix). Size limit
+    active; existing names are rejected with 409. **Auth:** admin.
     """
-    accepted = data_mod.DATASET_SUFFIXES
-    if not file.filename or not file.filename.endswith(accepted):
+    # Case-insensitive, as everywhere else: Windows tools write `EXPORT.CSV` (V04).
+    if not file.filename or not data_mod.is_dataset_name(file.filename):
         raise HTTPException(400, "File must be a .csv or .csv.gz file.")
     name = new_name or file.filename
-    if not name.endswith(accepted):
+    if not data_mod.is_dataset_name(name):
         name += ".csv"
     safe_name(name, "dataset name")
     target = settings.data_dir / name
@@ -289,7 +295,7 @@ async def export_dataset(
 ) -> Response | dict:
     """Export a dataset as a CSV download or as an expiring share link
     (`generate_share_url=true`, `expires_hours` 1–168, retrievable via `GET /share/{id}`).
-    **Auth:** admin."""
+    If the link store cannot be written, 503 and nothing changes. **Auth:** admin."""
     path = _dataset_path(dataset_name, settings)
     body = body or ExportRequest()
     if body.generate_share_url:
@@ -308,12 +314,21 @@ async def delete_dataset(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Delete a CSV file from the data directory (irreversible), and revoke its share
-    links. **Auth:** admin · rate limit active."""
+    links first. If the link store cannot be written, 503 and nothing changes. A dataset a
+    running or queued run will read is refused (409) until that run is done.
+    **Auth:** admin · rate limit active."""
+    path = _dataset_path(dataset_name, settings)
+    # A queued run reads its dataset when its turn comes, by name: deleted and uploaded anew
+    # under the same name, it trained on the new file without a word (audit 2026-09-30, R12).
+    if dataset_name.casefold() in job_runner.datasets_in_use():
+        raise HTTPException(
+            409, f"Dataset '{dataset_name}' is the input of a running or queued run; delete it "
+                 "once that run is done, or stop the run first.")
+    # Same reason and order as model delete: the next import under this name must not be
+    # reachable through a link that was handed out for this file, so the links go first.
+    get_share_store().revoke_for("dataset", dataset_name)
     # missing_ok: _dataset_path already answered 404 for a name that is not there, so
     # reaching here with the file gone means it went in between — a double click, not
     # a server fault.
-    _dataset_path(dataset_name, settings).unlink(missing_ok=True)
-    # Same reason as model delete: the next import under this name must not be
-    # reachable through a link that was handed out for this file.
-    get_share_store().revoke_for("dataset", dataset_name)
+    path.unlink(missing_ok=True)
     return {"status": "deleted", "dataset_name": dataset_name}

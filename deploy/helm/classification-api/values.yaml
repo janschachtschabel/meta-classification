@@ -117,7 +117,10 @@ ingress:
 config:
 
   auth:
-    ## @param config.auth.enabled Enable API-key authentication (disable only for cluster-internal use)
+    ## @param config.auth.enabled Enable API-key authentication. false = keyless mode, which serves
+    ## loopback callers only: in a pod that is `kubectl port-forward`, nothing else -- other pods
+    ## and the ingress get 403, so the chart refuses it together with an ingress (audit
+    ## 2026-09-30, B09).
     enabled: true
     ## @param config.auth.existingSecret Name of a Secret holding APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY (set this instead of the two keys below)
     ## When set, the chart renders no Secret of its own and the two values below are
@@ -170,8 +173,13 @@ config:
   limits:
     ## @param config.limits.maxUploadMb Upload cap in MB for datasets/model bundles — keep ingress proxy-body-size in sync
     maxUploadMb: 200
+    ## @param config.limits.maxJsonMb Cap in MB for every other request body (JSON: a /predict batch, a /metadata request)
+    maxJsonMb: 10
+    ## @param config.limits.maxFeedbackMb Size in MB at which the corrections file stops growing (further corrections: 503, nothing dropped)
+    maxFeedbackMb: 1024
     ## @param config.limits.maxModelsInMemory Trained models kept resident (LRU eviction beyond this).
-    ## Raised automatically to fit config.limits.warmupModels, so a warmed model is never evicted at startup.
+    ## Raised automatically to at least 5 (the models one /predict/multi call may name) and to fit
+    ## config.limits.warmupModels, so a warmed model is never evicted at startup.
     maxModelsInMemory: 2
     ## @param config.limits.warmupModels Comma-separated model names preloaded on startup and kept in memory,
     ## so their first /predict pays no cold skops load (e.g. "faecher_300k_auto,bildungsstufe"). Empty = off.
@@ -184,11 +192,14 @@ config:
     warmupMetadata: false
     ## @param config.limits.rateLimitEnabled Enable the in-process rate limiter (keys on client IP — see README for proxy note)
     rateLimitEnabled: true
-    ## @param config.limits.forwardedAllowIps Addresses whose X-Forwarded-For uvicorn may trust (e.g. the
-    ## ingress controller's pod CIDR, "10.42.0.0/16"). Empty = trust nothing beyond localhost, which behind
-    ## an ingress means every client shares ONE rate-limit bucket, since they all arrive from the
-    ## controller's address. Set it whenever ingress.enabled is true and rateLimitEnabled is true.
-    ## Do NOT set "*": any client could then spoof the header and bypass the limiter entirely.
+    ## @param config.limits.forwardedAllowIps Addresses whose X-Forwarded-For uvicorn may trust: the ingress
+    ## controller's. Empty = trust nothing beyond localhost, which behind an ingress means every client
+    ## shares ONE rate-limit bucket, since they all arrive from the controller's address — so the chart
+    ## refuses to render with ingress.enabled and rateLimitEnabled but no value here (or set
+    ## rateLimitEnabled=false and limit at the ingress). Name the narrowest range that holds the
+    ## controller: every peer in it may claim any client address. A whole pod range (k3s: "10.42.0.0/16")
+    ## lets any pod in the cluster pick its own rate-limit bucket, unless a NetworkPolicy admits only the
+    ## controller to this pod. "*" is refused: any client could pick its bucket, or exhaust another's.
     forwardedAllowIps: ""
 
   ## @param config.extraEnv Extra plain environment variables (map) injected into the container
@@ -262,7 +273,8 @@ securityContext:
 
 ## @param terminationGracePeriod Grace period for termination in seconds. Shutdown asks a running
 ## training to stop, which takes effect at the next checkpoint (between the C fits, before the deploy
-## fit); a run already inside a long fit is killed with the process and has to be restarted.
+## fit), and waits for it up to this minus 10 s; a run still inside a long fit then is killed with the
+## process. Either way the job history records it, and every queued run, as interrupted.
 terminationGracePeriod: 60
 
 startupProbe:
@@ -316,7 +328,10 @@ resources:
   requests:
     ## @param resources.requests.cpu Set CPU for requests on resources
     cpu: 500m
-    ## @param resources.requests.memory Set memory for requests on resources
-    memory: 1Gi
+    ## @param resources.requests.memory Set memory for requests on resources — equal to the
+    ## limit: a training plans with 85 % of the limit, and a pod that requested 1Gi was placed
+    ## where 1Gi was free and, under node pressure, evicted first, mid-run (audit 2026-09-30,
+    ## B08). Lower both together for a predict-only deployment.
+    memory: 8Gi
 
 ########################################################################################################################

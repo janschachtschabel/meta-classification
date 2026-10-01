@@ -6,10 +6,13 @@ from the cache/disk orchestration that consumes it. Kept minimal and dependency-
 light for review.
 
 A model bundle is a directory containing:
-  - config.json      : backend kind, classes, thresholds, label map, task type
+  - config.json      : backend kind, classes, thresholds, label map, task type, cleaning
   - metrics.json     : training metadata + evaluation metrics
   - head.skops       : the sklearn OneVsRest(LogReg) head (skops, no pickle)
-  - vectorizer.skops : (tfidf only) the fitted word/char vectorizers
+  - vectorizer.skops : the fitted word/char vectorizers, without their vocabularies
+  - vocabulary.json  : those vocabularies, terms in column order (format 2)
+
+The manifest an export adds is ``manifest``'s.
 
 Security: skops loads only known-safe types. Legitimate api_v3 bundles contain
 zero "untrusted" types, so loading rejects any file that introduces one.
@@ -18,20 +21,18 @@ zero "untrusted" types, so loading rejects any file that introduces one.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from skops.io import dump as skops_dump
 from skops.io import get_untrusted_types
 from skops.io import load as skops_load
 
-from . import __version__
 from .bundle_meta import per_label_f1
 from .classifier import ClassifierModel
+from .data import TEXT_CLEANING_VERSIONS
 from .errors import UnsafeModelError
 from .label_names import is_container_label
 from .vectorizers import TfidfBackend
@@ -48,80 +49,9 @@ _ALLOWED_EXTRA_TYPES: set[str] = set()
 # second. As JSON the same data is <0.1 s and ~1 MB. Format 2 and later only.
 _VOCAB_FILE = "vocabulary.json"
 
-# Transport-only members: generated per export, verified on import, never kept in the
-# installed bundle (a stale copy on disk would be zipped alongside the fresh one).
-MANIFEST_FILE = "manifest.json"
-CARD_FILE = "README.md"
-
-
-def digest_file(path: Path) -> str:
-    """SHA-256 of a file, read in blocks — a single bundle member reaches ~120 MB."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def build_manifest(name: str, digests: dict[str, str], metadata: dict) -> dict:
-    """Describe an archive: a SHA-256 for every member, plus what it is.
-
-    Deliberately built at EXPORT rather than at save time. ``metrics.json`` is
-    mutable by design (``PUT /models/{name}/info``) and ``config.json`` is rewritten
-    by the label-repair scripts, so a manifest stored next to them would be
-    invalidated by every legitimate edit — and a load-time check would then refuse a
-    perfectly good bundle. What actually needs protecting is the 50-180 MB download
-    between two servers, and that is exactly the export/import boundary.
-    """
-    metrics = metadata.get("metrics") or {}
-    return {
-        "model_name": name,
-        "app_version": __version__,
-        "format_version": FORMAT_VERSION,
-        "exported_at": datetime.now(UTC).isoformat(),
-        "created_at": metadata.get("created_at"),
-        "n_labels": metadata.get("n_labels"),
-        "f1_macro": metrics.get("f1_macro"),
-        "dataset": metadata.get("dataset"),
-        "files": dict(sorted(digests.items())),
-    }
-
-
-def verify_manifest(manifest: object, members: dict[str, bytes]) -> None:
-    """Check every member against the manifest; raise ``UnsafeModelError`` on any drift.
-
-    Covers three failures with one comparison: a truncated download, a member altered
-    in transit, and a member the manifest does not mention at all.
-    """
-    verify_digests(manifest, {
-        member: hashlib.sha256(payload).hexdigest() for member, payload in members.items()
-    })
-
-
-def verify_digests(manifest: object, digests: dict[str, str]) -> None:
-    """The same check, for a caller that hashed the members as it streamed them to disk.
-
-    Split out so the buffered and streaming import paths compare against the manifest with
-    one set of rules rather than two implementations of the same three failures (audit API-5).
-    """
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), dict):
-        raise UnsafeModelError(f"{MANIFEST_FILE} is malformed")
-    expected: dict = manifest["files"]
-    for member, digest in sorted(digests.items()):
-        recorded = expected.get(member)
-        if recorded is None:
-            raise UnsafeModelError(f"{member} is not listed in {MANIFEST_FILE}")
-        if digest != recorded:
-            raise UnsafeModelError(
-                f"{member} does not match its checksum in {MANIFEST_FILE} "
-                "(the archive was altered or arrived incomplete)"
-            )
-    missing = sorted(set(expected) - set(digests))
-    if missing:
-        raise UnsafeModelError(f"{MANIFEST_FILE} lists files the archive lacks: {missing}")
-
-
-def _safe_skops_load(path: Path):
+def _refuse_untrusted_types(path: Path) -> None:
+    """Refuse a skops container declaring a type outside the allowlist -- without loading it
+    (skops reads the schema, not the arrays)."""
     try:
         untrusted = get_untrusted_types(file=str(path))
     except Exception as exc:  # noqa: BLE001 - corrupt/non-skops container -> uniform load error
@@ -129,6 +59,23 @@ def _safe_skops_load(path: Path):
     disallowed = [t for t in untrusted if t not in _ALLOWED_EXTRA_TYPES]
     if disallowed:
         raise UnsafeModelError(f"Refusing to load {path.name}: untrusted types {disallowed}")
+
+
+def check_loadable(directory: Path) -> None:
+    """Refuse a freshly written bundle whose skops files ``_read_bundle`` would refuse.
+
+    The cheap half of loading it, run before publishing: a training that produced a type the
+    guard does not allow fails there, instead of being reported `completed` and answering
+    every request with 422 (audit 2026-09-30, T01 -- a label on every row made sklearn store a
+    `_ConstantPredictor`). A full load would also parse the arrays, i.e. hold a second copy of
+    the head at the end of the run that peaks highest.
+    """
+    for member in ("head.skops", "vectorizer.skops"):
+        _refuse_untrusted_types(directory / member)
+
+
+def _safe_skops_load(path: Path):
+    _refuse_untrusted_types(path)
     # Trust ONLY the explicit allowlist, never the discovered `untrusted` set
     # (which is [] here anyway). Identical behaviour today, but stays safe if
     # _ALLOWED_EXTRA_TYPES is ever populated -- otherwise we would trust exactly
@@ -158,6 +105,7 @@ def _write_bundle(
         "global_threshold": model.global_threshold,
         "per_label_thresholds": model.per_label_thresholds,
         "uri_to_label": model.uri_to_label,
+        "text_cleaning": model.text_cleaning,
     }
     on_step("Writing config.json + metrics.json")
     (directory / "config.json").write_text(
@@ -254,6 +202,7 @@ def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
         vectorizer = TfidfBackend()
         vectorizer.word_vec = word_vec
         vectorizer.char_vec = char_vec
+        _check_parts_agree(head, vectorizer, config["classes"])
 
         model = ClassifierModel(
             vectorizer=vectorizer,
@@ -265,11 +214,52 @@ def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
             global_threshold=config["global_threshold"],
             per_label_thresholds=config.get("per_label_thresholds", {}),
             per_label_f1=per_label_f1(metadata),
+            text_cleaning=_text_cleaning(config),
         )
         _warn_about_container_labels(directory.name, model.classes)
     except (AttributeError, ValueError, KeyError, TypeError) as exc:
         raise UnsafeModelError(f"Invalid model bundle in {directory.name!r}: {exc!r}") from exc
     return model, metadata
+
+
+def _check_parts_agree(head, vectorizer: TfidfBackend, classes: list) -> None:
+    """Refuse a head that does not take this vectorizer's features or score these classes.
+
+    A bundle is importable, so its members can come from different runs. Such a mix installed
+    with 200 and failed every prediction with a 500 -- "X has 182 features, but
+    LogisticRegression is expecting 7" (audit 2026-09-30, R08). Read off what scikit-learn
+    records on the fitted head, so it costs nothing; a head that records no feature count is
+    left to fail as before rather than refused on a guess.
+    """
+    features = sum(len(sub.vocabulary_) for sub in (vectorizer.word_vec, vectorizer.char_vec)
+                   if sub is not None)
+    expected = getattr(head, "n_features_in_", None)
+    if expected is not None and expected != features:
+        raise UnsafeModelError(
+            f"The head takes {expected} features, the vectorizer makes {features}: the bundle's "
+            "files come from different models."
+        )
+    scored = len(getattr(head, "classes_", ()))
+    if scored != len(classes):
+        raise UnsafeModelError(
+            f"The head scores {scored} classes, config.json names {len(classes)}: the bundle's "
+            "files come from different models."
+        )
+
+
+def _text_cleaning(config: dict) -> int:
+    """The cleaning a bundle's input gets: what it was trained with, 1 before that was recorded.
+
+    An unknown version comes from a newer server, whose cleaning this one cannot reproduce --
+    serving the bundle anyway would feed its vectorizer text it was never fitted on.
+    """
+    version = config.get("text_cleaning", 1)
+    if version not in TEXT_CLEANING_VERSIONS:
+        raise UnsafeModelError(
+            f"The bundle was trained with text cleaning version {version!r}; this server knows "
+            f"{list(TEXT_CLEANING_VERSIONS)}. Serve it with the version that trained it."
+        )
+    return int(version)
 
 
 def _warn_about_container_labels(name: str, classes: list[str]) -> None:

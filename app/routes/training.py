@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import data as data_mod
 from .. import job_history
+from ..dataset_load import require_columns
+from ..errors import TrainingInputError
 from ..jobs import job_runner
 from ..limiter import limiter, train_limit
 from ..profiles import load_training_config
-from ..registry import get_registry
+from ..registry import BACKUP_SUFFIX, get_registry, is_backup_name
 from ..responses import TrainStartedResponse, TrainStopResponse
 from ..schemas import TrainRequest
 from ..security import require_role, safe_name
@@ -64,7 +66,7 @@ async def list_profiles(
         # Exposed so a client (the admin UI does) can pre-fill its form with what
         # would actually happen, instead of hard-coding a guess.
         "default_text_column_weights": cfg.text_column_weights,
-        "default_min_samples_per_label": cfg.min_samples_per_label,
+        "default_min_samples_per_label": cfg.default_min_samples(),
         "profiles": [
             {
                 "name": p.name,
@@ -143,7 +145,8 @@ async def train(
     determined automatically; `min_samples_per_label` is auto-scaled when sent as `null`.
     All of it is stored in the model.
 
-    **Errors:** 400 (unknown profile, invalid name), 404 (dataset missing), 409 (model
+    **Errors:** 400 (unknown profile, invalid name, a text or label column the CSV does not
+    have), 404 (dataset missing), 409 (model
     name already exists, a run under this name is already running or queued, or the
     queue is full). **Auth:** admin · rate limit active.
     """
@@ -160,13 +163,32 @@ async def train(
     # Via the shared policy, not a bare exists(): the data directory holds non-datasets
     # (label_names.json), and accepting one here turned a 404 into a job failure later.
     try:
-        data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
+        dataset = data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.") from exc
+    # The header only, before the run can queue: a column the CSV lacks is the caller's
+    # to fix now, not a job error minutes (or a queue) later.
+    try:
+        await asyncio.to_thread(require_columns, dataset, body.text_columns, body.label_column,
+                                separator=body.csv_separator)
+    except TrainingInputError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if is_backup_name(body.model_name):
+        raise HTTPException(400, f"A model name must not end in '{BACKUP_SUFFIX}': that marks the "
+                                 "backups the label repair keeps, which no route serves.")
     if get_registry().exists(body.model_name):
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
+    # An import uploading under this name would publish first or last -- and the run, after
+    # minutes of work, would fail at the very end if the import won (audit 2026-09-30, R01).
+    if get_registry().is_importing(body.model_name):
+        raise HTTPException(409, f"An import of model '{body.model_name}' is in progress; train under "
+                                 "another name, or retry once it is done.")
 
     req = body.model_dump(exclude=_REQ_EXCLUDED)
+    # Left out, it is the server's default -- config.yaml's, else 20 -- and the run records
+    # the number it used. Sent as null, it is auto-scaling (T11).
+    if "min_samples_per_label" not in body.model_fields_set:
+        req["min_samples_per_label"] = cfg.default_min_samples()
     # exclude_none keeps the bundle from claiming fields the caller left unset.
     req["info"] = body.info.model_dump(exclude_none=True) if body.info else None
     # In a child process by default (settings.training_isolation): a hard stop ends the

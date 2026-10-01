@@ -43,7 +43,7 @@ const Api = (() => {
     }
   }
 
-  async function request(path, { method = "GET", json, form } = {}) {
+  async function request(path, { method = "GET", json, form, raw = false } = {}) {
     const headers = {};
     const key = getKey();
     if (key) headers["X-API-Key"] = key; // keyless mode: rely on the server's auth setting
@@ -74,10 +74,24 @@ const Api = (() => {
       try { detail = (await res.json()).detail; } catch { /* non-JSON error body */ }
       if (res.status === 403) detail = detail || t("errors.adminRequired");
       if (res.status === 429) detail = detail || t("errors.rateLimited");
-      throw new ApiError(res.status, detail);
+      const err = new ApiError(res.status, detail);
+      // In seconds, as the server sends it with 429 and 503: a caller that waits needs the
+      // number rather than a guess (training.js, U05).
+      const wait = Number.parseInt(res.headers.get("Retry-After") ?? "", 10);
+      if (Number.isInteger(wait)) err.retryAfter = wait;
+      throw err;
     }
+    if (raw) return res;
+    // Every other caller reads JSON. A 2xx that is not the API's -- an SSO proxy's sign-in
+    // page, a captive portal -- came back as the Response itself and failed in the caller as
+    // "names.map is not a function", or as an empty list (audit 2026-09-30, U08).
     const type = res.headers.get("content-type") || "";
-    return type.includes("json") ? res.json() : res;
+    if (!type.includes("json")) throw new ApiError(res.status, t("errors.notApi"));
+    try {
+      return await res.json();
+    } catch (cause) {
+      throw new ApiError(res.status, t("errors.notApi"), cause);
+    }
   }
 
   /* Hand a blob to the browser as a download. */
@@ -90,15 +104,17 @@ const Api = (() => {
 
   /* Authenticated file download: fetch as blob, hand to the browser. */
   async function download(path, filename) {
-    saveBlob(await (await request(path, { method: "POST" })).blob(), filename);
+    saveBlob(await (await request(path, { method: "POST", raw: true })).blob(), filename);
   }
 
-  /* The same, for endpoints that answer a multipart upload with a file. */
+  /* The same, for endpoints that answer a multipart upload with a file. The headers come
+     back with the blob: whether a streamed answer is complete is only readable there
+     (`X-Input-Rows` on /predict/csv) -- a stream cut short ends like a finished one. */
   async function downloadForm(path, form, filename) {
-    const res = await request(path, { method: "POST", form });
+    const res = await request(path, { method: "POST", form, raw: true });
     const blob = await res.blob();
     saveBlob(blob, filename);
-    return blob;
+    return { blob, headers: res.headers };
   }
 
   return {

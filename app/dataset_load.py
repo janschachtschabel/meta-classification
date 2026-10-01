@@ -8,23 +8,52 @@ The CSV is read in blocks of rows. Read whole, the file sat in memory three time
 — the frame, the combined text, the cleaned text: +1.5 GB for a 558 MB export
 (docs/plans/2026-09-11-training-memory.md). In blocks, each of those is one block long,
 and only what the dataset keeps accumulates.
+
+A little past the ~300-line guide since the audit of 2026-09-30 gave it the column check
+(T03), the vectorizer's notion of a duplicate (T07) and the count of duplicates whose labels
+disagreed (T10). Every part still answers one question -- which rows, with which text and
+labels, a training reads from this file -- and a split would put the dedupe in one module
+and the rows it decides about in another.
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
+import unicodedata
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
-from .data import clean_text, read_csv, split_labels
+from .csv_encoding import CsvEncoding, detect
+from .data import CLEANING_VERSION, clean_text, read_csv, split_labels
 from .errors import TrainingInputError
 from .label_names import pair_names
 from .provenance import GENERATED, MARK_COLUMNS, SAME_TEXT, SYNTHETIC_MODES, block_marks
 
 # Rows per block: the step the loader already reported its cleaning progress in.
 CHUNK_ROWS = 50_000
+# The Combining Diacritical Marks block: every Latin accent decomposes (NFKD) into its letter
+# plus one of these, which is what the vectorizer's strip_accents="unicode" removes.
+_COMBINING_MARKS_RE = re.compile("[\u0300-\u036f]+")
+
+
+def dedupe_key(text: str) -> bytes:
+    """Two texts are duplicates when the vectorizer cannot tell them apart: it lower-cases
+    and strips accents. Compared exactly, "BRUCHRECHNUNG" stayed beside "Bruchrechnung", one
+    could land in train and its twin in test, and the metrics looked better than the model
+    is (audit 2026-09-30, T07).
+
+    A 16-byte digest rather than the normalised text: loading holds the whole dataset, and a
+    second copy of every text would double that. Measured ~12 M characters/s; accents
+    outside the Latin block (other scripts' marks) stay, so such variants are kept as before.
+    """
+    lowered = text.lower()
+    if not lowered.isascii():
+        lowered = _COMBINING_MARKS_RE.sub("", unicodedata.normalize("NFKD", lowered))
+    return hashlib.blake2b(lowered.encode("utf-8"), digest_size=16).digest()
 
 
 @dataclass
@@ -43,6 +72,11 @@ class LoadedData:
     # Every generated row "exclude" dropped, copies included: whether it dropped any,
     # which makes the run a marked one even when all it dropped were copies.
     excluded_rows: int = 0
+    # How the file was decoded (``csv_encoding``) -- a bundle records it.
+    encoding: CsvEncoding = field(default_factory=lambda: CsvEncoding("utf-8"))
+    # Rows dropped as a duplicate although their labels differed from the kept row's: the
+    # first row wins, and this says how often another row's labels went with it (T10).
+    conflicting_duplicates: int = 0
 
 
 def combine_text_columns(
@@ -68,6 +102,33 @@ def combine_text_columns(
     return combined
 
 
+def require_columns(
+    path: str | Path, text_columns: list[str], label_column: str, *, separator: str,
+    encoding: CsvEncoding | None = None,
+) -> list[str]:
+    """The CSV's columns -- after refusing a request that names one it does not have.
+
+    Every text column, not just one of them: a missing one used to be skipped without a
+    word, while the bundle recorded it as trained on. `/predict/csv` then refused a CSV in
+    the training data's own format, and a later export that HAS the column would feed the
+    model text from a field it never saw (audit 2026-09-30, T03). Cheap -- the header only
+    -- so ``/train`` asks it before a run can queue.
+
+    :raises TrainingInputError: naming what is missing and what the CSV has.
+    """
+    header = read_csv(path, encoding, sep=separator, nrows=0)
+    available = list(header.columns)
+    missing = [column for column in text_columns if column not in available]
+    if missing:
+        raise TrainingInputError(
+            f"Text column(s) {missing} not found; the CSV has {sorted(available)}. A model is "
+            "trained on every column it records, so each has to be present."
+        )
+    if label_column not in available:
+        raise TrainingInputError(f"Label column {label_column!r} not found in {sorted(available)}")
+    return available
+
+
 def load_dataset(
     path: str | Path,
     text_columns: list[str],
@@ -84,6 +145,7 @@ def load_dataset(
     synthetic_rows: str = "train",
     on_progress: Callable[[str], None] | None = None,
     chunk_rows: int = CHUNK_ROWS,
+    text_cleaning: int = CLEANING_VERSION,
 ) -> LoadedData:
     """Load a CSV and return cleaned texts + label lists.
 
@@ -92,8 +154,8 @@ def load_dataset(
     label mapping.
 
     ``text_column_weights`` maps a column to how often its text is repeated in the
-    combined training text (default 1) — see :func:`combine_text_columns`. Weights for
-    columns the CSV does not have are ignored, exactly like the columns themselves.
+    combined training text (default 1) — see :func:`combine_text_columns`. Every text
+    column has to be in the CSV (:func:`require_columns`).
 
     data-prep's provenance columns (``provenance.MARK_COLUMNS``) are read when present and
     come back as ``marks``, one per kept row. ``synthetic_rows="exclude"`` leaves the
@@ -102,25 +164,17 @@ def load_dataset(
     duplicate — is marked ``SAME_TEXT``: the same text on both sides of a split would
     carry the LLM's text into the validation.
 
-    UTF-8 first; a file that turns out not to be UTF-8 anywhere is read again from the
-    start as cp1252 (common for German metadata exports), whatever was read before is
-    discarded — the whole-file reader behaved the same way. The blocks before the first
-    non-UTF-8 byte have been cleaned by then, so such a file costs up to one extra
-    cleaning pass; resuming mid-file instead would mix two decodings of one file.
+    The encoding is decided once, from the whole file's bytes, before a row is read
+    (``csv_encoding.detect``): one pass of reading, no cleaning, where a first undecodable
+    byte used to make the whole file cp1252 (audit 2026-09-30, T02).
     """
     if synthetic_rows not in SYNTHETIC_MODES:
         raise ValueError(f"synthetic_rows must be one of {SYNTHETIC_MODES}, got {synthetic_rows!r}")
     path = Path(path)
-    header = read_csv(path, sep=separator, nrows=0)
-    available = set(header.columns)
-
-    text_cols = [c for c in text_columns if c in available]
-    if not text_cols:
-        raise TrainingInputError(
-            f"No valid text columns. Requested {text_columns}; available {sorted(available)}"
-        )
-    if label_column not in available:
-        raise TrainingInputError(f"Label column {label_column!r} not found in {sorted(available)}")
+    encoding = detect(path)
+    available = set(require_columns(path, text_columns, label_column, separator=separator,
+                                    encoding=encoding))
+    text_cols = list(text_columns)
 
     dn_col = displayname_column or f"{label_column}_DISPLAYNAME"
     has_dn = dn_col in available
@@ -133,29 +187,26 @@ def load_dataset(
             on_progress(msg)
 
     emit("Reading CSV file …")
-    for encoding in ("utf-8", "cp1252"):
-        collector = _Collector(
-            text_cols=text_cols, label_column=label_column, dn_col=dn_col if has_dn else None,
-            label_separator=label_separator, label_filter=label_filter,
-            min_text_length=min_text_length, drop_duplicates=drop_duplicates,
-            weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
-        )
-        try:
-            for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
-                                      chunk_rows=chunk_rows, verbatim=mark_cols):
-                collector.add(block)
-                emit(f"Reading and cleaning … {collector.rows_read:,} rows")
-        except UnicodeDecodeError:
-            if encoding == "cp1252":
-                raise
-            emit("Not UTF-8 — reading the file again as Windows-1252 …")
-            continue
-        return collector.result(label_names)
-    raise AssertionError("unreachable: the cp1252 attempt returns or raises")
+    collector = _Collector(
+        text_cols=text_cols, label_column=label_column, dn_col=dn_col if has_dn else None,
+        label_separator=label_separator, label_filter=label_filter,
+        min_text_length=min_text_length, drop_duplicates=drop_duplicates,
+        weights=text_column_weights, mode=synthetic_rows, has_marks=bool(mark_cols),
+        text_cleaning=text_cleaning,
+    )
+    # The label column, its display names and the marks are read as written: a label may be
+    # called "NA", "None" or "null", which pandas reads as a missing cell -- and the rows
+    # carrying it vanished (audit 2026-09-30, T08).
+    verbatim = [label_column, *([dn_col] if has_dn else []), *mark_cols]
+    for block in _read_blocks(path, encoding, separator=separator, usecols=usecols,
+                              chunk_rows=chunk_rows, verbatim=verbatim):
+        collector.add(block)
+        emit(f"Reading and cleaning … {collector.rows_read:,} rows")
+    return collector.result(label_names, encoding)
 
 
 def _read_blocks(
-    path: Path, encoding: str, *, separator: str, usecols: list[str], chunk_rows: int,
+    path: Path, encoding: CsvEncoding, *, separator: str, usecols: list[str], chunk_rows: int,
     verbatim: list[str] | None = None,
 ) -> Iterator[pd.DataFrame]:
     """The CSV in blocks of rows, only the needed columns, every cell as text. Empty or
@@ -165,14 +216,15 @@ def _read_blocks(
     to its python engine and be read as a regular expression. The API allows one
     character; this refuses the rest (ValueError), as the whole-file read did.
 
-    ``verbatim`` columns are read as written, empty as "": a mark names a label, and a
-    label may be called "NA", "None" or "null", which pandas would read as a missing
-    cell. The C engine gives a column with a converter no missing-value reading; the
-    other columns keep it, as before.
+    ``verbatim`` columns are read as written, empty as "": a label -- or a mark, which names
+    one -- may be called "NA", "None" or "null", which pandas would read as a missing cell.
+    The C engine gives a column with a converter no missing-value reading; the other
+    columns keep it, as before.
     """
     raw = verbatim or []
     try:
-        with pd.read_csv(path, sep=separator, usecols=usecols, encoding=encoding,
+        with pd.read_csv(path, sep=separator, usecols=usecols, encoding=encoding.name,
+                         encoding_errors=encoding.errors,
                          dtype={c: str for c in usecols if c not in raw},
                          converters={c: str for c in raw},
                          chunksize=chunk_rows, engine="c") as reader:
@@ -201,24 +253,30 @@ class _Collector:
     weights: dict[str, int] | None
     mode: str = "train"
     has_marks: bool = False
+    # The clean_text version: a training's current one, an evaluation's model's own.
+    text_cleaning: int = CLEANING_VERSION
     texts: list[str] = field(default_factory=list)
     label_lists: list[list[str]] = field(default_factory=list)
     uri_to_label: dict[str, str] = field(default_factory=dict)
     used: set[str] = field(default_factory=set)
-    seen: set[str] = field(default_factory=set)
+    # dedupe_key -> the kept row with that text, whose labels a later copy is compared to.
+    seen: dict[bytes, int] = field(default_factory=dict)
     rows_read: int = 0
     marks: list[int] = field(default_factory=list)
-    # Texts of marked rows, the dedupe's dropped copies included: a kept row with such a
-    # text is train-only too. The strings are the ones kept anyway, so this costs a set
-    # entry per marked row -- small, unless a pure Runs export marks every row.
-    marked_texts: set[str] = field(default_factory=set)
+    # The keys of the kept rows, for the SAME_TEXT marks (only when the CSV has marks).
+    kept_keys: list[bytes] = field(default_factory=list)
+    # Keys of marked rows, the dedupe's dropped copies included: a kept row with such a
+    # text is train-only too.
+    marked_texts: set[bytes] = field(default_factory=set)
     excluded_generated: int = 0
     # Texts "exclude" left out, under the dedupe: a second copy is not counted again.
-    left_out: set[str] = field(default_factory=set)
+    left_out: set[bytes] = field(default_factory=set)
     excluded_rows: int = 0
+    conflicting_duplicates: int = 0
 
     def add(self, frame: pd.DataFrame) -> None:
-        cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(clean_text)
+        cleaned = combine_text_columns(frame, self.text_cols, self.weights).map(
+            lambda value: clean_text(value, self.text_cleaning))
         label_series = frame[self.label_column]
         if self.dn_col is not None:
             names = frame[self.dn_col].fillna("")
@@ -228,7 +286,12 @@ class _Collector:
                     split_labels(name_cell, self.label_separator),
                 ):
                     self.uri_to_label.setdefault(uri, name)
-        label_lists = [split_labels(cell, self.label_separator) for cell in label_series]
+        # Each label once per row: `a,a` is one label, and counted twice it made a single-label
+        # dataset look multilabel to every statistic built on these lists (audit 2026-09-30,
+        # T04). Not in split_labels itself: the display-name column is split by it too, and
+        # paired with the URIs by position, where two URIs may share one name.
+        label_lists = [list(dict.fromkeys(split_labels(cell, self.label_separator)))
+                       for cell in label_series]
         self.used.update(uri for labels in label_lists for uri in labels)
         if self.label_filter:
             label_lists = [[lab for lab in labs if self.label_filter in lab] for labs in label_lists]
@@ -236,30 +299,35 @@ class _Collector:
         for text, labels, mark in zip(cleaned.tolist(), label_lists, marks, strict=False):
             if len(text) < self.min_text_length or not labels:
                 continue
+            key = dedupe_key(text) if self.drop_duplicates or self.has_marks else b""
             # Still before the dedupe: a generated first occurrence must not take a real
             # twin's place. After the check above: a row too short to train on anyway
             # was not left out by this -- nor, under the dedupe, a copy of a text that
             # was kept or left out already.
             if mark & GENERATED and self.mode == "exclude":
                 self.excluded_rows += 1
-                if not (self.drop_duplicates and (text in self.seen or text in self.left_out)):
+                if not (self.drop_duplicates and (key in self.seen or key in self.left_out)):
                     self.excluded_generated += 1
                     if self.drop_duplicates:
-                        self.left_out.add(text)
+                        self.left_out.add(key)
                 continue
             if mark:
-                self.marked_texts.add(text)
+                self.marked_texts.add(key)
             if self.drop_duplicates:
-                if text in self.seen:
+                kept = self.seen.get(key)
+                if kept is not None:
+                    if set(labels) != set(self.label_lists[kept]):
+                        self.conflicting_duplicates += 1
                     continue
-                self.seen.add(text)
+                self.seen[key] = len(self.texts)
             self.texts.append(text)
             self.label_lists.append(labels)
             if self.has_marks:
                 self.marks.append(mark)
+                self.kept_keys.append(key)
         self.rows_read += len(frame)
 
-    def result(self, label_names: dict[str, str] | None) -> LoadedData:
+    def result(self, label_names: dict[str, str] | None, encoding: CsvEncoding) -> LoadedData:
         if label_names:
             # An external vocabulary is authoritative: it overrides CSV-derived names and
             # fills the ones no row could attribute. Narrowed to labels this dataset uses,
@@ -269,9 +337,10 @@ class _Collector:
             )
         marks = None
         if self.has_marks:
-            marks = [mark or (SAME_TEXT if text in self.marked_texts else 0)
-                     for text, mark in zip(self.texts, self.marks, strict=True)]
+            marks = [mark or (SAME_TEXT if key in self.marked_texts else 0)
+                     for key, mark in zip(self.kept_keys, self.marks, strict=True)]
         return LoadedData(texts=self.texts, label_lists=self.label_lists,
                           uri_to_label=self.uri_to_label, marks=marks,
                           excluded_generated=self.excluded_generated,
-                          excluded_rows=self.excluded_rows)
+                          excluded_rows=self.excluded_rows, encoding=encoding,
+                          conflicting_duplicates=self.conflicting_duplicates)

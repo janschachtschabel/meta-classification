@@ -24,9 +24,12 @@ soundest choice** — now with the SVM comparison actually run rather than assum
 On identical features and splits, `LinearSVC` came out **+0.013 macro F1** ahead
 on a single test split ([measured](#answered-svm-measured-on-this-projects-data-2026-07-25)),
 a gap well inside split noise for a 48-label macro average and not worth giving up
-natively calibrated probabilities for — which the whole API (thresholds,
-`baseline_diff`, `label_f1`, `/predict/multi`) is built around; restoring them on
-top of an SVM costs a nested calibration CV and +33 % fit time. LogReg is also the
+native probabilities for — which the whole API (thresholds, `baseline_diff`,
+`label_f1`, `/predict/multi`) is built around; restoring them on top of an SVM costs
+a nested calibration CV and +33 % fit time. (Native, not calibrated: with
+`class_weight="balanced"` a rare label's probabilities sit above its real frequency —
+up to 3.9x, measured in the audit of 2026-09-30 — which the thresholds, tuned on the
+same scores, absorb for every decision the API makes.) LogReg is also the
 only one of the three with 🟢 measured accuracy *and* training time on this exact
 data plus deterministic sub-second serving. The Bayesian ProdSLDA approach offers a
 genuinely richer signal (posterior credibility intervals) but costs GPU training,

@@ -45,12 +45,12 @@ async function onUpload(ev) {
   if (!fileInput.files.length) { showError(errEl, { message: t("common.error.noCsvFile") }); return; }
   const form = new FormData();
   form.append("file", fileInput.files[0]);
-  btn.disabled = true;
+  const idle = busy(btn);
   try {
     await Api.postForm("/datasets/import", form);
     toast(t("datasets.uploaded"));
     fileInput.value = "";
     loadDatasets();
   } catch (err) { showError(errEl, err); }
-  finally { btn.disabled = false; }
+  finally { idle(); }
 }

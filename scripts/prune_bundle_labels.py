@@ -33,7 +33,8 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from app.label_names import is_container_label  # noqa: E402
 from app.model_io import UnsafeModelError  # noqa: E402
-from app.registry import _BACKUP_SUFFIX, Registry  # noqa: E402
+from app.registry import BACKUP_SUFFIX, Registry  # noqa: E402
+from app.settings import Settings  # noqa: E402
 
 # Texts only need to exercise the vectorizer; the comparison is per-column, so any
 # non-degenerate batch proves the kept columns are unchanged.
@@ -109,7 +110,7 @@ def prune(registry: Registry, name: str, *, apply: bool) -> bool:
 
     # The suffix comes from the registry, which is what excludes the copy from
     # list() — a backup named anything else would be served as a model.
-    backup = registry.dir / f"{name}{_BACKUP_SUFFIX}"
+    backup = registry.dir / f"{name}{BACKUP_SUFFIX}"
     if not backup.exists():
         shutil.copytree(registry.dir / name, backup)
     # Repairing a bundle in place is the one deliberate overwrite.
@@ -118,9 +119,17 @@ def prune(registry: Registry, name: str, *, apply: bool) -> bool:
     return True
 
 
+def _defaults() -> tuple[Path, Path]:
+    """The data and models directories the app itself uses: APIV3_DATA_DIR / APIV3_MODELS_DIR
+    (or `.env`) when set -- in a container, the volume -- else beside the code. Looking only
+    beside the code found nothing in a container (audit 2026-09-30, B06)."""
+    settings = Settings()
+    return Path(settings.data_dir), Path(settings.models_dir)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models-dir", default=str(_REPO_ROOT / "models"))
+    parser.add_argument("--models-dir", default=str(_defaults()[1]))
     parser.add_argument("--model", action="append", default=None)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()

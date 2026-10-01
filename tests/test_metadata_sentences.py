@@ -16,7 +16,7 @@ from collections.abc import Iterable, Iterator
 
 import pytest
 
-from app.metadata import textprep
+from app.metadata import sentences as splitter
 
 _WORDS = [
     "Pflanze", "Licht", "Energie", "Zelle", "Chlorophyll", "Wasser", "Kohlendioxid", "Zucker",
@@ -84,10 +84,11 @@ class _Spy:
 @pytest.mark.parametrize("shape", [_prose_line, _unpunctuated_line])
 def test_pysbd_is_never_handed_a_whole_long_line(shape, monkeypatch):
     """The mechanism, checked without a clock: what bounds the cost is the length of each call."""
-    spy = _Spy(textprep._segmenter)
-    monkeypatch.setattr(textprep, "_segmenter", spy)
+    # The segmenter is per thread (audit 2026-09-30, M02), so the accessor is what is replaced.
+    spy = _Spy(splitter._segmenter())
+    monkeypatch.setattr(splitter, "_segmenter", lambda: spy)
 
-    textprep.split_sentences(shape(100_000))
+    splitter.split_sentences(shape(100_000))
 
     assert max(spy.lengths) <= _LINEAR_ZONE, (
         f"pysbd was handed {max(spy.lengths)} characters in one call; its abbreviation pass "
@@ -99,10 +100,10 @@ def test_bounding_a_long_line_does_not_change_its_sentences(monkeypatch):
     """Differential: the same function with the bound lifted is the reference. A line of
     ordinary prose over the bound must split into exactly the sentences it did before."""
     line = _prose_line(12_000)
-    bounded = textprep.split_sentences(line)
-    monkeypatch.setattr(textprep, "MAX_SEGMENT_CHARS", 10**9, raising=False)
+    bounded = splitter.split_sentences(line)
+    monkeypatch.setattr(splitter, "MAX_SEGMENT_CHARS", 10**9)
 
-    assert bounded == textprep.split_sentences(line)
+    assert bounded == splitter.split_sentences(line)
 
 
 @pytest.mark.parametrize("shape", [_recurring_prose_line, _unpunctuated_line])
@@ -117,7 +118,7 @@ def test_one_long_line_splits_in_linear_time(shape):
         timings = []
         for _ in range(3):
             started = time.perf_counter()
-            textprep.split_sentences(text)
+            splitter.split_sentences(text)
             timings.append(time.perf_counter() - started)
         return min(timings)
 

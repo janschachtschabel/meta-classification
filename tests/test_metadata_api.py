@@ -91,6 +91,8 @@ def test_the_echoed_text_is_truncated_like_predict_does_it():
         ({"texts": []}, "an empty list has nothing to answer"),
         ({"texts": ["x" * 100_001]}, "one text past the per-text cap"),
         ({"texts": [SAMPLE] * 101}, "more texts than the batch cap"),
+        # 99,996 characters each: under the per-text cap, so only the budget can refuse it.
+        ({"texts": ["Satz. " * 16_666] * 11}, "more characters than one request's budget"),
         ({"texts": [SAMPLE], "n_keywords": 0}, "asking for no keywords"),
         ({"texts": [SAMPLE], "n_keywords": 101}, "asking for more keywords than exist"),
         ({"texts": [SAMPLE], "title_max": 4}, "a title budget nothing fits in"),
@@ -189,3 +191,60 @@ def test_markup_is_stripped_so_a_page_can_be_sent_as_it_is():
     assert result["title"] == "Bruchrechnung im Alltag"
     assert "<" not in result["description"]
     assert "Bruchrechnung" in result["keywords"]
+
+
+
+# --- M03 (audit 2026-09-30): what one request may cost -------------------------------------------
+
+
+def test_a_request_is_held_to_a_character_budget_across_its_texts():
+    """100 texts of 100,000 characters each passed every per-text bound, and at the documented
+    caps one request cost about eight CPU-minutes (pysbd needs up to 259 ms per 4,000-character
+    piece). The budget bounds the sum."""
+    from app.schemas.metadata import MAX_REQUEST_CHARS
+
+    within = MAX_REQUEST_CHARS // 100_000
+    MetadataRequest(texts=["x" * 100_000] * within)
+    with pytest.raises(ValueError, match="characters"):
+        MetadataRequest(texts=["x" * 100_000] * (within + 1))
+
+
+@pytest.fixture
+def one_slot(monkeypatch, tmp_path):
+    from app import concurrency
+    from app.main import create_app
+    from app.registry import get_registry
+    from app.settings import get_settings
+
+    monkeypatch.setenv("APIV3_API_KEY_READONLY", "ro-key")
+    monkeypatch.setenv("APIV3_API_KEY_ADMIN", "admin-key")
+    monkeypatch.setenv("APIV3_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("APIV3_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("APIV3_MAX_CONCURRENT_METADATA", "1")
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    concurrency.reset_slots()
+    yield TestClient(create_app())
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    concurrency.reset_slots()
+
+
+def test_metadata_requests_beyond_the_concurrency_limit_are_refused_with_a_retry(one_slot):
+    """Each batch holds a worker thread for its whole run, out of the pool every other route
+    shares: eight long ones made `GET /models` wait 21 s. Refused, not queued -- the same rule
+    as /predict/csv."""
+    from app.concurrency import metadata_slots
+
+    slots = metadata_slots()
+    assert slots.capacity == 1
+    assert slots.try_acquire()  # a batch already running
+    try:
+        busy = one_slot.post("/metadata", json={"texts": [SAMPLE]}, headers=RO)
+    finally:
+        slots.release()
+
+    assert busy.status_code == 503, busy.text
+    assert busy.headers["retry-after"]
+    assert one_slot.post("/metadata", json={"texts": [SAMPLE]}, headers=RO).status_code == 200
+    assert slots.in_use == 0, "the answered request kept its slot"

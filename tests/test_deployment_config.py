@@ -10,6 +10,13 @@ files must agree, and the release gate must run every step the push gate runs â€
 edit that re-opens one of these gaps fails here instead of in production.
 """
 
+import importlib.util
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -131,6 +138,32 @@ def test_the_push_gate_also_runs_on_tags():
     assert triggers["push"].get("tags"), "ci.yml does not trigger on tags"
 
 
+# --- B01 (audit 2026-09-30): the GitLab suite can pass the chart's render gate -------------
+
+
+def _gitlab() -> dict:
+    return yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+
+
+def test_the_gitlab_suite_job_brings_the_helm_its_render_tests_demand():
+    """`tests/test_helm_chart.py` refuses to skip wherever `CI` is set, and GitLab always
+    sets it. The job running the suite had no helm, so eight render tests failed in every
+    pipeline, and the build and deploy stages behind them never ran -- not even for the
+    `v4.0.1` tag. The job brings its own helm, verified against the release checksum like
+    everything else this pipeline pulls by hand."""
+    suite_jobs = [
+        job for job in _gitlab().values()
+        if isinstance(job, dict) and "pytest tests" in " ".join(job.get("script", []))
+    ]
+    assert suite_jobs, "no GitLab job runs the test suite"
+    for job in suite_jobs:
+        setup = " ".join(job.get("before_script", []))
+        assert "get.helm.sh" in setup, (
+            "the GitLab suite job installs no helm, so the chart's render tests fail under CI"
+        )
+        assert "sha256sum -c" in setup, "the helm the suite job installs is not checksum-verified"
+
+
 # --- DEP-5: licences are an invariant, not a one-time assessment ---------------------------
 
 
@@ -173,3 +206,344 @@ def test_both_secret_wiring_points_name_the_external_secret():
         "statefulset.yaml does not read config.auth.existingSecret, so the pod still mounts "
         "the chart's own Secret"
     )
+
+
+
+# --- R07: one worker, whatever the environment says ----------------------------------------------
+
+
+def _image_command() -> list[str]:
+    """The image's CMD, in its exec form."""
+    import json
+
+    line = next(line for line in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
+                if line.startswith("CMD ["))
+    return json.loads(line[len("CMD "):])
+
+
+def test_the_image_runs_one_worker_even_when_the_environment_asks_for_more(monkeypatch):
+    """R07 (audit 2026-09-30): uvicorn takes its worker count from WEB_CONCURRENCY unless the
+    command names one, and the training job, model cache, rate limits and share links live in
+    ONE process -- with several workers, 9 of 20 share links created in one were unknown to
+    the next. Read through uvicorn's own rule, as the image starts it."""
+    import uvicorn
+
+    command = _image_command()
+    assert command[:2] == ["uvicorn", "app.main:app"]
+    workers = int(command[command.index("--workers") + 1]) if "--workers" in command else None
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+
+    assert uvicorn.Config("app.main:app", workers=workers).workers == 1
+
+
+# --- B02/B03: what the GitLab pipeline pushes is what the charts reference ----------------------
+
+needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX shell to expand in")
+
+
+def _expanded(words: list[str], env: dict[str, str]) -> list[str]:
+    """Each word as GitLab's shell expands it -- `${CI_COMMIT_TAG#v}` included, which a
+    string comparison cannot judge."""
+    script = "\n".join(f"printf '%s\\n' {word}" for word in words)
+    done = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30,  # noqa: S603, S607
+                          env={**os.environ, **env}, check=True)
+    return done.stdout.splitlines()
+
+
+def _pushed(job: str, env: dict[str, str]) -> set[str]:
+    """The image references a GitLab job pushes, for one set of CI variables."""
+    refs = [line.split("docker image push", 1)[1].strip()
+            for line in _gitlab()[job]["script"] if line.startswith("docker image push")]
+    return set(_expanded(refs, env))
+
+
+_REGISTRY = {"DOCKER_REGISTRY": "registry.example", "DOCKER_IMAGE_PATH": "wlo/classification-api"}
+
+
+@needs_sh
+def test_a_release_pushes_the_image_tag_the_chart_names():
+    """B02 (audit 2026-09-30): the chart names its image by `appVersion` -- 4.0.1 -- and the
+    GitLab tag build pushed only the git tag, v4.0.1. Installed from the repository as its own
+    README says, the chart pulled an image no pipeline had pushed to that registry."""
+    app_version = yaml.safe_load((CHART / "Chart.yaml").read_text(encoding="utf-8"))["appVersion"]
+    tag = f"v{app_version}"
+
+    pushed = _pushed("build and push (tags)", {**_REGISTRY, "CI_COMMIT_TAG": tag, "CI_COMMIT_REF_NAME": tag})
+
+    assert f"registry.example/wlo/classification-api:{app_version}" in pushed, pushed
+    assert f"registry.example/wlo/classification-api:{tag}" in pushed, "the git tag itself is still pushed"
+
+
+@needs_sh
+def test_every_main_pipeline_rolls_out_the_image_it_built():
+    """B03 (audit 2026-09-30): the branch chart named the image `:main` and carried the same
+    version every time, so `helm upgrade` changed nothing in the pod spec, the pod never
+    rolled, IfNotPresent kept the cached image, and `helm rollback` restored the same `:main`.
+    The chart now names the immutable sha- tag the branch build pushes, under a version that
+    differs per pipeline."""
+    job = _gitlab()["build and push helm chart"]
+
+    def versions(sha: str, iid: str) -> tuple[str, str]:
+        env = {"CI_COMMIT_REF_SLUG": "main", "CI_COMMIT_SHORT_SHA": sha, "CI_PIPELINE_IID": iid}
+        chart, app = _expanded([f'"{job["variables"][k]}"' for k in ("CHART_VERSION", "APP_VERSION")], env)
+        return chart, app
+
+    first_chart, first_app = versions("1a2b3c4", "41")
+    second_chart, second_app = versions("5d6e7f8", "42")
+    built = _pushed("build and push (branches)",
+                    {**_REGISTRY, "CI_COMMIT_REF_SLUG": "main", "CI_COMMIT_SHORT_SHA": "1a2b3c4"})
+
+    assert f"registry.example/wlo/classification-api:{first_app}" in built, (
+        f"the chart names :{first_app}, which the branch build does not push")
+    assert first_app != "main", "the chart still names the mutable branch tag"
+    assert first_app != second_app and first_chart != second_chart, (
+        "two pipelines produce the same chart, so an upgrade does not roll the pod")
+
+
+# --- B04: compose hands the container what .env says ------------------------------------------
+
+_PATHS = ("APIV3_DATA_DIR", "APIV3_MODELS_DIR", "APIV3_SHARE_LINKS_FILE",
+          "APIV3_FEEDBACK_FILE", "APIV3_JOB_HISTORY_FILE")
+
+
+def test_compose_reads_every_setting_from_env_and_keeps_the_volume_paths():
+    """B04 (audit 2026-09-30): compose passed on a fixed list of variables, so fifteen settings
+    `.env.example` documents -- the rate limits, the upload cap, the UI switch -- and
+    `FORWARDED_ALLOW_IPS` never reached the container. `.env` is now the container's
+    environment; the volume paths stay pinned over it, so a `.env` written for a local run
+    cannot point the container inside its own filesystem. Optional, so keys exported in the
+    shell instead still work."""
+    service = _service()
+    entries = service.get("env_file") or []
+    env_files = [entry if isinstance(entry, dict) else {"path": entry} for entry in
+                 (entries if isinstance(entries, list) else [entries])]
+
+    assert any(e["path"] == ".env" and e.get("required") is False for e in env_files), env_files
+    environment = service["environment"]
+    assert all(environment.get(name, "").startswith("/data/") for name in _PATHS), (
+        "a volume path is no longer pinned over .env")
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="no docker CLI to render compose with")
+def test_a_setting_in_env_reaches_the_container(tmp_path):
+    """The same, as compose itself renders it -- from a copy with a placeholder `.env`, so a
+    real one beside the repository's compose file is never read."""
+    (tmp_path / "docker-compose.yml").write_bytes((ROOT / "docker-compose.yml").read_bytes())
+    (tmp_path / ".env").write_text(
+        "APIV3_API_KEY_ADMIN=render-test\nAPIV3_API_KEY_READONLY=render-test\n"
+        "FORWARDED_ALLOW_IPS=10.42.0.0/16\nAPIV3_MAX_UPLOAD_MB=99\nAPIV3_DATA_DIR=./local-data\n",
+        encoding="utf-8")
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(("APIV3_", "FORWARDED_"))}
+
+    done = subprocess.run(["docker", "compose", "config", "--format", "json"], cwd=tmp_path,  # noqa: S603, S607
+                          capture_output=True, text=True, timeout=60, env=clean, check=True)
+
+    environment = json.loads(done.stdout)["services"]["classification-api"]["environment"]
+    assert environment.get("FORWARDED_ALLOW_IPS") == "10.42.0.0/16"
+    assert environment.get("APIV3_MAX_UPLOAD_MB") == "99"
+    assert environment.get("APIV3_DATA_DIR") == "/data/datasets", "the volume path lost to .env"
+
+
+# --- B05: the licence gate catches a GPL licence as the metadata spells it ----------------------
+
+
+def _licence_step() -> str:
+    [step] = [s for s in _workflow("ci.yml")["jobs"]["audit"]["steps"]
+              if "piplicenses" in s.get("run", "")]
+    return step["run"]
+
+
+def _gate(tmp_path: Path, classifier: str) -> subprocess.CompletedProcess[str]:
+    """The audit job's own pip-licenses command, run against one installed distribution."""
+    pytest.importorskip("piplicenses", reason="pip-licenses (requirements-dev.txt) is not installed")
+    [command] = [line for line in _licence_step().splitlines() if "-m piplicenses" in line]
+    args = shlex.split(command.strip())[3:]  # after "python -m piplicenses"
+    site = tmp_path / "site"
+    (site / "licence_probe-1.0.dist-info").mkdir(parents=True)
+    (site / "licence_probe-1.0.dist-info" / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: licence-probe\nVersion: 1.0\nLicense: see classifier\n"
+        f"Classifier: {classifier}\n", encoding="utf-8")
+    return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, "-m", "piplicenses", *args, "--packages", "licence-probe"],
+        capture_output=True, text=True, timeout=120, check=False,
+        env={**os.environ, "PYTHONPATH": str(site)})
+
+
+def test_the_licence_gate_fails_on_a_gpl_package_as_its_metadata_spells_it(tmp_path):
+    """B05 (audit 2026-09-30): `--fail-on "GPL;AGPL;LGPL"` compared whole licence names, and
+    no package calls its licence "GPL": Unidecode's metadata says "GNU General Public
+    License v2 or later (GPLv2+)", and the gate passed it. Run here exactly as the audit job
+    runs it, against a package that declares that classifier."""
+    gate = _gate(tmp_path, "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)")
+
+    assert gate.returncode != 0, f"a GPLv2+ package passed the licence gate:\n{gate.stdout}"
+
+
+def test_the_licence_gate_passes_a_permissive_package(tmp_path):
+    """The other half: a gate that fails on everything gates nothing."""
+    gate = _gate(tmp_path, "License :: OSI Approved :: MIT License")
+
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+
+
+def test_the_licence_gate_reads_the_tree_the_image_installs():
+    """It installed `requirements.lock` -- 17 direct pins, resolved fresh -- so it judged the
+    tree the next recompile would get, not the one the image ships. And its own tool came
+    unpinned; it is pinned with the other dev tools now."""
+    step = _licence_step()
+    dev_pin = next(line.strip() for line in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+                   .splitlines() if line.lower().startswith("pip-licenses=="))
+
+    assert "--require-hashes -r requirements-hashes.lock" in step, step
+    assert dev_pin in step, f"the audit job does not install {dev_pin}"
+
+
+# --- B10/B06: what the image is built from, and what it may do at run time ----------------------
+
+
+def _dockerfile() -> list[str]:
+    """The Dockerfile's instructions, continuation lines joined."""
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8").replace("\\\n", " ")
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def test_the_image_installs_nothing_unpinned():
+    """B10 (audit 2026-09-30): `pip install --upgrade pip` fetched whatever pip was newest into
+    every build -- unpinned and unhashed, next to a lock that refuses exactly that. The base
+    image's own pip installs the lock."""
+    installs = [part for line in _dockerfile() if line.startswith("RUN")
+                for part in line.split("&&") if "pip install" in part]
+
+    assert installs and all("--require-hashes" in part for part in installs), installs
+
+
+def test_the_base_image_is_pinned_by_digest():
+    [base] = [line for line in _dockerfile() if line.startswith("FROM")]
+
+    assert "@sha256:" in base, base
+
+
+def test_the_runtime_user_cannot_rewrite_the_code():
+    """B10: `chown -R appuser /app` let the process that serves requests rewrite its own code.
+    It owns its data, nothing else."""
+    lines = _dockerfile()
+    chowned = [word for line in lines for part in line.split("&&") if "chown" in part
+               for word in part.split() if word.startswith("/")]
+
+    assert chowned and all(path == "/data" or path.startswith("/data/") for path in chowned), chowned
+    assert "USER appuser" in lines
+
+
+def test_the_image_points_every_writable_path_at_the_volume():
+    """Which is what lets the code stay read-only: the five paths defaulted to files beside the
+    code, so an unconfigured `docker run` wrote into /app -- and lost it with the container.
+    The image sets them as compose and the chart do."""
+    env = " ".join(line for line in _dockerfile() if line.startswith("ENV"))
+    service = _service()["environment"]
+
+    for name in _PATHS:
+        assert f"{name}={service[name]}" in env, f"the image does not set {name} to {service[name]}"
+
+
+def test_the_bundle_repairs_ship_in_the_image():
+    """B06 (audit 2026-09-30): the label repairs had to run where the bundles are -- in the
+    container -- and the image did not carry them."""
+    copies = " ".join(line for line in _dockerfile() if line.startswith("COPY"))
+
+    for script in ("scripts/patch_bundle_labels.py", "scripts/prune_bundle_labels.py"):
+        assert script in copies, f"{script} is not in the image"
+
+
+@pytest.mark.parametrize("script", ["patch_bundle_labels.py", "prune_bundle_labels.py"])
+def test_the_bundle_repairs_find_the_configured_directories(script, monkeypatch, tmp_path):
+    """In the container the bundles and the label file are in the volume (APIV3_MODELS_DIR,
+    APIV3_DATA_DIR), and the scripts looked beside the code. They now ask the app's own
+    settings, so they find what the app serves; unconfigured, that is the old default."""
+    monkeypatch.setenv("APIV3_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("APIV3_DATA_DIR", str(tmp_path / "datasets"))
+    spec = importlib.util.spec_from_file_location(script.removesuffix(".py"), ROOT / "scripts" / script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._defaults() == (tmp_path / "datasets", tmp_path / "models")
+
+
+def test_dependabot_keeps_the_pinned_base_image_current():
+    """B10 (audit 2026-09-30): the base digest was three months old. Pinning a digest stops it
+    moving under a build; it also stops it ever being patched unless something proposes the
+    next one. Python dependencies stay out on purpose (dependabot.yml says why; pip-audit gates
+    their CVEs)."""
+    config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    ecosystems = {(entry["package-ecosystem"], entry["directory"]) for entry in config["updates"]}
+
+    assert ("docker", "/") in ecosystems, ecosystems
+
+
+def test_the_image_workflow_claims_no_signature_it_does_not_make():
+    """B10: a comment at `provenance: true` read "Sign build provenance (Sigstore via OIDC)" --
+    a signature nothing in the workflow makes. Whoever relies on that comment checks for a
+    signature that is not there."""
+    workflow = (ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
+    signs = "cosign" in workflow or "attest-build-provenance" in workflow
+
+    assert signs or "Sigstore" not in workflow
+
+
+# --- B11: the pipeline that feeds the deployed registry gates what GitHub's gates ----------------
+
+
+def _commands(lines: list[str], prefix: str) -> set[str]:
+    return {" ".join(line.split()) for line in lines if line.strip().startswith(prefix)}
+
+
+def test_gitlab_type_checks_what_github_type_checks():
+    """B11 (audit 2026-09-30): GitHub type-checks `app` and the two scripts that write inside
+    a bundle; GitLab, the pipeline that feeds the deployed registry, checked `app` only."""
+    [types] = [s for s in _workflow("ci.yml")["jobs"]["api"]["steps"] if s.get("name") == "Types (mypy)"]
+    github = _commands(" ".join(types["run"].split("\\\n")).splitlines(), "python -m mypy")
+    gitlab = _commands(_gitlab()["mypy"]["script"], "python -m mypy")
+
+    assert github and github == gitlab, (github, gitlab)
+
+
+def test_gitlab_runs_the_licence_gate_github_runs():
+    """B11: GitLab had no licence gate at all -- the B05 command, verbatim, with the same pin
+    and the same tree."""
+    github = _licence_step().splitlines()
+    gitlab = [line for job in _gitlab().values() if isinstance(job, dict)
+              for line in job.get("before_script", []) + job.get("script", [])]
+
+    for prefix in ("python -m piplicenses", "pip install pip-licenses==", "pip install --require-hashes"):
+        assert _commands(github, prefix) and _commands(github, prefix) <= _commands(gitlab, prefix), prefix
+
+
+def test_gitlab_keeps_an_sbom_of_what_it_ships():
+    """B11: GitHub's image carries an SBOM from buildx; GitLab's pipeline produced none. It now
+    keeps a CycloneDX SBOM of the hashed tree with the pipeline."""
+    reports = [job["artifacts"]["reports"] for job in _gitlab().values()
+               if isinstance(job, dict) and "reports" in job.get("artifacts", {})]
+    sbom = [r["cyclonedx"] for r in reports if "cyclonedx" in r]
+    producers = [line for job in _gitlab().values() if isinstance(job, dict)
+                 for line in job.get("script", []) if "--format cyclonedx-json" in line]
+
+    assert sbom and producers, "no CycloneDX SBOM in the GitLab pipeline"
+    assert any("requirements-hashes.lock" in line for line in producers)
+
+
+# --- Improvement 10: CI starts the image it builds, once ------------------------------------
+
+
+def test_ci_starts_the_built_image_once():
+    """Improvement 10 (audit 2026-09-30): the image is what ships, and nothing ever ran it --
+    a COPY that misses a module, a path the read-only code cannot write, a CMD that does not
+    start would each have passed every gate. One job builds the Dockerfile, starts the image
+    and waits for /health, on every push, pull request and tag."""
+    jobs = _workflow("ci.yml")["jobs"]
+    smoke = [job for job in jobs.values()
+             if "docker build" in (script := " ".join(s.get("run", "") for s in job.get("steps", [])))
+             and "docker run" in script and "/health" in script]
+
+    assert smoke, "no CI job builds the image and asks it for /health"
+    script = " ".join(s.get("run", "") for s in smoke[0]["steps"])
+    assert "exit 1" in script, "a container that never answers must fail the job"

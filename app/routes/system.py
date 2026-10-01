@@ -138,4 +138,5 @@ async def config(
         "auth_enabled": settings.auth_enabled,
         "rate_limit_enabled": settings.rate_limit_enabled,
         "max_upload_mb": settings.max_upload_mb,
+        "max_json_mb": settings.max_json_mb,
     }

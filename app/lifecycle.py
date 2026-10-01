@@ -14,7 +14,10 @@ first request.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,7 +26,7 @@ from fastapi import FastAPI
 from .jobs import job_runner
 from .metadata import generate
 from .registry import Registry, get_registry
-from .settings import Settings, get_settings
+from .settings import MAX_MODELS_PER_CALL, Settings, get_settings
 
 logger = logging.getLogger("api_v3")
 
@@ -84,14 +87,26 @@ def sweep_upload_staging(data_dir: Path) -> int:
     return removed
 
 
+# The prefix of the keys `.env.example` ships: published, so they protect nothing.
+_PLACEHOLDER_PREFIX = "change-me"
+_MAKE_A_KEY = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+
+
 def _check_auth_configuration(settings: Settings) -> None:
-    """Refuse to start an authenticated deployment that nobody can administer.
+    """Refuse to start an authenticated deployment that nobody can administer -- or that
+    anyone could.
 
     With auth on and no admin key, ``_role_for_key`` can never return "admin": every
     request 401s and no model can ever be trained, imported or deleted. That reads
     like a client-side key problem and has cost real debugging time, so fail here
     with the variable name instead. A readonly-only deployment is legitimate, so
     only the admin key is required.
+
+    A key that is set must also be usable and secret (audit 2026-09-30, S10). Outside ASCII
+    it made every request carrying a key a 500 (``compare_digest`` refuses non-ASCII text),
+    and it could not be matched reliably anyway: clients encode such a header differently.
+    And the ``.env.example`` placeholders are known to anyone who has read the repository.
+    The messages name the variable, never the value.
     """
     if not settings.auth_enabled:
         return
@@ -101,11 +116,50 @@ def _check_auth_configuration(settings: Settings) -> None:
             "request would be rejected with 401. Set the key, or run with "
             "APIV3_AUTH_ENABLED=false for local use."
         )
+    for variable, key in (("APIV3_API_KEY_ADMIN", settings.api_key_admin),
+                          ("APIV3_API_KEY_READONLY", settings.api_key_readonly)):
+        if not key:
+            continue
+        if not key.isascii():
+            raise RuntimeError(
+                f"{variable} contains characters outside ASCII. A key travels in an HTTP "
+                "header, where clients encode those differently, so it could never be "
+                f"matched reliably. Use a random ASCII key: {_MAKE_A_KEY}"
+            )
+        if key.startswith(_PLACEHOLDER_PREFIX):
+            raise RuntimeError(
+                f"{variable} is still the placeholder from .env.example, which anyone who "
+                f"has read the repository knows. Set a key of your own: {_MAKE_A_KEY}"
+            )
     if settings.api_key_admin == settings.api_key_readonly:
         logger.warning(
             "APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY are identical — the "
             "readonly role grants full admin access."
         )
+
+
+def _warn_about_several_workers() -> None:
+    """Say so when the environment asks for more than one worker (audit 2026-09-30, R07).
+
+    The training job, the model cache, the rate limits and the share links live in ONE
+    process; with several workers, share links made in one were unknown to the next (9 of 20
+    in the audit's test). The image pins `--workers 1`, so there the value is ignored -- and
+    anywhere uvicorn obeys it, the app breaks in ways no request reports. A warning, not a
+    refusal: some platforms set the variable themselves, and the image is right regardless.
+    """
+    workers = os.environ.get("WEB_CONCURRENCY", "").strip()
+    if workers and workers != "1":
+        logger.warning(
+            "WEB_CONCURRENCY is %r, but this API runs as ONE process: its training job, model "
+            "cache, rate limits and share links are not shared between workers. The image "
+            "ignores it (--workers 1); started any other way, run one worker.", workers)
+
+
+# Threads behind every `asyncio.to_thread`, i.e. behind nearly every route: the event loop's
+# default executor has min(32, CPUs + 4) -- 8 on four cores -- where an export and eight model
+# reads kept a prediction on a loaded model waiting 4.3 s (audit 2026-09-30, R04). As many as
+# anyio gives Starlette's own threadpool, which the slot limits in `concurrency` are sized for.
+WORKER_THREADS = 40
 
 
 @asynccontextmanager
@@ -114,7 +168,10 @@ async def lifespan(app: FastAPI):
     crashed/killed save (a hidden ``.name.tmp`` whose atomic rename never ran),
     and preload any configured warmup models."""
     settings = get_settings()
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=WORKER_THREADS, thread_name_prefix="apiv3"))
     _check_auth_configuration(settings)
+    _warn_about_several_workers()
     settings.ensure_dirs()
     registry = get_registry()
     swept = registry.sweep_stale_tmp()
@@ -123,16 +180,18 @@ async def lifespan(app: FastAPI):
     spooled = sweep_upload_staging(settings.data_dir)
     if spooled:
         logger.warning("Swept %d orphaned upload staging file(s) from a previous crash", spooled)
+    resident = settings.effective_max_models_in_memory()
+    if resident > settings.max_models_in_memory:
+        # Never silently: the operator set a RAM ceiling and it was raised -- to the models
+        # one /predict/multi call names (audit 2026-09-30, R04) and to the warmup list --
+        # so the extra memory has to be visible in the log.
+        logger.info(
+            "Model cache holds up to %d models (raised from APIV3_MAX_MODELS_IN_MEMORY=%d to "
+            "fit the %d models one /predict/multi call may name and the %d warmup models)",
+            resident, settings.max_models_in_memory, MAX_MODELS_PER_CALL,
+            len(settings.warmup_models_list),
+        )
     if settings.warmup_models_list:
-        resident = settings.effective_max_models_in_memory()
-        if resident > settings.max_models_in_memory:
-            # Never silently: the operator set a RAM ceiling and the warmup list
-            # raised it, so the extra memory has to be visible in the log.
-            logger.info(
-                "Model cache holds %d models (raised from APIV3_MAX_MODELS_IN_MEMORY=%d "
-                "to fit the %d warmup models)",
-                resident, settings.max_models_in_memory, len(settings.warmup_models_list),
-            )
         _warmup_models(registry, settings.warmup_models_list)
     if settings.warmup_metadata:
         _warmup_metadata()
@@ -140,11 +199,12 @@ async def lifespan(app: FastAPI):
         "api_v3 ready (models_dir=%s, auth=%s)", settings.models_dir, settings.auth_enabled
     )
     yield
-    # Ask a running training to stop at its next checkpoint (between the C fits,
-    # before the deploy fit). The thread is a daemon and dies with the process
-    # anyway; this gives it the chance to end cleanly inside the termination grace
-    # period instead, which is what the Helm chart's 60 s already assumed.
-    job_runner.stop()
+    # Ask a running training to stop at its next checkpoint (between the C fits, before the
+    # deploy fit) and wait for it, inside the termination grace period -- and record what
+    # the shutdown ends: the queue, and a run still inside a long fit. Asked and left at
+    # once, a run and its queue vanished without a trace (audit 2026-09-30, R03). Off the
+    # loop: the wait is a thread join.
+    await asyncio.to_thread(job_runner.shutdown, settings.shutdown_wait_seconds)
     logger.info("api_v3 shutting down")
 
 

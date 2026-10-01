@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -25,6 +27,9 @@ VOCABULARIES = (
     "https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/hochschulfaechersystematik/index.json",
 )
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+# Fewer than this from one vocabulary is not a vocabulary: a scheme without `hasTopConcept`
+# gave `{}`, and `{}` was written over a good label_names.json (audit 2026-09-30, W07).
+MIN_LABELS = 10
 
 
 def _walk(concepts: object, lang: str, out: dict[str, str]) -> None:
@@ -48,7 +53,10 @@ def _walk(concepts: object, lang: str, out: dict[str, str]) -> None:
 
 
 def fetch(url: str, lang: str) -> dict[str, str]:
-    with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 - fixed https allowlist above
+    # https only, overrides included: `--url file:///...` was read as readily (W07).
+    if not url.startswith("https://"):
+        raise SystemExit(f"refusing {url!r}: vocabularies are fetched over https only")
+    with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 - https only, checked above
         scheme = json.loads(response.read().decode("utf-8"))
     names: dict[str, str] = {}
     _walk(scheme.get("hasTopConcept"), lang, names)
@@ -66,6 +74,9 @@ def main() -> None:
     for url in args.url or VOCABULARIES:
         names = fetch(url, args.lang)
         print(f"{len(names):>5} labels from {url}")
+        if len(names) < MIN_LABELS:
+            raise SystemExit(f"{url} gave {len(names)} labels (fewer than {MIN_LABELS}): not a "
+                             "concept scheme as expected -- nothing written")
         overlap = set(names) & set(merged)
         if overlap:
             print(f"      note: {len(overlap)} URIs already seen; keeping the first")
@@ -73,9 +84,18 @@ def main() -> None:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(dict(sorted(merged.items())), ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    # Whole or not at all: written in place, an interrupted write left half a JSON document
+    # where the names were (W07). A sibling temp file, then one rename.
+    handle, temp = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(dict(sorted(merged.items())), ensure_ascii=False, indent=1))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, out)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
     print(f"\n{len(merged)} labels -> {out}")
 
 

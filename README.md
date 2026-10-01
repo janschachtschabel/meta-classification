@@ -7,7 +7,7 @@ It covers all features of the previous version: **training** on your own CSV met
 ## Why MetaClassify
 
 - **Modern & lean:** TF-IDF (word + character n-grams, sparse) + scikit-learn LogisticRegression. **Torch-free, no model download, no GPU.** (Embeddings were tested extensively but did not beat TF-IDF on this metadata — see below.)
-- **Automatic & self-applying:** the `auto` profile selects `C` on the validation split and tunes thresholds (global + per-label). These are **stored in the model bundle and applied automatically at `/predict`** — by default the tuned thresholds decide which labels are returned (an explicit `top_k` switches to a ranking of the N most probable labels, each flagged `above_threshold`). Task type (binary/multiclass/multilabel) is auto-detected; `min_samples_per_label` is auto-scaled (and can also be set per request).
+- **Automatic & self-applying:** the `auto` profile selects `C` on the validation split and tunes thresholds (global + per-label). These are **stored in the model bundle and applied automatically at `/predict`** — by default the tuned thresholds decide which labels are returned (an explicit `top_k` switches to a ranking of the N most probable labels, each flagged `above_threshold`). Task type (binary/multiclass/multilabel) is auto-detected; `min_samples_per_label` is declared — 20, or what `config.yaml` sets — and can be set per request, or sent as `null` to scale with the dataset size.
 - **Data preparation:** HTML tags, Markdown markup and HTML entities are stripped, whitespace is normalized (`clean_text`).
 - **Honest metrics:** train/val/**test** split by default — tuning on validation, reported metrics on the untouched test split. Or use **k-fold cross-validation** (`split.cv_folds` in `config.yaml`, or per request via the `cv_folds` body field, e.g. 5): every row is used for both training and validation (out-of-fold metrics) and the deployed model is fit on **100 %** of the data. *Caveat:* with CV, `C` and the thresholds are selected on the same out-of-fold predictions the metrics report — a mild optimism (no row is ever scored by a model that saw it, but the two tuning choices are in-sample). The classic split keeps strict separation. **Rows an LLM wrote or touched** — data-prep marks them `generated_for`, `example_for` or `enriched_fields` — train but never validate, in both modes: folds, validation and test split are drawn from the real rows, a label without a real row is trained but not scored, and `synthetic_rows: "exclude"` leaves the generated rows out entirely. A *thin* label — one that reaches `min_samples_per_label` only through marked rows — keeps its own tuned threshold by default, which then rests on its few real rows; `thin_label_threshold: "global"` gives it the global threshold instead: steadier, but not fitted to the label. Your call — the model detail names the thin labels either way. A dataset without these columns trains exactly as before; the bundle's `synthetic_data` block records what was done.
 - **Secure:** pickle-free models (**skops**), import via file upload only (no server-side URL fetch → no SSRF), API-key auth (constant-time), CORS allowlist, upload limit.
@@ -55,9 +55,11 @@ docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
   ghcr.io/janschachtschabel/meta-classification:latest
 ```
 
-The five path variables are what make the volume the source of truth; without them the
-container would write inside its own filesystem and lose everything on the next `docker
-run`. `docker compose` sets them for you.
+The five path variables put everything the app writes on the volume. Images built after
+4.0.1 set them themselves, and their code is not writable by the process that runs it;
+spelled out here, the command also works with 4.0.1 and earlier, which would otherwise
+write inside the container's own filesystem and lose it on the next `docker run`.
+`docker compose` and the Helm chart set them too.
 
 **Tags:** `latest` is the newest release (currently the same image as `4.0.1`, `4.0`
 and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
@@ -70,10 +72,15 @@ with `docker compose up -d` or run under emulation.
 ```bash
 python -m venv .venv && . .venv/Scripts/activate   # Windows
 # source .venv/bin/activate                         # Linux/Mac
-pip install -r requirements.txt -c requirements.lock   # lock = the tested versions
+pip install --require-hashes -r requirements-hashes.lock   # the tree CI and the image run
 ```
 
 Datasets then live in `./data`, models in `./models`. Both are created on first use.
+
+The hashed lock is the whole tested tree. `requirements.txt -c requirements.lock` pins only
+the direct dependencies and resolves the rest fresh, which is how a new venv once got an
+anyio whose deprecation warning the suite turns into errors. The same command brings a venv
+that has drifted back to the tested versions.
 
 ## Start
 
@@ -239,6 +246,11 @@ curl localhost:8000/models/subjects -H "X-API-Key: $RO_KEY"
 curl -X POST localhost:8000/predict -H "X-API-Key: $RO_KEY" -H "Content-Type: application/json" \
   -d '{"texts": ["Bruchrechnung", "Photosynthese im Blatt"], "model_name": "subjects"}'
 
+# The fields instead of a finished text: the server assembles them as training did
+curl -X POST localhost:8000/predict -H "X-API-Key: $RO_KEY" -H "Content-Type: application/json" \
+  -d '{"records": [{"properties.cclom:title": "Bruchrechnung",
+                    "properties.cclom:general_keyword": "Brüche"}], "model_name": "subjects"}'
+
 # Stop a running training (admin) — the bundle is only published on success,
 # so stopping never leaves a half-written model behind
 curl -X POST localhost:8000/train/stop -H "X-API-Key: $ADMIN_KEY"
@@ -247,6 +259,16 @@ curl -X POST localhost:8000/train/stop -H "X-API-Key: $ADMIN_KEY"
 Omitting `top_k` is the normal case: the model then returns every label above its own
 tuned threshold. Pass `top_k: N` when you want a ranking of fixed length regardless of
 thresholds — each entry carries `above_threshold` so forced ones stay recognisable.
+
+### Which encoding a CSV is read in
+
+UTF-8 or Windows-1252, decided once per file from all of its bytes — for training, the
+dataset views and `/predict/csv` alike. A handful (up to 10) of bytes that are not UTF-8 in
+an otherwise UTF-8 file, such as a truncated umlaut, are read as `�`; more than that, or a
+file mixing both encodings, is refused with the byte offset of the first bad byte, because no
+reading of it is right. (Until 4.0.1 one such byte anywhere made the whole file cp1252, every
+`ä` became `Ã¤`, and the metrics could not show it: training and test saw the same text.) A
+bundle records what its dataset was read as, under `csv_encoding`.
 
 ### Weighting text fields (`text_column_weights`)
 
@@ -269,13 +291,12 @@ column names. Send your own mapping to override it, or `{}` to train unweighted;
 
 - Values are `1…10`; keys must be among `text_columns` (a typo is a `422`, not a silent no-op).
 - `sublinear_tf` damps repetition logarithmically, so `2` is worth ~1.7×, not 2×.
-- **Training-time only, and that has a consequence:** `/predict` takes one opaque
-  string, so the API cannot re-apply the weights for you. A model trained with
-  weights expects input built the same way — **assemble the text you send to
-  `/predict` with the same repetitions**, otherwise its tuned thresholds sit on a
-  slightly different feature distribution than they were tuned on. The weights are
-  recorded in the bundle (`text_column_weights` in `GET /models/{name}`), so a
-  client can always look up what a given model expects.
+- **A model trained with weights expects its input built the same way**, otherwise its
+  tuned thresholds sit on a slightly different feature distribution than they were tuned
+  on. Send `records` — each item as its fields — and the server assembles the text from
+  the weights recorded in the bundle, as `/predict/csv` does for a file. With `texts`, one
+  finished string per item, that is the client's job: the same fields, the same
+  repetitions (`text_column_weights` in `GET /models/{name}`).
 
 🟢 **Measured** on `data_30k_ai.csv` (48 subjects, identical rows/split/C grid per
 variant — only the text assembly differs; `scripts/benchmark_field_weights.py`):
@@ -328,6 +349,27 @@ be repaired **without retraining** — `uri_to_label` is presentation-only JSON 
 python scripts/patch_bundle_labels.py --apply
 ```
 
+In a container the data directory is the volume: copy the file in and run the repair there
+— the image carries it, and it finds the volume as the app does (`APIV3_DATA_DIR`,
+`APIV3_MODELS_DIR`):
+
+```bash
+docker cp label_names.json metaclassify:/data/datasets/
+docker exec metaclassify python scripts/patch_bundle_labels.py --apply
+```
+
+(`kubectl cp` / `kubectl exec` likewise.)
+
+Or upload it, where copying into the volume is not an option: `PUT /label-names` (admin) takes
+the mapping as JSON and replaces the file whole; `GET /label-names` shows what training will
+use. It applies to trainings from then on — existing bundles still need the repair above.
+
+Both repairs may run beside the server. They touch models only — never a staging directory,
+a backup or a deleted bundle — and replace a bundle whole or not at all: the old one is
+renamed aside first, and a replace cut short is undone at the next start. A request that
+reads the bundle at the very moment of the swap may fail once; the next one gets the
+repaired bundle.
+
 See [`docs/configuration.md`](docs/configuration.md#datalabel_namesjson--authoritative-label-display-names-optional) for the details.
 
 ### Model documentation (`PUT /models/{name}/info`)
@@ -367,6 +409,17 @@ broader concept has an id and is kept, because the label hierarchy is real signa
 Older bundles still carry such a class — loading one logs a warning, and
 `scripts/prune_bundle_labels.py --apply` removes it without retraining (it drops the matching
 estimator too and verifies the remaining probabilities are bit-identical).
+
+### A label on (nearly) every row is dropped, not learned
+
+A label is learned from the rows without it as much as from the rows with it, so it needs
+`min_samples_per_label` of each. One that (almost) every row carries — a parent subject in a
+hierarchical vocabulary, a constant in a filtered export — teaches nothing and would lift the
+macro F1 for free. Worse, scikit-learn fits it as a constant, a type the pickle-free loader
+refuses: until 4.0.1 such a run reported `completed` and its model answered every request
+with 422. It is now left out, logged, and listed in the bundle as `ubiquitous_labels` (and on
+the model card); if nothing else is left, the run stops and says why. Every bundle is also
+checked against the loader's type allowlist before it is published.
 
 ## Profiles (`config.yaml`)
 
@@ -428,7 +481,7 @@ The returns collapse after 5 while the cost keeps doubling, so **no shipped prof
 `cv_folds: 10`** — it is available per request if you want it, but it is not worth 2× the
 time for three thousandths.
 
-Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_threshold`, `threshold_per_label`, `use_char`, `max_word_features`, `max_char_features`).
+Add your own profiles in `config.yaml` (fields: `description`, `C_grid`, `cv_folds`, `stratified_splits`, `tune_threshold`, `threshold_per_label`, `threshold_shrinkage_k`, `selection_tol`, `select_c_on_tuned_thresholds`, `refit_vectorizer_per_fold`, `use_char`, `max_word_features`, `max_char_features` — each explained in [`docs/configuration.md`](docs/configuration.md#configyaml-training-profiles)).
 
 ## Endpoints (excerpt)
 
@@ -467,6 +520,7 @@ Add your own profiles in `config.yaml` (fields: `C_grid`, `cv_folds`, `tune_thre
   queue**: "stop" means "end this", not "skip to the next one".
 - **Training history:** `GET /train/history` — what every finished run left behind, newest first: the request it was started with, how it ended, its duration and the headline scores. A run that **failed** leaves no bundle to inspect, so this is the only place its reason survives; a run killed mid-flight leaves no entry, because it never finished. Bounded to the newest 200 on disk (`APIV3_JOB_HISTORY_FILE`).
 - **Classification:** `POST /predict` (takes up to 1000 texts; `POST /predict/batch` is a deprecated alias of it), `POST /predict/csv` (upload a CSV, get one back — see below), `POST /predict/multi` (several models = target fields in one call; each model applies its own tuned thresholds, evaluation stays per model), `POST /predict/explain`. All predict endpoints can attach two reliability signals per prediction (both always on in `/predict/explain`):
+  - `confidence` is a score, not a calibrated probability: balanced class weights lift rare labels (up to 3.9× their real frequency, measured), so compare it with the label's tuned threshold — which is what decides — rather than with 50 %.
   - `baseline_diff` (`include_baseline_diff=true`) — confidence minus the model's empty-text prediction. A high confidence with a diff near zero means the label fires for almost anything, not for this text.
   - `label_f1` (`include_label_f1=true`) — this label's F1 from the training evaluation. Confidence says how sure the model is *here*, `label_f1` how much that is worth: `Politik 0.95` on a label scoring 0.68 deserves a human look, `Mathematik 0.95` on a label scoring 0.95 does not. Left out for labels the bundle has no score for — among them labels no real row could validate when AI-marked rows trained the model.
 
@@ -497,10 +551,14 @@ forced ranking distinguishable from an asserted one.
 Neither side is materialised: the input is read in chunks and the answer leaves as it is
 produced. 🟢 Measured: 50 000 rows against the 59-label `faecher_300k_auto` produced
 4.1 MB of CSV in 54.6 s at a **2.2 MB peak heap** on a 6.5 MB input (`transfer-encoding:
-chunked`, no `content-length`). The upload obeys `max_upload_mb`; the header is checked
-before a byte is streamed, because once a streaming response starts the status line is
-already 200. A malformed row deep in the file therefore truncates the download — the row
-numbers say where it stopped.
+chunked`, no `content-length`). The upload obeys `max_upload_mb`. Before a byte is
+streamed the whole file is parsed once — header, every row, the encoding — because once a
+streaming response starts its status line is already 200, and a failure after that can only
+cut the answer short: until 4.0.1 a broken row past the first 500 did exactly that, with a
+clean end of transfer and no word of it. A file that does not parse is now a 400 naming the
+row. The response header **`X-Input-Rows`** says how many input rows the answer covers — its
+highest `row` + 1; a client comparing the two can tell a complete answer from one cut short
+for any other reason (a dropped connection, a restart).
 
 ### Descriptive metadata
 
@@ -532,7 +590,9 @@ curl -X POST http://localhost:8000/metadata -H "X-API-Key: $KEY" \
   comparison these methods come from found that small generative models were no better at
   the job and did invent facts.
 - **Budgets** come with the request: `title_max` (default 90), `desc_max` (500),
-  `n_keywords` (8). Up to 100 texts per call; each is answered independently.
+  `n_keywords` (8). Up to 100 texts per call, 1,000,000 characters in all; each is answered
+  independently. Two batches run at once (`APIV3_MAX_CONCURRENT_METADATA`); a third gets `503`
+  with `Retry-After`, because each holds a worker thread for as long as its texts take.
 - **Empty fields are an answer.** A text that yields nothing — blank, or only boilerplate —
   comes back with empty strings and an empty list rather than an error.
 - **German.** The stopwords, the noun-phrase rules and the word frequencies are German;
@@ -594,7 +654,7 @@ See [`.env.example`](.env.example) for a ready-to-copy sample and [`docs/configu
 
 **Example run (30k rows, `auto` profile, all cores):** ~5 min end-to-end (load → 6× C search → deploy fit → save), **F1 micro ≈ 0.80 / macro ≈ 0.62** over 47 subjects, at **~0.5 GB RAM** — confirming full core utilization at low memory.
 
-**Auto-optimization per run:** `C` (grid on validation) and the thresholds (global + per-label) are determined automatically. `min_samples_per_label` is **not** auto-scaled but declared — it defaults to `20` and is settable per request, because dropping labels is a decision worth seeing rather than a hidden heuristic. Send `null` for the old size-scaled behaviour (2 / 5 / 20 / 35). If no label reaches the value, training stops with a `status=error` on `/train/status` naming what the most frequent label actually has. Selection and reported metrics always measure the decision rule serving actually applies (`decision_rule` in the metrics): tuned thresholds for multilabel, argmax for multiclass/binary (threshold tuning is skipped there — serving never reads thresholds for single-label tasks).
+**Auto-optimization per run:** `C` (grid on validation) and the thresholds (global + per-label) are determined automatically. `min_samples_per_label` is **not** auto-scaled but declared — it defaults to `20` (or to `preprocessing.min_samples_per_label` in `config.yaml`, which `GET /train/profiles` reports as `default_min_samples_per_label`) and is settable per request, because dropping labels is a decision worth seeing rather than a hidden heuristic. Send `null` for the old size-scaled behaviour (2 / 5 / 20 / 35). If no label reaches the value, training stops with a `status=error` on `/train/status` naming what the most frequent label actually has. Selection and reported metrics always measure the decision rule serving actually applies (`decision_rule` in the metrics): tuned thresholds for multilabel, argmax for multiclass/binary (threshold tuning is skipped there — serving never reads thresholds for single-label tasks).
 
 ### How large a dataset does this handle?
 
@@ -747,15 +807,21 @@ instead of 0.3 s and 3 MB. Re-attaching them is two lines:
 
 ```python
 import json
+from pathlib import Path
+
 import skops.io as sio
 from scipy.sparse import hstack
 
-cfg = json.load(open("config.json", encoding="utf-8"))
-word_vec, char_vec = sio.load("vectorizer.skops", trusted=sio.get_untrusted_types(file="vectorizer.skops"))
-head = sio.load("head.skops", trusted=sio.get_untrusted_types(file="head.skops"))
+cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
+# trusted=[]: a bundle of this app declares no type beyond skops' safe defaults, so nothing
+# needs trusting, and a file that declares more is refused instead of loaded. Never pass
+# sio.get_untrusted_types(...) here: that trusts whatever the file asks for, which is how
+# a crafted .skops file runs code.
+word_vec, char_vec = sio.load("vectorizer.skops", trusted=[])
+head = sio.load("head.skops", trusted=[])
 
 # The vocabularies ship separately — attach them before transforming.
-for sub, terms in zip([word_vec, char_vec], json.load(open("vocabulary.json", encoding="utf-8"))):
+for sub, terms in zip([word_vec, char_vec], json.loads(Path("vocabulary.json").read_text(encoding="utf-8"))):
     if sub is not None:
         sub.vocabulary_ = {term: index for index, term in enumerate(terms)}
 
@@ -767,6 +833,12 @@ proba = head.predict_proba(X)            # column order == cfg["classes"]
 # multilabel: apply cfg["per_label_thresholds"] (fallback cfg["global_threshold"]);
 # multiclass/binary (cfg["task_type"]): take proba.argmax(axis=1) — thresholds are unused.
 ```
+
+The texts above go in as they are; the API cleans them first (HTML, Markdown, entities),
+exactly as the training texts were cleaned. `cfg["text_cleaning"]` names the version of that
+cleaning (`app/data.py`, `clean_text`): 2 for models trained since the audit of 2026-09-30,
+1 — or no key — before. Version 2 takes `<` as a tag only when a letter, `/`, `!` or `?`
+follows, so `x < y` stays text; the API serves every bundle with the version it recorded.
 
 For hosting in other ML serving systems:
 - **MLflow / BentoML / Ray Serve** can wrap the sklearn pipeline losslessly (recommended).
@@ -826,8 +898,8 @@ above is the right form for everything at once.
 ## Tests
 
 ```bash
-pip install -r requirements.txt -c requirements.lock
-pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
+pip install --require-hashes -r requirements-hashes.lock
+pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy/pip-licenses
 python -m pytest tests -q                          # the whole suite
 python -m ruff check app tests scripts             # lint
 python -m mypy app --config-file pyproject.toml    # types
@@ -837,10 +909,11 @@ python -m mypy app --config-file pyproject.toml    # types
 
 - Models are pickle-free (skops); import rejects any file with unknown types and any unexpected member name — an allowlist of the seven members an export may contain (the four required bundle files, `metrics.json`, and the two generated ones). The zip-bomb guard refuses an archive that inflates both past 64 MB and far beyond its upload size, and in no case past an absolute 1 GiB ceiling: the ratio alone scales with the upload, so at a 200 MB cap it would have waved 4 GiB of declared expansion straight into memory. Bundles are written atomically (staged in a hidden tmp dir, then renamed), so a crash can never leave a half-readable model.
 - Single-worker design (training status, model cache and rate limiter are process-local). Plan a shared store before running multiple workers.
-- Rate limiting keys on the client IP and covers every expensive or public route: `/predict*`, `/train`, all import/export endpoints, the CSV-reading `GET /datasets`, `GET /datasets/{name}`, `/datasets/analyze` + `/datasets/{name}/validate`, and the key-less `GET /share/{id}` (throttles share-id brute-forcing). Cheap status routes and `/health` stay unthrottled by design (probes, UI polling). Behind a reverse proxy all clients share the proxy's IP, so limits act globally until uvicorn is told which peer may speak for a client. The image already runs with `--proxy-headers`; supply the trusted source with `FORWARDED_ALLOW_IPS` (Helm: `config.limits.forwardedAllowIps`, e.g. the ingress controller's pod CIDR). Never `*` — any client could then spoof `X-Forwarded-For` and bypass the limiter entirely.
+- Rate limiting keys on the client IP and covers every expensive or public route: `/predict*`, `/train`, all import/export endpoints, the CSV-reading `GET /datasets`, `GET /datasets/{name}`, `/datasets/analyze` + `/datasets/{name}/validate`, and the key-less `GET /share/{id}` (throttles share-id brute-forcing). Cheap status routes and `/health` stay unthrottled by design (probes, UI polling). Behind a reverse proxy all clients share the proxy's IP, so limits act globally until uvicorn is told which peer may speak for a client. The image already runs with `--proxy-headers`; supply the trusted source with `FORWARDED_ALLOW_IPS` (compose: in `.env`; Helm: `config.limits.forwardedAllowIps`, which the chart requires with its ingress and the limiter on). Name the narrowest range that holds the proxy: every peer in it may claim any client address, so a whole pod range lets any pod pick its own rate-limit bucket unless a NetworkPolicy admits only the controller. Never `*` (the chart refuses it). Keyless mode (`APIV3_AUTH_ENABLED=false`) serves no request that carries a forwarding header, whatever address it claims.
+- No request body is read before its API key checks out: FastAPI parses a body before any route-level check, so until 4.0.1 a caller without a key could make the server parse up to the upload cap (48 MiB of JSON held 1.25 GB for a 401) or spool a chunked upload into `/tmp`. Bodies are also counted as they arrive — chunked ones included — against `APIV3_MAX_UPLOAD_MB` for uploads and `APIV3_MAX_JSON_MB` (10) for everything else, and cut off with 413 at the cap.
 - Every response carries baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`). No HSTS in-app — set it at the TLS-terminating reverse proxy.
 - The Docker base image is digest-pinned; the Helm chart runs with `readOnlyRootFilesystem: true`, `runAsNonRoot`, dropped capabilities and `seccompProfile: RuntimeDefault`. Writable paths are the `/data` PVC (datasets + models) plus an `emptyDir` at `/tmp` (multipart uploads over ~1 MB spool there — it must be writable or uploads fail).
-- Dependencies: `requirements.lock` pins the direct dependencies (the exact versions the test suite ran against); `requirements-hashes.lock` pins the **full transitive tree with sha256 hashes** (compiled from the lock via `uv pip compile --generate-hashes --universal`, targeting the image's Python 3.11). Docker and CI install with `--require-hashes --only-binary=:all:` — nothing unpinned or tampered with can enter the image. Update deliberately: bump the lock, re-run ruff/mypy/pytest, recompile the hashes file (command in the lock header).
+- Dependencies: `requirements.lock` pins the direct dependencies (the exact versions the test suite ran against); `requirements-hashes.lock` pins the **full transitive tree with sha256 hashes** (compiled from the lock via `uv pip compile --generate-hashes --universal`, targeting the image's Python 3.11). Docker installs with `--require-hashes --only-binary=:all:`, CI with `--require-hashes` — nothing unpinned or tampered with can enter the image or the tested tree. Update deliberately: bump the lock, re-run ruff/mypy/pytest, recompile the hashes file (command in the lock header).
 - Docker: see `Dockerfile` (runs as non-root).
 - **What to alert on** (Prometheus / uptime checks): `GET /health` non-200 (liveness) and `GET /ready` non-200 (the pod is up but cannot serve); `apiv3_training_running == 1` for longer than your largest expected training run (stuck job); an unexpected drop of `apiv3_models_total` (lost volume/PVC); volume usage of the data mount (datasets + bundles grow). Error tracking: unhandled exceptions are logged server-side with full tracebacks (`api_v3.*` loggers) — ship container logs to your aggregator.
 

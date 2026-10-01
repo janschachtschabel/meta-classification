@@ -223,3 +223,40 @@ def test_arrowing_along_the_tab_bar_moves_focus_and_loads_nothing():
     # they do through the click listener every tab already carries.
     assert re.search(r'\.tab"\)\.forEach\(\(\w+\) => \w+\.addEventListener\("click"', app), \
         "the tabs lost their click listener, so Enter and Space no longer select"
+
+
+class _Ancestry(HTMLParser):
+    """The open elements around each element with an id, outermost first."""
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+            "source", "track", "wbr"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.open: list[dict[str, str]] = []
+        self.around: dict[str, list[dict[str, str]]] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        element = {"__tag__": tag, **{k: v or "" for k, v in attrs}}
+        if "id" in element:
+            self.around[element["id"]] = list(self.open)
+        if tag not in self.VOID:
+            self.open.append(element)
+
+    def handle_endtag(self, tag: str) -> None:
+        while self.open and self.open.pop()["__tag__"] != tag:
+            pass
+
+
+def test_a_training_announcement_is_heard_from_every_tab():
+    """U09 (audit 2026-09-30): the element that announces a run's transitions sat inside the
+    Training panel, which is `hidden` whenever another tab is shown -- and a live region that
+    is display:none is not in the accessibility tree at all. A run that finished while its
+    owner classified texts was never announced, though the chip beside the tabs showed it."""
+    parser = _Ancestry()
+    parser.feed(INDEX)
+
+    panels = [a.get("id") for a in parser.around["train-announce"] if "tab-panel" in a.get("class", "")]
+    assert not panels, f"#train-announce is inside the tab panel(s) {panels}"
+    assert any(a.get("id") == "view-app" for a in parser.around["train-announce"]), (
+        "it belongs to the signed-in shell, beside the chip it speaks for")

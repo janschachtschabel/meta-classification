@@ -256,6 +256,21 @@ class JobRunner:
         with self._lock:
             return [entry[2] for entry in self._queue]
 
+    def datasets_in_use(self) -> set[str]:
+        """The datasets the running and the queued runs read, as their requests name them.
+
+        Casefolded: on Windows `D.csv` reaches the file `d.csv`. Includes a hard-stopped run
+        whose thread still executes -- it may still be reading. Deleting one of these is what
+        let a waiting run train on a different file uploaded under the same name (audit
+        2026-09-30, R12).
+        """
+        with self._lock:
+            requests = [entry[3] for entry in self._queue]
+            if self._busy_locked():
+                requests.append(self._last_request)
+        return {str(request["dataset_name"]).casefold() for request in requests
+                if isinstance(request, dict) and request.get("dataset_name")}
+
     def _dispatch_next(self) -> None:
         """Start the next queued run — called by the finishing thread, as its last act.
 
@@ -279,8 +294,10 @@ class JobRunner:
                         self._thread = None
                     return
                 target, args, model_name, request, kind = self._queue.popleft()
+                # In the same section as the pop: see _begin_locked.
+                thread = self._begin_locked(target, args, model_name, request, kind)
             try:
-                self._launch(target, args, model_name, request, kind)
+                thread.start()
                 return
             except Exception:  # noqa: BLE001 - one bad entry must not strand the queue
                 logger.exception("Queued run %r could not be started; skipping it.", model_name)
@@ -318,15 +335,22 @@ class JobRunner:
                     "A training job is already running (or a hard-stopped one is "
                     "still finishing in the background); retry once it completes."
                 )
-        self._launch(target, args, model_name, request, kind)
+            thread = self._begin_locked(target, args, model_name, request, kind)
+        thread.start()
 
-    def _launch(
+    def _begin_locked(
         self, target: Callable, args: tuple, model_name: str, request: dict | None,
         kind: str = "training",
-    ) -> None:
-        """Set the state up and put the run on a thread. No liveness guard: the two
-        callers each establish it their own way — ``start`` by checking, and
-        ``_dispatch_next`` by being the finishing thread itself."""
+    ) -> threading.Thread:
+        """Set the state up for a run and make its thread, which the caller starts once it
+        has let go of ``self._lock`` -- held for this call.
+
+        No liveness guard: the two callers each establish it their own way -- ``start`` by
+        checking, ``_dispatch_next`` by being the finishing thread itself -- and each in the
+        SAME lock section as this. Taken off the queue in one section and launched in the
+        next, a run cleared the stop flag a stop had set in between, and started anyway
+        (audit 2026-09-30, R10); two starts could both pass the check the same way.
+        """
 
         def runner() -> None:
             try:
@@ -362,38 +386,68 @@ class JobRunner:
                 # behind a run that failed in a way nobody anticipated.
                 self._dispatch_next()
 
-        with self._lock:
-            self._stop.clear()
-            self._hard.clear()
-            self._state = _idle_state()
-            self._state.update(
-                status="running",
-                phase="starting",
-                model_name=model_name,
-                # Without it an evaluation reads as a training that somehow produced
-                # no model — in the history above all, where the two sit side by side.
-                kind=kind,
-                started_at=datetime.now(UTC).isoformat(),
-            )
-            self._start_ts = time.monotonic()
-            # A run that hangs before its first progress update must still show
-            # a growing heartbeat age, so the clock starts at launch.
-            self._heartbeat_ts = self._start_ts
-            self._generation += 1
-            generation = self._generation
-            self._last_model_name = model_name
-            self._last_request = request
-            # Register the thread INSIDE the same lock block as the state
-            # transition: a hard stop + new start in the gap between two separate
-            # blocks could otherwise pass the liveness guard and run two
-            # trainings at once. Only thread.start() happens outside.
-            thread = threading.Thread(target=runner, daemon=True)
-            self._thread = thread
+        # The caller holds self._lock: state, generation and thread change in one section.
+        self._stop.clear()
+        self._hard.clear()
+        self._state = _idle_state()
+        self._state.update(
+            status="running",
+            phase="starting",
+            model_name=model_name,
+            # Without it an evaluation reads as a training that somehow produced
+            # no model — in the history above all, where the two sit side by side.
+            kind=kind,
+            started_at=datetime.now(UTC).isoformat(),
+        )
+        self._start_ts = time.monotonic()
+        # A run that hangs before its first progress update must still show
+        # a growing heartbeat age, so the clock starts at launch.
+        self._heartbeat_ts = self._start_ts
+        self._generation += 1
+        generation = self._generation
+        self._last_model_name = model_name
+        self._last_request = request
+        # Registered in the same section as the state transition: a hard stop + new start
+        # in a gap between two sections could otherwise pass the liveness guard and run
+        # two trainings at once. Only thread.start() happens outside.
+        thread = threading.Thread(target=runner, daemon=True)
+        self._thread = thread
 
         def on_progress(**fields: object) -> None:
             self._update_if_current(generation, **fields)
 
-        thread.start()
+        return thread
+
+    def shutdown(self, timeout: float) -> None:
+        """Wind down for the process exiting, and record every run that ends with it.
+
+        A rollout, a node drain or a key rotation ended the running run and dropped the queue
+        without a trace in the history (audit 2026-09-30, R03). The queued runs are recorded
+        as interrupted at once -- before the wait, which the platform may cut short -- the
+        running one is asked to stop and given ``timeout`` seconds, in which a run stopping
+        at a checkpoint records itself as ever, and one still running then is recorded as
+        interrupted, its late finish dropped as a hard-stopped run's is.
+        """
+        with self._lock:
+            dropped = list(self._queue)
+            self._queue.clear()
+            self._stop.set()
+            thread = self._thread
+        for _target, _args, name, request, kind in dropped:
+            _record_ended({"model_name": name, "kind": kind}, request, None, "interrupted",
+                          "The server shut down before the run started; submit it again.")
+        if thread is not None:
+            thread.join(timeout)
+        with self._lock:
+            if self._state["status"] != "running":
+                return
+            self._generation += 1
+            state = dict(self._state)
+            request = self._last_request
+            elapsed = round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
+            self._apply({"status": "interrupted", "message": "The server shut down during the run."})
+        _record_ended(state, request, elapsed, "interrupted",
+                      "The server shut down during the run; start it again.")
 
     def stop(self, *, hard: bool = False) -> None:
         """Cancel the running run and everything waiting behind it.
@@ -402,8 +456,10 @@ class JobRunner:
         one". The browser-side queue behaved this way already, so the server keeps the
         promise the UI had been making.
         """
-        self._stop.set()
         with self._lock:
+            # Under the lock a launch takes: set before it, the flag could be cleared by a
+            # launch already under way, and the stop was lost (audit 2026-09-30, R10).
+            self._stop.set()
             self._queue.clear()
         if hard:
             self._hard.set()
@@ -417,6 +473,9 @@ class JobRunner:
                 # Invalidate the running thread's generation so its eventual
                 # completion cannot overwrite this reset.
                 self._generation += 1
+                ended = dict(self._state)
+                request = self._last_request
+                elapsed = round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
                 # The run's own measurements go with its results: a peak and a thread
                 # count belong to a run, and reported beside "idle" they describe one
                 # the status no longer admits to. rss_mb is not here — it is read live,
@@ -424,6 +483,21 @@ class JobRunner:
                 self._apply(dict(status="idle", phase="", message="Hard stopped.",
                                  progress=0, results=None, peak_rss_mb=None,
                                  head_fit_threads=None, threads_requested=None))
+            # The run no longer owns the status, so its own finish is dropped: its record is
+            # written here or nowhere -- a hard-stopped run left none (audit 2026-09-30, R15).
+            _record_ended(ended, request, elapsed, "stopped", "Hard-stopped by the operator.")
+
+
+def _record_ended(state: dict, request: dict | None, duration: float | None, status: str,
+                  why: str) -> None:
+    """Write the history record of a run ended from outside its own thread -- by the shutdown
+    (``JobRunner.shutdown``) or a hard stop -- whose own finish is dropped."""
+    try:
+        job_history.append(job_history.record_for(
+            {**state, "status": status, "error": why}, request, duration))
+    except OSError:
+        logger.warning("Could not record the %s run %r in the job history.", status,
+                       state.get("model_name"))
 
 
 # Module-level singleton used by the API routes.

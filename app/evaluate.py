@@ -178,10 +178,12 @@ def run_evaluation(
     training metrics — those describe the run that produced the model and stay the
     bundle's own account of itself.
     """
-    started = time.time()
+    started = time.monotonic()  # a duration, not a timestamp (R15)
     name = req["model_name"]
     weights = _weights_for(registry, name, req)
     on_progress(phase="loading", progress=5, message=f"Reading {req['dataset_name']} …")
+    # First, for the cleaning it was trained with: the rows are read with it (T09).
+    model = registry.get(name)
     data = load_dataset(
         settings.data_dir / req["dataset_name"],
         req["text_columns"],
@@ -190,6 +192,7 @@ def run_evaluation(
         label_separator=req.get("label_separator", ","),
         label_filter=req.get("label_filter"),
         text_column_weights=weights,
+        text_cleaning=model.text_cleaning,
     )
     # A row an LLM wrote or touched is never scored: measured on it, a model is measured
     # on how well it learned that LLM (data-prep's marks, see ``provenance``).
@@ -207,7 +210,6 @@ def run_evaluation(
 
     on_progress(phase="evaluating", progress=40,
                 message=f"Scoring {name} on {len(texts)} rows …")
-    model = registry.get(name)
     result = evaluate_model(model, texts, label_lists)
     if should_stop():
         return {}
@@ -220,7 +222,7 @@ def run_evaluation(
         # another run that assembled its text the same way.
         "text_column_weights": weights,
         "evaluated_at": datetime.now(UTC).isoformat(),
-        "duration_seconds": round(time.time() - started, 1),
+        "duration_seconds": round(time.monotonic() - started, 1),
         **result,
         **({"ai_marked_rows_skipped": skipped} if skipped else {}),
     }

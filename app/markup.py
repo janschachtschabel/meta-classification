@@ -42,6 +42,13 @@ _BLOCK_TAG_NAMES = (
 # whitespace, a `/` or the closing `>`.
 BLOCK_TAG_RE = re.compile(rf"</?(?:{_BLOCK_TAG_NAMES})(?=[\s/>])[^<>]*>", re.IGNORECASE)
 HTML_TAG_RE = re.compile(r"<[^<>]+>")
+# A tag starts with `<` and a letter, `/`, `!` or `?` -- what HTML itself requires -- so
+# `x < 5` and `a < b und c > d` stay prose (audit 2026-09-30, M05 for the metadata path, T09
+# for the classification path from cleaning version 2 on). `HTML_TAG_RE` keeps its looser form
+# for cleaning version 1: bundles trained with it are served with it, since a tag it no longer
+# removed would shift the features their vectorizers were fitted on.
+STRICT_TAG_RE = re.compile(r"<[A-Za-z/!?][^<>]*>")
+
 # Four elements whose body is not prose, so removing the tags around them is not enough:
 # `script` and `style` hold code, and `nav` and `footer` are what HTML calls chrome rather than
 # content. Measured end to end: with only the tags removed, a page opening
@@ -54,18 +61,15 @@ HTML_TAG_RE = re.compile(r"<[^<>]+>")
 # of this — `clean_text` feeds fitted vectorizers, and dropping a body it previously kept would
 # shift the features of every model already trained on scraped HTML.
 #
-# Written as an unrolled loop rather than `.*?` so it cannot backtrack: the body alternates
-# runs of non-`<` characters with a `<` that is not the closing tag, every iteration consumes
-# at least that one character, and `[^<]*` always stops at the next `<`. There is exactly one
-# way to parse any prefix. A lazy `.*?` would instead rescan to the end of the document once
-# per unclosed `<script`. The closing tag is optional so a page truncated mid-element loses the
-# remainder instead of keeping it.
-NON_PROSE_ELEMENT_RE = re.compile(
-    r"<(script|style|nav|footer)\b[^<>]*>"
-    r"[^<]*(?:<(?!/\1\b)[^<]*)*"
-    r"(?:</\1\b[^<>]*>)?",
-    re.IGNORECASE,
-)
+# A body goes only WITH its closing tag, and the closing tag is found in Python
+# (`_drop_non_prose`), not by a pattern: the unrolled-loop regex this replaces took the rest of
+# the text from an unclosed opener, and a text ABOUT HTML says `<script>` in its prose (audit
+# 2026-09-30, M05). A lazy `.*?` would rescan to the end once per unclosed opener instead.
+_NON_PROSE_NAMES = ("script", "style", "nav", "footer")
+_NON_PROSE_OPEN_RE = re.compile(rf"<({'|'.join(_NON_PROSE_NAMES)})\b[^<>]*>", re.IGNORECASE)
+_NON_PROSE_CLOSE_RE = {
+    name: re.compile(rf"</{name}\b[^<>]*>", re.IGNORECASE) for name in _NON_PROSE_NAMES
+}
 MD_LINK_RE = re.compile(r"!?\[([^\[\]]*)\]\([^()]*\)")  # [text](url) / ![alt](url) -> text/alt
 MD_MARK_RE = re.compile(r"[*_`~#>]+")  # emphasis / code / heading / quote markers
 
@@ -125,7 +129,7 @@ def _tag(match: re.Match[str]) -> str:
     return "\n" if BLOCK_TAG_RE.fullmatch(match.group()) else " "
 
 
-def strip_tags(text: str) -> str:
+def strip_tags(text: str, *, strict: bool = False) -> str:
     r"""Decode entities and remove HTML tags; a block-level tag becomes a line break.
 
     One pass that decides the replacement per match, rather than a block-tag pass followed by
@@ -137,7 +141,53 @@ def strip_tags(text: str) -> str:
     produces — whether a tag became `"\n"` or `" "` is invisible once its whitespace collapse
     runs.
     """
-    return HTML_TAG_RE.sub(_tag, html.unescape(text))
+    return (STRICT_TAG_RE if strict else HTML_TAG_RE).sub(_tag, html.unescape(text))
+
+
+def _drop_comments(text: str) -> str:
+    """HTML comments, first of all: a commented-out banner is not text, and read as markup its
+    tags went while its words stayed -- and became the title (audit 2026-09-30, M05).
+
+    Found with ``str.find``. An opener without a closer ends the search: nothing after it can
+    close either, so this stays linear however many there are.
+    """
+    pieces, pos = [], 0
+    while (start := text.find("<!--", pos)) != -1:
+        end = text.find("-->", start + 4)
+        if end == -1:
+            break
+        pieces.append(text[pos:start])
+        pos = end + 3
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
+def _drop_non_prose(text: str) -> str:
+    """The bodies of script, style, nav and footer, each with its closing tag; a line break in
+    their place keeps a heading off the next block. An opener without a closer stays, for the
+    tag pass to remove like any tag. Linear: once one name has no closer after a position, no
+    later opener of it can have one, so it is not searched for again."""
+    pieces, pos = [], 0
+    unclosed: set[str] = set()
+    while opener := _NON_PROSE_OPEN_RE.search(text, pos):
+        name = opener.group(1).lower()
+        closer = None if name in unclosed else _NON_PROSE_CLOSE_RE[name].search(text, opener.end())
+        if closer is None:
+            unclosed.add(name)
+            pieces.append(text[pos:opener.end()])
+            pos = opener.end()
+            continue
+        pieces.append(text[pos:opener.start()])
+        pieces.append("\n")
+        pos = closer.end()
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
+def _prose_tag(match: re.Match[str]) -> str:
+    # An inline tag is nothing, as a browser renders it: `<b>Bruch</b>rechnung` is one word,
+    # `H<sub>2</sub>O` is H2O -- the shared `_tag` makes them "Bruch rechnung" and "H 2 O".
+    return "\n" if BLOCK_TAG_RE.fullmatch(match.group()) else ""
 
 
 def strip_markup_preserving_lines(raw: str) -> str:
@@ -148,16 +198,22 @@ def strip_markup_preserving_lines(raw: str) -> str:
     anywhere inside a word, and it keeps script and style bodies. Both differences would
     change what an already-fitted vectorizer sees, and neither matters once its whitespace
     collapse has run.
+
+    The order is the audit's (2026-09-30, M05): line endings before any rule anchored to a
+    line, comments and non-prose bodies before tags, tags before entities. Decoded first,
+    `x &lt; 5 ... y &gt; 3` became a tag that took the prose between it, and the description
+    was a sentence the text does not have. Entities come LAST, after the Markdown rules too:
+    what they encode is the author's text, and `&#35;` is a `#` that must not start a heading.
     """
-    # Non-prose bodies go before `strip_tags` decodes entities: afterwards a prose mention of
-    # "&lt;script&gt;" would read as a real unclosed tag and take the rest of the sentence with
-    # it. A line break in their place keeps a heading off the next block.
-    text = NON_PROSE_ELEMENT_RE.sub("\n", raw)
-    text = strip_tags(text)
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+    text = _drop_non_prose(_drop_comments(text))
+    text = STRICT_TAG_RE.sub(_prose_tag, text)
     text = CONTROL_RE.sub("", text)
     text = MD_LINK_RE.sub(r"\1", text)
     # Quote markers before headings: `_MD_HEADING_RE` is anchored to `^`, so a line that still
     # starts with `>` is not a heading to it and would keep its `#`.
     text = _MD_QUOTE_RE.sub("", text)
     text = _MD_HEADING_RE.sub(_heading, text)
-    return _MD_MARKER_RUN_RE.sub(_emphasis, text)
+    text = _MD_MARKER_RUN_RE.sub(_emphasis, text)
+    # Control characters again: an entity can encode one.
+    return CONTROL_RE.sub("", html.unescape(text))

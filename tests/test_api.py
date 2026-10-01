@@ -204,6 +204,16 @@ def test_a_model_can_be_evaluated_on_a_dataset(trained_model):
     assert entry["status"] == "completed"
 
 
+def test_evaluation_weights_are_bounded_like_training_weights(trained_model):
+    """T15 (audit 2026-09-30): /train caps a weight at 10, evaluate did not -- a typo like
+    1000000 made the API process build a list of a million column names per row."""
+    body = {**EVAL_BODY, "text_column_weights": {"properties.cclom:title": 1_000_000}}
+
+    response = client.post("/models/api_model/evaluate", headers=ADMIN, json=body)
+
+    assert response.status_code == 422, response.text
+
+
 def test_evaluating_twice_appends_rather_than_replaces(trained_model):
     """A model is evaluated on several datasets over its life; keeping only the newest
     would throw away exactly the comparison this exists for."""
@@ -221,6 +231,23 @@ def test_evaluating_an_unknown_model_or_dataset_is_refused(trained_model):
                        json={**EVAL_BODY, "dataset_name": "missing.csv"},
                        headers=ADMIN).status_code == 404
     assert client.post("/models/api_model/evaluate", json=EVAL_BODY, headers=RO).status_code == 403
+
+
+def test_a_text_column_the_dataset_lacks_is_refused_before_an_evaluation_queues(trained_model):
+    """Since T03 (audit 2026-09-30) the loader refuses a missing text column -- but an
+    evaluation found out only as a job error, after queueing behind whatever ran. Refused at
+    submission now, as `/train` does; `/datasets/analyze` refuses it the same way."""
+    lacking = [*EVAL_BODY["text_columns"], "properties.cclom:description"]
+
+    evaluation = client.post("/models/api_model/evaluate", headers=ADMIN,
+                             json={**EVAL_BODY, "text_columns": lacking})
+    analysis = client.post("/datasets/analyze", headers=ADMIN,
+                           json={**EVAL_BODY, "dataset_name": "tiny.csv", "text_columns": lacking})
+
+    assert evaluation.status_code == 400, evaluation.text
+    assert "properties.cclom:description" in evaluation.json()["detail"]
+    assert analysis.status_code == 400, analysis.text
+    assert "properties.cclom:description" in analysis.json()["detail"]
 
 
 def test_a_second_training_is_queued_instead_of_refused(trained_model):
@@ -348,6 +375,92 @@ def test_export_import_roundtrip_via_api(trained_model):
     imported = client.post("/models/import", files=files, data={"new_name": "api_copy"}, headers=ADMIN)
     assert imported.status_code == 200, imported.text
     assert "api_copy" in client.get("/models", headers=RO).json()
+
+
+def test_a_model_name_outside_latin_1_can_be_exported_and_shared(trained_model):
+    """S03 (audit 2026-09-30): the download header was built by hand, and a header is
+    Latin-1 -- a model called "Fächer–2026" (en dash) made its export and its public share
+    link answer 500, and each attempt left a whole bundle copy behind as `.export-*`."""
+    from urllib.parse import unquote
+
+    name = "Fächer–2026"
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    client.post("/models/import", headers=ADMIN, data={"new_name": name},
+                files={"file": ("bundle.zip", bundle, "application/zip")}).raise_for_status()
+
+    answers = TestClient(app, raise_server_exceptions=False)  # a 500 as a caller sees it
+    direct = answers.post(f"/models/{name}/export", headers=ADMIN)
+    link = client.post(f"/models/{name}/export", headers=ADMIN, json={"generate_share_url": True})
+    shared = answers.get(link.json()["share_url"])
+
+    orphans = list((_TMP / "models").glob(".export-*"))
+    assert (direct.status_code, shared.status_code, len(orphans)) == (200, 200, 0)
+    for response in (direct, shared):
+        assert response.status_code == 200, response.text
+        disposition = response.headers["content-disposition"]
+        assert "filename*=utf-8''" in disposition, disposition
+        assert unquote(disposition.split("''", 1)[1]) == f"{name}.zip"
+    assert not list((_TMP / "models").glob(".export-*")), "no staged copy is left behind"
+    client.delete(f"/models/{name}", headers=ADMIN).raise_for_status()
+
+
+def test_link_changes_the_store_cannot_write_answer_503_and_change_nothing(trained_model):
+    """S05 (audit 2026-09-30): on a full volume a revocation answered 500 and was undone by
+    the next restart; a delete removed the model and left its links behind on disk, for the
+    next model under the name. Nothing is changed now unless the store took it, and the
+    answer names the setting to check -- not where the server keeps its files."""
+    from app.sharing import get_share_store
+
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    client.post("/models/import", headers=ADMIN, data={"new_name": "linked"},
+                files={"file": ("b.zip", bundle, "application/zip")}).raise_for_status()
+    link = client.post("/models/linked/export", headers=ADMIN, json={"generate_share_url": True}).json()
+    store_file = get_share_store().path
+    blocker = store_file.with_name(store_file.name + ".tmp")
+    blocker.mkdir()
+    try:
+        revoked = client.delete(f"/share/{link['share_id']}", headers=ADMIN)
+        deleted = client.delete("/models/linked", headers=ADMIN)
+    finally:
+        blocker.rmdir()
+
+    for answer in (revoked, deleted):
+        assert answer.status_code == 503, answer.text
+        assert "APIV3_SHARE_LINKS_FILE" in answer.json()["detail"]
+        assert str(store_file.parent) not in answer.json()["detail"]
+    assert "linked" in client.get("/models", headers=RO).json(), "a delete that failed deleted nothing"
+    assert client.get(link["share_url"]).status_code == 200, "and the link still works"
+    client.delete("/models/linked", headers=ADMIN).raise_for_status()
+    assert client.get(link["share_url"]).status_code == 404
+
+
+def test_a_bundle_deleted_between_check_and_export_is_a_404(trained_model, monkeypatch):
+    """R09 (audit 2026-09-30): both routes check `exists()` and then stage the archive. A
+    delete in between made `stage_export` raise FileNotFoundError -- a 500 on the admin
+    export and on the public share link alike (API-2 of 2026-09-20, fixed only for loading).
+    The window is narrowed to nothing here: the check passes, the bundle is not there."""
+    from app.registry import get_registry
+
+    monkeypatch.setattr(get_registry(), "exists", lambda name: True)
+    answers = TestClient(app, raise_server_exceptions=False)
+    exported = answers.post("/models/gone/export", headers=ADMIN)
+    link = client.post("/models/gone/export", headers=ADMIN, json={"generate_share_url": True}).json()
+    shared = answers.get(link["share_url"])
+
+    assert (exported.status_code, shared.status_code) == (404, 404), (exported.text, shared.text)
+    assert "gone" not in shared.text, "a public caller learns no more than from an unknown link"
+
+
+def test_a_bundle_named_in_upper_case_can_be_imported(trained_model):
+    """Found beside V04 (audit 2026-09-30): the model import compared `.zip` case-sensitively
+    too, so a bundle saved as `FAECHER.ZIP` was refused as not being a ZIP."""
+    export = client.post("/models/api_model/export", headers=ADMIN)
+    files = {"file": ("API_UPPER.ZIP", export.content, "application/zip")}
+
+    imported = client.post("/models/import", files=files, headers=ADMIN)
+
+    assert imported.status_code == 200, imported.text
+    assert "API_UPPER" in client.get("/models", headers=RO).json(), "named after the file, as before"
 
 
 def test_label_diagnostics_list_the_weakest_labels_first(trained_model):
@@ -486,6 +599,61 @@ def test_import_rejected_while_training_same_name():
         job_runner.update(status="idle", model_name=None)
 
 
+def test_a_name_an_import_is_installing_is_refused_to_training_and_to_another_import(trained_model):
+    """R01 (audit 2026-09-30): an import's upload takes minutes. A training under the same
+    name was accepted meanwhile -- and whichever published second failed at the very end."""
+    from app.registry import get_registry
+
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    with get_registry().importing("in_flight"):
+        training = client.post("/train", headers=ADMIN, json={**TRAIN_BODY, "model_name": "in_flight"})
+        importing = client.post("/models/import", headers=ADMIN, data={"new_name": "in_flight"},
+                                files={"file": ("b.zip", bundle, "application/zip")})
+
+    assert (training.status_code, importing.status_code) == (409, 409), (training.text, importing.text)
+    assert "import" in training.json()["detail"]
+    assert "in_flight" not in client.get("/models", headers=RO).json()
+
+
+def test_a_repair_backup_is_not_a_model_to_any_route(trained_model):
+    """R15 (audit 2026-09-30): the label repair keeps the untouched bundle as
+    `<name>.prebackup`. The listing hid it -- serving it hands out exactly the weights the
+    repair removed -- but every other route served it by name. And a model trained or
+    imported under such a name was invisible and live at once."""
+    backup = _TMP / "models" / "api_model.prebackup"
+    shutil.copytree(_TMP / "models" / "api_model", backup)
+    try:
+        detail = client.get("/models/api_model.prebackup", headers=RO)
+        predicted = client.post("/predict", headers=RO,
+                                json={"texts": ["Bruchrechnung"], "model_name": "api_model.prebackup"})
+        trained = client.post("/train", headers=ADMIN, json={**TRAIN_BODY, "model_name": "new.prebackup"})
+        bundle = client.post("/models/api_model/export", headers=ADMIN).content
+        imported = client.post("/models/import", headers=ADMIN, data={"new_name": "new.prebackup"},
+                               files={"file": ("b.zip", bundle, "application/zip")})
+    finally:
+        shutil.rmtree(backup, ignore_errors=True)
+
+    assert (detail.status_code, predicted.status_code) == (404, 404)
+    assert (trained.status_code, imported.status_code) == (400, 400), (trained.text, imported.text)
+    assert ".prebackup" in trained.json()["detail"]
+
+
+def _drain_job_runner(timeout: float = 10.0) -> None:
+    """Wait until the runner is idle: nothing running, nothing queued, the last thread retired.
+
+    A finished run reads "completed" while its thread still writes the history and hands
+    over to the queue, and until it retires `datasets_in_use()` still counts it --
+    deliberately, by the liveness check that also covers a hard-stopped run still reading.
+    Waiting on the status alone let a delete land in that gap and get 409, now and then.
+    """
+    from app.jobs import job_runner
+
+    deadline = time.time() + timeout
+    while (job_runner.is_running() or job_runner.queued_names()
+           or job_runner.active_model_name()) and time.time() < deadline:
+        time.sleep(0.05)
+
+
 def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
     """The running check above missed the queue: an import under a name that a
     queued training will save was accepted (reproduced before this change), and
@@ -512,10 +680,41 @@ def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
         assert "queued" in response.json()["detail"]
     finally:
         release.set()
-        deadline = time.time() + 10
-        while (job_runner.is_running() or job_runner.queued_names()) and time.time() < deadline:
-            time.sleep(0.05)
+        _drain_job_runner()
     assert "queued_import" not in client.get("/models", headers=RO).text
+
+
+def test_a_dataset_a_running_or_queued_run_will_read_cannot_be_deleted(trained_model):
+    """R12 (audit 2026-09-30): a queued run does not look at its dataset again, and deleting
+    one ignored the queue -- deleted and uploaded anew under the same name, the waiting run
+    trained on the new file without a word. Refused (409) while a run names it."""
+    import threading
+
+    from app.jobs import job_runner
+
+    for name in ("running_r12.csv", "queued_r12.csv"):
+        (_TMP / "data" / name).write_bytes((_TMP / "data" / "tiny.csv").read_bytes())
+    started, release = threading.Event(), threading.Event()
+
+    def blocker(**_):
+        started.set()
+        release.wait(30)
+
+    job_runner.submit(blocker, model_name="blocker_r12", request={"dataset_name": "running_r12.csv"})
+    try:
+        assert started.wait(5)
+        job_runner.submit(lambda **_: None, model_name="queued_r12",
+                          request={"dataset_name": "queued_r12.csv"})
+        running = client.delete("/datasets/running_r12.csv", headers=ADMIN)
+        queued = client.delete("/datasets/queued_r12.csv", headers=ADMIN)
+    finally:
+        release.set()
+        _drain_job_runner()
+
+    assert (running.status_code, queued.status_code) == (409, 409), (running.text, queued.text)
+    assert "queued_r12.csv" in queued.json()["detail"]
+    for name in ("running_r12.csv", "queued_r12.csv"):
+        assert client.delete(f"/datasets/{name}", headers=ADMIN).status_code == 200, "free once done"
 
 
 def test_datasets_endpoints():
@@ -1409,6 +1608,43 @@ def test_a_whole_csv_can_be_classified_in_one_call(trained_model):
     assert 0.0 <= float(rows[1][3]) <= 1.0
 
 
+def test_training_on_a_text_column_the_dataset_lacks_is_refused_before_it_queues():
+    """T03 (audit 2026-09-30): a missing text column was skipped without a word, and the
+    bundle claimed it. Refused at submission, where the caller can still fix the request."""
+    body = {**TRAIN_BODY, "model_name": "missing_column",
+            "text_columns": [*TRAIN_BODY["text_columns"], "properties.cclom:description"]}
+
+    response = client.post("/train", json=body, headers=ADMIN)
+
+    assert response.status_code == 400, response.text
+    assert "properties.cclom:description" in response.text
+
+
+def test_classifying_a_csv_says_how_many_rows_it_answers_for(trained_model):
+    """V06 (audit 2026-09-30): the count a client checks the answer against."""
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    response = client.post("/predict/csv", files=files, data={"model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["x-input-rows"] == "3"
+
+
+def test_classifying_a_csv_with_a_broken_row_deep_inside_is_refused_not_cut_short(trained_model):
+    """V06 (audit 2026-09-30): row 651 opens a quote that never closes. The stream read
+    500-row chunks, so the parser failed on the second one after the 200 had gone out:
+    500 of 700 rows, curl exit 0, `/metrics` counting a 200, the error only in the log."""
+    lines = [b"properties.cclom:title;properties.cclom:general_keyword;other"]
+    lines += [b"Bruchrechnung Aufgabe %d;Mathematik Brueche;x" % i for i in range(700)]
+    lines[652] = b'"Offenes Anfuehrungszeichen;Mathematik;x'
+    files = {"file": ("items.csv", b"\n".join(lines) + b"\n", "text/csv")}
+
+    response = client.post("/predict/csv", files=files, data={"model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 400, f"{response.status_code}: {len(response.text.splitlines())} lines"
+    assert "malformed" in response.text
+    assert not list((_TMP / "data").glob(".predict-*")), "the spooled upload is cleaned up"
+
+
 def test_classifying_a_csv_refuses_a_multi_character_separator(trained_model):
     """pandas treats a multi-character `sep` as a REGEX and falls back to its python
     engine, so the separator becomes attacker-supplied pattern code running over the
@@ -1421,6 +1657,22 @@ def test_classifying_a_csv_refuses_a_multi_character_separator(trained_model):
                           data={"model_name": "api_model", "separator": "(a+)+$"})
     assert refused.status_code == 400, refused.text
     assert "single character" in refused.text
+
+
+@pytest.mark.parametrize("field, value", [
+    ("top_k", "-1"), ("top_k", "1001"),
+    ("threshold", "5"), ("threshold", "-0.1"), ("threshold", "nan"),
+])
+def test_classifying_a_csv_bounds_its_options_as_predict_does(trained_model, field, value):
+    """V01 (audit 2026-09-30): `/predict` answers these with 422; `/predict/csv` took them
+    and answered with a 200 -- `threshold=nan` passes no label, `top_k=-1` slices the
+    ranking from its far end. One request contract, one set of bounds."""
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    response = client.post("/predict/csv", files=files, headers=RO,
+                           data={"model_name": "api_model", field: value})
+
+    assert response.status_code == 422, response.text
+    assert not list((_TMP / "data").glob(".predict-*")), "a refused request spools nothing"
 
 
 def test_evaluating_refuses_a_dataset_name_that_escapes_the_data_directory(trained_model):
@@ -1523,3 +1775,65 @@ def test_an_empty_label_separator_is_refused_not_crashed_on(path, body):
     response = client.post(path, json=body, headers=ADMIN)
 
     assert response.status_code == 422, response.text
+
+
+
+# --- Improvement 1: records -- the fields, assembled by the server as training did -------------
+
+RECORD = {"properties.cclom:title": "Bruchrechnung üben",
+          "properties.cclom:general_keyword": "Brüche, Mathematik"}
+
+
+def _as_training_built_it(record: dict, model: str) -> str:
+    """The text the way training assembled it: the bundle's columns, each repeated by its
+    weight, joined by a space (dataset_load.combine_text_columns)."""
+    metadata = client.get(f"/models/{model}", headers=RO).json()["metadata"]
+    weights = metadata.get("text_column_weights") or {}
+    return " ".join(record.get(column, "") for column in metadata["text_columns"]
+                    for _ in range(max(1, int(weights.get(column, 1)))))
+
+
+def test_a_record_is_classified_as_its_text_built_like_training(trained_model):
+    """Improvement 1 (audit 2026-09-30): a client had to rebuild the training text itself --
+    the same fields, each repeated by its weight -- or classify a different text than the
+    model was fit on. `records` hands over the fields, and the server assembles them from the
+    bundle as `/predict/csv` already did."""
+    by_record = client.post("/predict", json={"records": [RECORD], "model_name": "api_model",
+                                              "top_k": 3}, headers=RO)
+    by_text = client.post("/predict", json={"texts": [_as_training_built_it(RECORD, "api_model")],
+                                            "model_name": "api_model", "top_k": 3}, headers=RO)
+
+    assert by_record.status_code == 200, by_record.text
+    assert by_record.json()["results"][0]["predictions"] == by_text.json()["results"][0]["predictions"]
+
+
+def test_records_work_for_several_models_at_once(trained_model):
+    """Each model gets its own assembly -- its own columns and weights."""
+    multi = client.post("/predict/multi", json={"records": [RECORD], "model_names": ["api_model"],
+                                                "top_k": 3}, headers=RO)
+    single = client.post("/predict", json={"records": [RECORD], "model_name": "api_model",
+                                           "top_k": 3}, headers=RO)
+
+    assert multi.status_code == 200, multi.text
+    assert (multi.json()["results"][0]["predictions_by_model"]["api_model"]
+            == single.json()["results"][0]["predictions"])
+
+
+@pytest.mark.parametrize("body", [
+    {"texts": ["Bruchrechnung"], "records": [RECORD]},
+    {},
+])
+def test_a_request_sends_texts_or_records(trained_model, body):
+    response = client.post("/predict", json={**body, "model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 422, response.text
+    assert "records" in response.json()["detail"]
+
+
+def test_a_record_without_any_of_the_models_fields_is_refused(trained_model):
+    """An empty text gets the model's base-rate answer, which reads like a classification."""
+    response = client.post("/predict", json={"records": [{"title": "Bruchrechnung"}],
+                                              "model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 400, response.text
+    assert "properties.cclom:title" in response.json()["detail"]

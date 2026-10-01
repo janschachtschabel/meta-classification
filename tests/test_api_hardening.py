@@ -113,6 +113,82 @@ def test_multichar_separator_rejected_on_all_endpoints(monkeypatch, tmp_path):
     assert validate.status_code == 422, validate.text
 
 
+@pytest.mark.parametrize("separator", ["\n", "\r"])
+def test_a_line_break_is_refused_as_a_separator_everywhere(monkeypatch, tmp_path, separator):
+    """V02 (audit 2026-09-30): one character, so the length guard let it through -- and
+    pandas refuses `\\n` as a delimiter with a ValueError the API answered as a 500, on
+    `GET /datasets/{name}` with a readonly key. A row ends at a line break; a field can't."""
+    client = _fresh_client(monkeypatch, tmp_path)
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "d.csv").write_text("a;b\n1;2\n", encoding="utf-8")
+    body = {"text_columns": ["a"], "label_column": "b", "csv_separator": separator}
+
+    info = client.get("/datasets/d.csv", params={"separator": separator}, headers=RO)
+    bulk = client.post("/predict/csv", headers=RO, files={"file": ("d.csv", b"a;b\n1;2\n", "text/csv")},
+                       data={"model_name": "m", "separator": separator})
+    train = client.post("/train", headers=ADMIN, json={**body, "dataset_name": "d.csv", "model_name": "m"})
+    analyze = client.post("/datasets/analyze", headers=ADMIN, json={**body, "dataset_name": "d.csv"})
+    validate = client.post("/datasets/d.csv/validate", headers=ADMIN, json=body)
+    evaluate = client.post("/models/m/evaluate", headers=ADMIN, json={**body, "dataset_name": "d.csv"})
+
+    assert (info.status_code, bulk.status_code) == (400, 400), (info.text, bulk.text)
+    assert "line break" in info.json()["detail"] and "line break" in bulk.json()["detail"]
+    assert [r.status_code for r in (train, analyze, validate, evaluate)] == [422] * 4, [
+        r.text for r in (train, analyze, validate, evaluate)]
+
+
+def test_an_upper_case_suffix_is_a_dataset_suffix_on_import_and_in_the_listing(monkeypatch, tmp_path):
+    """V04 (audit 2026-09-30): Windows tools name an export `EXPORT.CSV`. The import compared
+    the suffix case-sensitively and refused it, while every other route takes the name as
+    `data.is_dataset_name` does, ignoring case -- and the listing globbed `*.csv`, which on
+    Linux misses such a file even where an operator copied it onto the volume."""
+    import gzip
+
+    client = _fresh_client(monkeypatch, tmp_path)
+    imported = client.post("/datasets/import", headers=ADMIN,
+                           files={"file": ("EXPORT.CSV", b"a;b\n1;2\n", "text/csv")})
+    renamed = client.post("/datasets/import", headers=ADMIN, data={"new_name": "Neu.CSV"},
+                          files={"file": ("x.csv", b"a;b\n1;2\n", "text/csv")})
+    (tmp_path / "data" / "KOPIERT.CSV.GZ").write_bytes(gzip.compress(b"a;b\n1;2\n3;4\n"))
+
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["dataset_name"] == "EXPORT.CSV"
+    assert renamed.json()["dataset_name"] == "Neu.CSV", "no `.csv` appended to a suffix"
+    listed = {d["name"]: d["rows"] for d in client.get("/datasets", headers=RO).json()}
+    assert listed == {"EXPORT.CSV": 1, "Neu.CSV": 1, "KOPIERT.CSV.GZ": 2}
+
+
+def test_a_422_does_not_mirror_the_input(monkeypatch, tmp_path):
+    """V05 (audit 2026-09-30): every error carried the invalid value back as `input`, so a
+    text over the cap came back whole -- 10.4 MB in, 10.4 MB out, to a readonly key. The
+    field, the rule and the message say what to fix; the caller has the value."""
+    client = _fresh_client(monkeypatch, tmp_path)
+
+    response = client.post("/predict", headers=RO, json={"texts": ["x" * 200_000]})
+
+    assert response.status_code == 422, response.text[:200]
+    assert len(response.content) < 2_000, f"{len(response.content):,} bytes"
+    assert response.json()["errors"][0]["loc"] == ["body", "texts", 0]
+    assert all("input" not in error for error in response.json()["errors"])
+
+
+@pytest.mark.parametrize("body", [
+    '{"texts": ["Bruchrechnung \\udc00 lösen"]}',  # a lone surrogate: not text in any encoding
+    '{"texts": ["Bruchrechnung"], "threshold": NaN}',  # Python's json reads NaN; JSON has none
+])
+def test_an_input_json_cannot_render_is_a_422_not_a_500(monkeypatch, tmp_path, body):
+    """V05: pydantic refuses both values -- and the 422 that echoed them could not be
+    rendered (a surrogate has no UTF-8 form, and the response refuses NaN), so the answer
+    was a 500 instead, for /predict, /predict/explain and /metadata alike."""
+    client = _fresh_client(monkeypatch, tmp_path)
+
+    response = client.post("/predict", headers={**RO, "Content-Type": "application/json"},
+                           content=body.encode("utf-8"))
+
+    assert response.status_code == 422, response.text
+    assert "Validation error at body." in response.json()["detail"]
+
+
 def test_unknown_profile_detail_has_no_stray_quotes(monkeypatch, tmp_path):
     """str(KeyError) reprs its message -> the 400 detail arrived wrapped in
     literal quotes. The detail must start with the message itself."""
@@ -242,6 +318,94 @@ def test_startup_refuses_auth_without_an_admin_key(monkeypatch, tmp_path):
         get_registry.cache_clear()
 
 
+@pytest.mark.parametrize("variable, value, says", [
+    ("APIV3_API_KEY_ADMIN", "change-me-admin-key", "placeholder"),
+    ("APIV3_API_KEY_READONLY", "change-me-readonly-key", "placeholder"),
+    ("APIV3_API_KEY_ADMIN", "Schlüssel-der-Redaktion-2026", "ASCII"),
+    ("APIV3_API_KEY_READONLY", "nur–lesen-2026", "ASCII"),
+])
+def test_startup_refuses_a_key_that_is_a_placeholder_or_not_ascii(monkeypatch, tmp_path, variable, value, says):
+    """S10 (audit 2026-09-30): a non-ASCII key made every request that carried a key a 500
+    (`compare_digest` refuses non-ASCII text) and could not be matched reliably anyway --
+    clients encode such a header differently. The `.env.example` placeholders were taken as
+    they are: keys anyone who has read the repository knows. Both now stop the start."""
+    from fastapi.testclient import TestClient
+
+    for key, setting in {"APIV3_AUTH_ENABLED": "true", "APIV3_API_KEY_ADMIN": "admin-key",
+                         "APIV3_API_KEY_READONLY": "ro-key", variable: value,
+                         "APIV3_DATA_DIR": str(tmp_path / "data"),
+                         "APIV3_MODELS_DIR": str(tmp_path / "models")}.items():
+        monkeypatch.setenv(key, setting)
+    from app.registry import get_registry
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    from app.main import create_app
+
+    try:
+        with pytest.raises(RuntimeError, match=variable) as refused, TestClient(create_app()):
+            pass
+    finally:
+        get_settings.cache_clear()
+        get_registry.cache_clear()
+    assert says in str(refused.value)
+    assert value not in str(refused.value), "a key is never echoed, not even a bad one"
+
+
+def test_a_start_asked_for_several_workers_says_this_app_runs_one(monkeypatch, tmp_path, caplog):
+    """R07 (audit 2026-09-30): the image pins one worker, so WEB_CONCURRENCY=4 there is ignored --
+    and anywhere uvicorn obeys it, links, limits and the training job split across processes.
+    Either way the operator is told, at start."""
+    import logging
+
+    client = _fresh_client(monkeypatch, tmp_path, WEB_CONCURRENCY="4")
+    with caplog.at_level(logging.WARNING, logger="api_v3"), client:
+        pass
+
+    assert any("WEB_CONCURRENCY" in record.getMessage() for record in caplog.records)
+
+
+def test_the_server_waits_for_a_run_and_records_it_when_it_shuts_down(monkeypatch, tmp_path):
+    """R03: the lifespan asked the run to stop and returned at once."""
+    import threading
+
+    from app import job_history
+    from app.jobs import job_runner
+
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_SHUTDOWN_WAIT_SECONDS="0.2")
+    started, release = threading.Event(), threading.Event()
+
+    def inside_a_long_fit(*, on_progress, should_stop):
+        started.set()
+        release.wait(5)
+        return {}
+
+    with client:
+        job_runner.submit(inside_a_long_fit, model_name="r03_lifespan")
+        assert started.wait(2)
+        thread = job_runner._thread
+    release.set()
+    thread.join(5)
+
+    assert [e["status"] for e in job_history.recent(200) if e["model_name"] == "r03_lifespan"] == [
+        "interrupted"]
+
+
+def test_a_raised_model_cache_is_said_at_start_with_the_reason(monkeypatch, tmp_path, caplog):
+    """Never silently: APIV3_MAX_MODELS_IN_MEMORY is a RAM ceiling the operator set, and since
+    audit 2026-09-30 R04 the cache holds at least the five models one /predict/multi call may
+    name -- logged only when warmup models were set, and then credited to them alone."""
+    import logging
+
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_MAX_MODELS_IN_MEMORY="2")
+    with caplog.at_level(logging.INFO, logger="api_v3"), client:
+        pass
+
+    said = [r.getMessage() for r in caplog.records if "Model cache holds" in r.getMessage()]
+    assert said and "/predict/multi" in said[0] and "=2" in said[0], said
+
+
 def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
     """Every other default path is anchored to the api_v3 folder so the app works
     from any working directory. The .env file was the exception — a relative name,
@@ -313,6 +477,16 @@ def test_cors_wildcard_origin_disables_credentials(monkeypatch, tmp_path):
     assert resp.headers.get("access-control-allow-credentials") is None
 
 
+def test_cors_lets_a_browser_client_read_the_input_row_count(monkeypatch, tmp_path):
+    """`/predict/csv` says in `X-Input-Rows` how many rows its answer must cover (V06); a
+    cross-origin page can read a response header only when CORS exposes it."""
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_CORS_ALLOW_ORIGINS="https://redaktion.example")
+    resp = client.get("/health", headers={"Origin": "https://redaktion.example"})
+
+    exposed = resp.headers.get("access-control-expose-headers", "").lower()
+    assert "x-input-rows" in exposed
+
+
 def test_config_endpoint_exposes_safe_fields_without_secrets(monkeypatch, tmp_path):
     client = _fresh_client(monkeypatch, tmp_path)
     resp = client.get("/config", headers=RO)
@@ -322,6 +496,15 @@ def test_config_endpoint_exposes_safe_fields_without_secrets(monkeypatch, tmp_pa
     assert "effective_n_jobs" in body
     # The safe config must never echo the configured API keys.
     assert "admin-key" not in resp.text and "ro-key" not in resp.text
+
+
+def test_config_reports_both_body_limits(monkeypatch, tmp_path):
+    """A client sizing a /predict batch needs the JSON cap as much as an uploader needs the
+    upload cap (audit 2026-09-30, S01 gave JSON its own)."""
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_MAX_JSON_MB="7")
+    body = client.get("/config", headers=RO).json()
+
+    assert (body["max_upload_mb"], body["max_json_mb"]) == (200, 7)
 
 
 def test_config_reports_the_training_memory_budget_it_resolved(monkeypatch, tmp_path):
@@ -381,7 +564,7 @@ def test_health_and_config_response_models_preserve_exact_keys(monkeypatch, tmp_
         "train_memory_mb", "effective_train_memory_mb", "training_isolation",
         "tfidf_max_word_features", "tfidf_max_char_features", "max_models_in_memory",
         "effective_max_models_in_memory",
-        "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb",
+        "warmup_models", "auth_enabled", "rate_limit_enabled", "max_upload_mb", "max_json_mb",
     }
     # The response model must never leak a configured key.
     assert "admin-key" not in config.text and "ro-key" not in config.text

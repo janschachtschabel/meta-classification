@@ -57,15 +57,17 @@ def _registry(settings: Settings) -> Registry:
 
 
 def _spec(tmp_path, **overrides) -> dict:
-    """What the parent sends, after the JSON round trip the pipe puts it through."""
-    config = _config()
-    return json.loads(json.dumps(job_spec(_request(**overrides), _settings(tmp_path), config,
-                                          config.get("fast"))))
+    """What the parent sends, after the JSON round trip the pipe puts it through -- with the
+    staging directory the parent made for the run."""
+    config, settings = _config(), _settings(tmp_path)
+    staging = _registry(settings).new_staging("tiny_model")
+    return json.loads(json.dumps(job_spec(_request(**overrides), settings, config,
+                                          config.get("fast"), staging)))
 
 
 def test_the_job_spec_crosses_the_boundary_intact_and_without_secrets(tmp_path):
     settings, config = _settings(tmp_path), _config()
-    spec = job_spec(_request(), settings, config, config.get("fast"))
+    spec = job_spec(_request(), settings, config, config.get("fast"), tmp_path / ".staging.tmp")
     text = json.dumps(spec)
     assert "admin-secret" not in text and "readonly-secret" not in text
     # The child counts this process' memory against the budget they share.
@@ -85,9 +87,10 @@ def test_relative_paths_mean_the_same_place_in_the_child(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     settings = Settings(data_dir=Path("data"), models_dir=Path("models"), auth_enabled=False)
     config = _config()
-    spec = job_spec(_request(), settings, config, config.get("fast"))
+    spec = job_spec(_request(), settings, config, config.get("fast"), Path("models/.m.x.tmp"))
     assert spec["settings"]["models_dir"] == str((tmp_path / "models").resolve())
     assert spec["settings"]["data_dir"] == str((tmp_path / "data").resolve())
+    assert spec["staging_dir"] == str((tmp_path / "models" / ".m.x.tmp").resolve())
 
 
 def test_the_child_holds_no_api_key_not_even_from_its_environment(tmp_path, monkeypatch):
@@ -105,7 +108,8 @@ def test_the_child_holds_no_api_key_not_even_from_its_environment(tmp_path, monk
 
 def test_the_worker_stages_a_bundle_that_only_the_parent_publishes(tmp_path):
     messages: list[dict] = []
-    assert serve(_spec(tmp_path), messages.append, should_stop=lambda: False) == 0
+    spec = _spec(tmp_path)
+    assert serve(spec, messages.append, should_stop=lambda: False) == 0
 
     assert any("progress" in message for message in messages)
     done = messages[-1]["done"]
@@ -113,7 +117,7 @@ def test_the_worker_stages_a_bundle_that_only_the_parent_publishes(tmp_path):
     assert done["result"]["model_name"] == "tiny_model"
     registry = _registry(_settings(tmp_path))
     assert not registry.exists("tiny_model"), "staged is not published"
-    registry.publish("tiny_model")
+    registry.publish("tiny_model", Path(spec["staging_dir"]))
     prediction = registry.get("tiny_model").predict(["Bruchrechnung und Gleichungen"], top_k=1)
     assert prediction[0][0].uri == "uri:math"
 

@@ -16,6 +16,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .memory import MiB, memory_limit_bytes
 
+# The most models one /predict/multi call may name -- and so the least the model cache holds
+# (Settings.effective_max_models_in_memory).
+MAX_MODELS_PER_CALL = 5
+
 # Anchor default paths to the api_v3 folder so the app works from any CWD.
 _BASE = Path(__file__).resolve().parent.parent
 
@@ -112,6 +116,7 @@ class Settings(BaseSettings):
     config_file: Path = _BASE / "config.yaml"
 
     # --- RAM control: how many models stay resident (LRU eviction beyond this) ---
+    # Lifted to MAX_MODELS_PER_CALL and to the warmup list: see effective_max_models_in_memory.
     max_models_in_memory: int = 2
 
     # --- Warmup: model names to preload into the LRU cache on startup and run one
@@ -143,6 +148,14 @@ class Settings(BaseSettings):
 
     # --- Limits ---
     max_upload_mb: int = 200
+    # Every other request body. JSON is parsed into objects, which cost many times its bytes
+    # (48 MiB of `[{},...]` held 1.25 GB), so it gets a cap of its own far below an upload's:
+    # 1,000 texts of 10,000 characters still fit (audit 2026-09-30, S01).
+    max_json_mb: int = Field(10, ge=1)
+    # The corrections file never drops a line -- it is training data -- but a readonly key can
+    # append 24-60 MB a minute within the rate limit. At this size new corrections are
+    # refused (503), so the volume the models live on cannot fill (audit 2026-09-30, R02).
+    max_feedback_mb: int = Field(1024, ge=1)
     random_seed: int = 42
 
     # --- Compute resources ---
@@ -178,8 +191,11 @@ class Settings(BaseSettings):
     # converges fast; 'saga' is slow on high-dim TF-IDF. 'lbfgs'/'liblinear'
     # upcast to float64 (2x matrix RAM) — ok on small data; pair the GIL-bound
     # 'liblinear' with the 'loky' backend.
-    solver: str = "newton-cg"
-    parallel_backend: str = "threading"
+    # Literals, so a typo stops the start instead of failing a training minutes in (audit
+    # 2026-09-30, R14): sklearn's solvers bar 'newton-cholesky', whose dense Hessian is
+    # n_features^2 (51 GB for 80,000 word features), and joblib's built-in backends.
+    solver: Literal["newton-cg", "saga", "lbfgs", "liblinear", "sag"] = "newton-cg"
+    parallel_backend: Literal["threading", "loky", "multiprocessing", "sequential"] = "threading"
 
     # --- Logging ---
     # A Literal, like training_isolation: logging.basicConfig runs at import and raises a
@@ -193,14 +209,23 @@ class Settings(BaseSettings):
         BeforeValidator(lambda value: value.upper() if isinstance(value, str) else value),
     ] = "INFO"
 
+    # How long a shutdown waits for a running training to stop at its next checkpoint before
+    # recording it as interrupted (audit 2026-09-30, R03). Keep it inside the platform's grace
+    # period: the chart sets it to terminationGracePeriod - 10, compose stops with 60 s.
+    shutdown_wait_seconds: float = Field(50, ge=0)
+
     # --- Rate limiting ---
     # How many /predict/csv streams may run at once. Each holds one anyio threadpool
     # worker for the whole classification (a sync generator inside a StreamingResponse), and
-    # that pool — 40 workers by default — is shared with every `def` route and every
-    # asyncio.to_thread call. 4 leaves the rest of the API responsive while still letting a
+    # that pool — 40 workers by default — is shared with every `def` route; every
+    # asyncio.to_thread call has a second pool of the same size (lifecycle.WORKER_THREADS).
+    # 4 leaves the rest of the API responsive while still letting a
     # small editorial team run bulk jobs side by side; over it, the answer is 503 with
     # Retry-After rather than a queued connection holding an uploaded temp file (audit PERF-2).
     max_concurrent_csv: int = 4
+    # /metadata batches at once: each holds a worker thread for its whole run, which is seconds
+    # for long texts (audit 2026-09-30, M03). A caller over it gets 503 + Retry-After.
+    max_concurrent_metadata: int = Field(2, ge=1)
 
     rate_limit_enabled: bool = True
     rate_limit_predict: str = "300/minute"
@@ -220,15 +245,18 @@ class Settings(BaseSettings):
 
     def effective_max_models_in_memory(self) -> int:
         """Size of the model cache: the configured cap, but never smaller than the
-        warmup list.
+        warmup list, nor than the models one ``/predict/multi`` call may name.
 
         Listing a model in ``warmup_models`` states that it should answer without a
         cold skops load. Sizing the LRU independently broke that promise silently —
         four warmed models on the default cap of 2 left two of them evicted before
-        the first request. The cap keeps its meaning as the RAM ceiling for
-        everything else; it is only lifted to hold what was explicitly asked for.
+        the first request. A ``/predict/multi`` call asks for its models together, and
+        on a smaller cache each call evicted what the next needed: five calls with the
+        same three models made fifteen cold loads and not one hit (audit 2026-09-30,
+        R04). Beyond those, the cap keeps its meaning as the RAM ceiling — and the
+        cache only fills with models that are actually asked for.
         """
-        return max(1, self.max_models_in_memory, len(self.warmup_models_list))
+        return max(MAX_MODELS_PER_CALL, self.max_models_in_memory, len(self.warmup_models_list))
 
     def effective_n_jobs(self) -> int:
         """Thread count for the label-wise head fits: the requested ``n_jobs``

@@ -133,8 +133,8 @@ def test_a_missing_text_column_is_refused_before_a_single_byte_is_streamed(tmp_p
     path = _csv(tmp_path, [("Ein langer Titel hier", "stichwort", "uri:a")])
 
     with pytest.raises(TrainingInputError, match="beschreibung"):
-        predict_csv.check_columns(path, ["title", "beschreibung"], separator=";")
-    predict_csv.check_columns(path, TEXT_COLS, separator=";")  # present: no complaint
+        predict_csv.check_input(path, ["title", "beschreibung"], separator=";")
+    predict_csv.check_input(path, TEXT_COLS, separator=";")  # present: no complaint
 
 
 def test_rows_are_numbered_across_chunk_boundaries(tmp_path):
@@ -145,3 +145,31 @@ def test_rows_are_numbered_across_chunk_boundaries(tmp_path):
 
     rows = _run(path, model, chunk_rows=2)
     assert [row[0] for row in rows[1:]] == ["0", "1", "2", "3", "4"]
+
+
+
+def _broken_at(tmp_path: Path, rows: int, broken_row: int) -> Path:
+    """A CSV whose data row ``broken_row`` opens a quote that never closes."""
+    path = _csv(tmp_path, [(f"Ein langer Titel {i}", f"stichwort {i}", "uri:a") for i in range(rows)])
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines[broken_row + 1] = '"Offenes Anfuehrungszeichen;stichwort;uri:a\n'
+    path.write_text("".join(lines), encoding="utf-8")
+    return path
+
+
+def test_a_broken_row_after_the_first_chunk_is_refused_before_a_byte_is_streamed(tmp_path):
+    """V06 (audit 2026-09-30): the reader ran in 500-row chunks, and a parser error in a
+    later one ended the stream after the 200 had gone out -- 500 of 700 rows, curl exit 0,
+    the error only in the server log. Every row is now parsed before the stream starts."""
+    path = _broken_at(tmp_path, rows=700, broken_row=651)
+
+    with pytest.raises(TrainingInputError, match="malformed"):
+        predict_csv.check_input(path, TEXT_COLS, separator=";")
+
+
+def test_the_check_counts_the_rows_the_stream_will_answer_for(tmp_path):
+    path = _csv(tmp_path, [("Ein langer Titel hier", "stichwort", "uri:a")] * 7)
+
+    checked = predict_csv.check_input(path, TEXT_COLS, separator=";", chunk_rows=3)
+
+    assert checked.rows == 7

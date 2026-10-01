@@ -78,7 +78,13 @@ helm lint:
     name: alpine/helm:3.16.4
     entrypoint: [""]
   script:
-    - helm lint deploy/helm/classification-api
+    # `helm lint` runs the templates in lint mode, where `required` and `fail` only log
+    # [INFO]: it ended 0 with every guard firing (audit 2026-09-30, B11). So it lints, strictly,
+    # values that satisfy every guard, and the same values are rendered -- a guard firing on
+    # them fails the job. That the guards fire where they should is tests/test_helm_chart.py's,
+    # in the pytest job.
+    - helm lint --strict deploy/helm/classification-api -f deploy/helm/classification-api/ci/lint-values.yaml
+    - helm template release deploy/helm/classification-api -f deploy/helm/classification-api/ci/lint-values.yaml
 
 # -----------------------------------------------------------------------------
 # Types (mypy) — same gate as CLAUDE.md ("Types: python -m mypy app ...")
@@ -96,6 +102,9 @@ mypy:
     - pip install -r requirements-dev.txt
   script:
     - python -m mypy app --config-file pyproject.toml
+    # As GitHub does: the two scripts that write inside a bundle earn the same gate (audit T-5);
+    # this job checked app/ only (audit 2026-09-30, B11).
+    - python -m mypy scripts/patch_bundle_labels.py scripts/prune_bundle_labels.py --config-file pyproject.toml
 
 # -----------------------------------------------------------------------------
 # Tests (pytest) — the actual regression safety net. Runs BEFORE the Docker
@@ -108,6 +117,15 @@ pytest:
   image: python:3.11-slim-bookworm
   before_script:
     - cd "$CI_PROJECT_DIR"
+    # tests/test_helm_chart.py refuses to skip where CI is set -- and GitLab always sets it --
+    # so this job needs a helm, or its render tests fail and nothing behind this stage ever
+    # runs (audit 2026-09-30, B01). Same version as the chart's lint and package jobs below,
+    # verified against the release's published checksum (get.helm.sh/<file>.sha256sum).
+    - python -c "import urllib.request; urllib.request.urlretrieve('https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz', '/tmp/helm.tgz')"
+    - echo "fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179  /tmp/helm.tgz" | sha256sum -c -
+    - tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+    - mv /tmp/linux-amd64/helm /usr/local/bin/helm
+    - helm version
     - python -m pip install --upgrade pip
     # Same fully-hashed transitive tree the Docker image ships.
     - pip install --require-hashes -r requirements-hashes.lock
@@ -141,6 +159,31 @@ pip-audit:
     - pip install pip-audit
   script:
     - python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off
+    # The same tree as a CycloneDX SBOM, kept with the pipeline: GitHub's image carries one from
+    # buildx, and this pipeline -- the one feeding the deployed registry -- had none (audit
+    # 2026-09-30, B11).
+    - python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off --format cyclonedx-json --output sbom.cdx.json
+  artifacts:
+    reports:
+      cyclonedx: sbom.cdx.json
+
+# -----------------------------------------------------------------------------
+# Licences of the tree the image ships -- GitHub's gate (ci.yml, audit job), verbatim:
+# pip-licenses pinned as in requirements-dev.txt, then the hashed tree, so its pins win;
+# --partial-match because no package calls its licence just "GPL" (audit 2026-09-30, B05).
+# This pipeline had no licence gate at all (B11).
+# -----------------------------------------------------------------------------
+licences:
+  stage: test
+  timeout: 10 minutes
+  interruptible: true
+  image: python:3.11-slim-bookworm
+  before_script:
+    - cd "$CI_PROJECT_DIR"
+    - pip install pip-licenses==5.5.5
+    - pip install --require-hashes -r requirements-hashes.lock
+  script:
+    - python -m piplicenses --fail-on "GPL;AGPL;LGPL" --partial-match --format markdown --order license
 
 # -----------------------------------------------------------------------------
 # Build Docker image + push to (self-hosted) registry — main + develop
@@ -182,7 +225,8 @@ build and push (branches):
 
 # -----------------------------------------------------------------------------
 # Build + push Docker image on tag creation (e.g. v1.2.0)
-# Tag = exact git tag name
+# Tags = the git tag (v1.2.0) and the bare version (1.2.0) -- the second is what
+# the chart names as its appVersion
 # -----------------------------------------------------------------------------
 build and push (tags):
   stage: build
@@ -202,15 +246,22 @@ build and push (tags):
   script:
     # --password-stdin keeps the secret out of the process list on shared runners.
     - echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
-    - docker buildx build --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME" .
+    # Also the bare version: the chart names its image by appVersion (4.0.1, no "v"), and
+    # installed from the repository as its README says, it pulled a tag no pipeline had
+    # pushed to this registry (audit 2026-09-30, B02).
+    - docker buildx build
+        --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME"
+        --tag "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:${CI_COMMIT_TAG#v}" .
     - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:$CI_COMMIT_REF_NAME"
+    - docker image push "$DOCKER_REGISTRY/$DOCKER_IMAGE_PATH:${CI_COMMIT_TAG#v}"
   rules:
     # Only on tag AND configured registry (see above).
     - if: "$CI_COMMIT_TAG && $DOCKER_REGISTRY"
 
 # -----------------------------------------------------------------------------
 # Package Helm chart + push to the chart repo
-# Chart/app version = git tag (on tags) or 0.0.0-<branch-slug> (on branches)
+# Chart/app version = git tag (on tags); on branches 0.0.0-<branch-slug>.<pipeline>
+# and the immutable sha-<commit> image the branch build pushed
 # -----------------------------------------------------------------------------
 .helm_base:
   stage: deploy
@@ -236,8 +287,12 @@ build and push helm chart:
   extends: .helm_base
   timeout: 15 minutes
   variables:
-    CHART_VERSION: "0.0.0-$CI_COMMIT_REF_SLUG"
-    APP_VERSION: "$CI_COMMIT_REF_SLUG"
+    # One chart per pipeline, naming the image it built. With "0.0.0-main" and ":main" every
+    # main pipeline produced the same chart: `helm upgrade` left the pod spec unchanged, the
+    # pod never rolled, IfNotPresent kept the cached image, and `helm rollback` restored the
+    # same ":main" (audit 2026-09-30, B03).
+    CHART_VERSION: "0.0.0-$CI_COMMIT_REF_SLUG.$CI_PIPELINE_IID"
+    APP_VERSION: "sha-$CI_COMMIT_SHORT_SHA"
   rules:
     # Tag → chart/app version = exact tag name. Only with a configured chart
     # repo (HELM_REGISTRY) — otherwise skipped, pipeline stays green.

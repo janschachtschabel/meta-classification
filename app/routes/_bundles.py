@@ -15,10 +15,29 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
+from ..bundle_meta import as_mapping, as_names
 from ..classifier import ClassifierModel
 from ..errors import UnsafeModelError
 from ..registry import get_registry
 from ..security import safe_name
+
+
+def text_columns_for(model_name: str, requested: list[str] | None) -> tuple[list[str], dict]:
+    """Which columns to read, and how often each is repeated — from the bundle.
+
+    How a text is assembled is part of what the model was fit on, so the columns and
+    their weights are read from the bundle rather than asked of the caller. An explicit
+    ``text_columns`` overrides the names (a newer export may call them something else);
+    the weights then narrow to those columns, exactly as a training request narrows them.
+    """
+    metadata = as_mapping(get_registry().info(model_name).get("metadata"))
+    columns = requested or as_names(metadata.get("text_columns"))
+    if not columns:
+        raise HTTPException(
+            400, "This bundle does not record which text columns it was trained on; "
+                 "pass text_columns explicitly.")
+    weights = as_mapping(metadata.get("text_column_weights"))
+    return columns, {col: weight for col, weight in weights.items() if col in columns}
 
 
 def load_model(model_name: str) -> ClassifierModel:
@@ -44,13 +63,29 @@ def staged_zip_response(name: str) -> FileResponse:
 
     The archive is not built in memory: a production bundle is 50-180 MB and the byte path
     peaked at 2.78x that (measured). `Registry.stage_export` owns where the file goes and
-    why; this owns the response that streams it and deletes it once the body is sent.
+    why, and shares it between downloads of the same bundle; this owns the response that
+    streams it and releases this download's hold once the body is sent.
     """
-    path = get_registry().stage_export(name)
-    return FileResponse(
-        path, media_type="application/zip",
-        # `safe_name` rejects the quote and the semicolon, so the name cannot end the
-        # filename parameter early (audit SEC-8); it runs on every path that reaches here.
-        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
-        background=BackgroundTask(path.unlink, missing_ok=True),
-    )
+    try:
+        path, release = get_registry().stage_export(name)
+    except FileNotFoundError as exc:
+        # Deleted between the caller's exists() and here -- a 404 like a plain missing model,
+        # never a 500 (audit 2026-09-30, R09). Without the name: the share link is public.
+        raise HTTPException(404, "Model no longer exists.") from exc
+    try:
+        return FileResponse(
+            path, media_type="application/zip",
+            # Starlette writes the header, RFC 5987-encoded (`filename*=utf-8''…`) where the
+            # name is not plain ASCII: a header is Latin-1, and built by hand "Fächer–2026"
+            # made every export of that model a 500 (audit 2026-09-30, S03). `safe_name`,
+            # which runs on every path to here, keeps quotes and line breaks out (SEC-8).
+            filename=f"{name}.zip",
+            # Also after a client disconnects: uvicorn then drops the remaining body
+            # silently, the response runs to its end, and the task runs.
+            background=BackgroundTask(release),
+        )
+    except BaseException:
+        # Ours until a response holds it: each failed attempt used to leave a whole bundle
+        # copy behind, which only the next start's sweep removed.
+        release()
+        raise

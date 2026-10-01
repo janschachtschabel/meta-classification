@@ -40,8 +40,9 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
    Antworten** wählen.
    - Wählst du **mehrere** Label-Felder, entsteht **pro Feld ein eigenes
      Modell**; die Namen werden automatisch abgeleitet (`meinname_taxonid`, …)
-     und die Trainings laufen nacheinander — **Tab offen lassen**, bis alle
-     gestartet sind.
+     und der Server trainiert sie nacheinander. Mehr als fünf Starts pro Minute
+     nimmt er standardmäßig nicht an; dann wartet die Seite und sendet den Rest
+     — **Tab offen lassen**, bis alle Läufe gesendet sind.
 3. **Profile:** Drei Stufen, aufsteigend nach Rechenzeit — `auto` ist die
    Empfehlung. `fast` nur zum schnellen Ausprobieren (nicht für ein Modell, das
    in Betrieb geht), `best` für die genaueste Bewertung (~1,9× so lange wie
@@ -103,7 +104,7 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**. Für die beschreibenden Me
   Sicherheit aus **deinem Text** kommt — und nicht daher, dass das Label einfach
   häufig ist. Ein hoher Konfidenz-Wert mit *diff nahe 0* heißt: das Modell rät
   auf das übliche Label, dein Text hat es nicht überzeugt.
-- Mehrere Modelle gleichzeitig anhaken (Strg-Klick) → eine Antwort pro Modell,
+- Mehrere Modelle gleichzeitig anhaken → eine Antwort pro Modell,
   z. B. Fach **und** Materialart in einem Rutsch.
 - Die **allererste** Abfrage nach einem Server-Neustart kann ~30 Sekunden
   dauern (das Modell wird von der Festplatte geladen) — danach kommen Antworten
@@ -117,6 +118,9 @@ sollen: die Liste zeigt alle Labels des Modells, Mehrfachauswahl per Strg-Klick.
 - **Nichts auswählen** heißt „keines davon passt“. Das wird ebenfalls gespeichert,
   taucht aber nicht im Trainings-Export auf — eine Zeile ohne Label kann ein Lauf nicht
   lernen.
+- Gespeichert wird der Text, **der klassifiziert wurde**. Wer ihn danach im Feld ändert,
+  kann die Antwort erst wieder korrigieren, wenn er neu klassifiziert hat — sonst stünde
+  eine Korrektur, die für den neuen Text gemeint ist, neben der Vorhersage für den alten.
 - Korrekturen werden **nie verworfen**. Anders als die Lauf-Historie (gedeckelt bei 200)
   sind sie kein Protokoll, sondern die Daten, aus denen der nächste Lauf lernt.
 - Der Export unter `GET /feedback/export` ist eine CSV mit den Spalten `text` und
@@ -135,9 +139,10 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
   einzelnes Wort viel. Deshalb sind die Balken **pro Label** skaliert: entscheidend ist
   die Reihenfolge, nicht der Betrag.
 - Die Werte sind untereinander vergleichbar, **addieren sich aber nicht zur Konfidenz**:
-  verglichen wird die Wortliste des Textes mit und ohne ein Wort, während die Konfidenz
-  oben den Text beschreibt, wie er eingegeben wurde (mit Satzzeichen, und ab 60 Wörtern
-  gekürzt).
+  verglichen wird die Wortliste des Textes mit und ohne ein Wort — der Text so, wie das
+  Modell ihn liest (ohne HTML- und Markdown-Auszeichnung), aber ohne Satzzeichen und nach
+  60 Wörtern gekürzt —, während die Konfidenz oben den Text beschreibt, wie er eingegeben
+  wurde. HTML-Tags erscheinen deshalb nie als „Wörter“.
 - **Füllwörter wie „und“ ganz oben sind kein Zeichen schlechter Datenaufbereitung.**
   Das Modell liest auch Zeichenketten über Wortgrenzen hinweg („Säuren **und** Basen“).
   Nimmt man das Wort weg, zerreißt man die ganze Wortfolge — der Einbruch wird dem
@@ -179,16 +184,25 @@ F1 macro und micro.
 ## Mehrere Läufe hintereinander (Training-Tab)
 
 Werden mehrere Label-Felder ausgewählt, entsteht pro Feld ein Modell. Alle Läufe gehen
-**sofort an den Server**, der sie der Reihe nach abarbeitet — der Tab darf zugehen, das
-Notebook zuklappen. Was noch wartet, steht unter dem Status („Queued on the server: …“)
-und kommt aus der Serverantwort, nicht aus dem Browser.
+an den Server, der sie der Reihe nach abarbeitet. Mehr als fünf Starts pro Minute nimmt er
+standardmäßig nicht an (`APIV3_RATE_LIMIT_TRAIN`); dann wartet die Seite das Zeitfenster ab,
+das der Server nennt, und sendet den Rest — eine Meldung sagt, welcher Lauf in wie vielen
+Sekunden folgt. Sind alle gesendet, darf der Tab zugehen und das Notebook zuklappen. Was noch
+wartet, steht unter dem Status („Queued on the server: …“) und kommt aus der Serverantwort,
+nicht aus dem Browser.
 
 **Stop** beendet den laufenden Lauf *und* leert die Warteschlange: „Stop“ heißt „das soll
-enden“, nicht „spring zum nächsten“. Es wirkt am nächsten Prüfpunkt — zwischen zwei
+enden“, nicht „spring zum nächsten“. Weil ein Klick so einen ganzen Stapel verwerfen kann,
+fragt die Seite vorher nach und sagt, wie viele wartende Läufe mitgehen. Es wirkt am nächsten Prüfpunkt — zwischen zwei
 Anläufen des Modells, nicht mitten drin —, und ein Anlauf dauert bei großen Datenmengen
 Minuten. Deshalb endet ein Lauf, der nicht von selbst reagiert, nach **~30 s** ohnehin;
 die Statuszeile sagt das dann auch. Ein gestoppter Lauf hinterlässt in keinem Fall ein
 Modell.
+
+**Verlauf:** Unten im Tab stehen die zuletzt beendeten Läufe — Trainings und Bewertungen —
+mit Ergebnis, F1 Makro und Mikro, Dauer und Ende; ein fehlgeschlagener Lauf nennt seinen
+Grund, der sonst nirgends erhalten bleibt. Läufe auf demselben Datensatz lassen sich so
+direkt vergleichen. Die Liste lädt beim Öffnen des Tabs neu und nach jedem beendeten Lauf.
 
 Während des Laufs zeigt die Statuskarte zwei Zeilen, die erklären, warum es manchmal
 langsamer geht als erwartet:
@@ -360,9 +374,9 @@ das Modell selbst prüfen und die Qualität schönrechnen). Auch Zeilen ohne Lab
 oder mit fast leerem Text fallen raus.
 
 **Kann ich den Tab während des Trainings schließen?**
-Das *laufende* Training läuft auf dem Server weiter. Nur wenn du **mehrere**
-Label-Felder gewählt hast, muss der Tab offen bleiben, bis alle Trainings
-gestartet wurden (die Warteschlange lebt im Tab).
+Ja: Training und Warteschlange laufen auf dem Server weiter. Nur wenn du mehr
+**Label-Felder** gewählt hast, als der Server pro Minute annimmt (standardmäßig
+fünf), muss der Tab offen bleiben, bis die Seite alle Läufe gesendet hat.
 
 **Was passiert bei einem Tippfehler im Spaltennamen?**
 Nichts Schlimmes — die Oberfläche bietet ohnehin nur existierende Spalten an,

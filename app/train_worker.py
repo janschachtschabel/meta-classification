@@ -14,9 +14,10 @@ same code runs on Windows and Linux. The protocol, one JSON object per line:
     stdout <- {"done": {"result": {...}, "staged": true|false}}
     stdout <- {"failed": {"message": "...", "user_facing": true|false}}
 
-The child writes the bundle into the registry's hidden staging directory only; the
-parent publishes it under its OWN disk lock, so the one-lock rule of ``registry.py``
-holds across the process boundary. End of stdin means the parent is gone or wants the
+The child writes the bundle into a hidden staging directory the parent made for this run
+and named in the job (``staging_dir``) -- so the parent can discard it whatever becomes of
+the child -- and the parent publishes it under its OWN disk lock, so the one-lock rule of
+``registry.py`` holds across the process boundary. End of stdin means the parent is gone or wants the
 run dead: the child exits at once. Its log goes to the inherited stderr.
 
 Past the ~300-line guide because both ends of one protocol live here — the parent's spawn
@@ -71,8 +72,10 @@ _KILLED_BY_SIGNAL_9 = (-9, 137)
 _APP_ROOT = Path(__file__).resolve().parent.parent
 
 
-def job_spec(req: dict, settings: Settings, training_cfg: TrainingConfig, profile: Profile) -> dict:
-    """Everything a child needs to run ``run_training`` as the parent would have."""
+def job_spec(req: dict, settings: Settings, training_cfg: TrainingConfig, profile: Profile,
+             staging: Path) -> dict:
+    """Everything a child needs to run ``run_training`` as the parent would have, and the
+    staging directory (``Registry.new_staging``) it writes the bundle into."""
     settings_doc = settings.model_dump(mode="json", exclude=set(SECRET_SETTINGS))
     # A relative path means this process' working directory; the child runs in the
     # package root, where the same string would name another place.
@@ -86,6 +89,7 @@ def job_spec(req: dict, settings: Settings, training_cfg: TrainingConfig, profil
         "profile": dataclasses.asdict(profile),
         # The child's memory budget covers this process too: the limit is the container's.
         "parent_pid": os.getpid(),
+        "staging_dir": str(Path(staging).resolve()),
     }
 
 
@@ -107,14 +111,16 @@ def _child_env() -> dict[str, str]:
 
 
 class _StagingRegistry(Registry):
-    """``run_training``'s registry in the child: it saves by staging only."""
+    """``run_training``'s registry in the child: it saves by staging only, into the
+    directory the parent made for the run."""
 
     staged = False
+    staging_dir: Path | None = None
 
     def save(self, name: str, model: ClassifierModel, metadata: dict,
              on_step: Callable[[str], None] = lambda _msg: None, *,
              overwrite: bool = False) -> None:
-        self.stage(name, model, metadata, on_step, overwrite=overwrite)
+        self.stage(name, model, metadata, on_step, overwrite=overwrite, into=self.staging_dir)
         self.staged = True
 
 
@@ -125,6 +131,7 @@ def serve(spec: dict, emit: Callable[[dict], None], should_stop: Callable[[], bo
     try:
         req, settings, training_cfg, profile = read_job(spec)
         registry = _StagingRegistry(settings.models_dir, settings.max_models_in_memory)
+        registry.staging_dir = Path(spec["staging_dir"])
         result = run_training(req, settings, training_cfg, profile, registry,
                               on_progress=lambda **fields: emit({"progress": fields}),
                               should_stop=should_stop)
@@ -235,9 +242,11 @@ def run_in_child(
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                              encoding="utf-8", errors="replace")
     outcome: dict[str, Any] = {}
+    staging: Path | None = None
     try:
+        staging = registry.new_staging(name)
         # A child that died on start cannot take the job; its exit code says why below.
-        _send(child.stdin, {"job": job_spec(req, settings, training_cfg, profile)})
+        _send(child.stdin, {"job": job_spec(req, settings, training_cfg, profile, staging)})
         outcome = _relay(child, on_progress, should_stop, kill_requested)
     finally:
         _close(child.stdin)
@@ -254,16 +263,17 @@ def run_in_child(
         # the close the API process held one file object per run until the Popen was
         # collected.
         _close(child.stdout)
-        # Nothing will publish what the child staged — also when the relay itself failed.
-        # Only now: until the child is gone, it may still be writing there.
-        if "done" not in outcome:
-            registry.discard_staged(name)
+        # Nothing will publish what the child staged — also when the relay itself failed, and
+        # when it finished without staging (a stop). Only now: until the child is gone, it
+        # may still be writing there.
+        if staging is not None and not (outcome.get("done") or {}).get("staged"):
+            registry.discard_staged(staging)
     # Reaped: its id may name another process by now, and the publish below can wait on
     # the disk lock while the status still reads it.
     on_progress(worker_pid=None)
     if "done" in outcome:
-        if outcome["done"]["staged"]:
-            registry.publish(name, on_step=lambda detail: on_progress(phase_detail=detail))
+        if outcome["done"]["staged"] and staging is not None:
+            registry.publish(name, staging, on_step=lambda detail: on_progress(phase_detail=detail))
         return outcome["done"]["result"]
     if "failed" in outcome:
         failed = outcome["failed"]

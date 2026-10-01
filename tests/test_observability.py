@@ -94,6 +94,27 @@ def test_a_sanitized_500_names_the_id_its_traceback_was_logged_under(client, mon
     assert body["request_id"] == response.headers["X-Request-ID"]
 
 
+def test_a_500_is_counted_and_carries_the_security_headers(client, monkeypatch):
+    """R05 (audit 2026-09-30): both middlewares worked on the response `call_next` returned,
+    and an unhandled error returns none -- the 500 is built outside the stack. It had no
+    Content-Security-Policy and no nosniff, and `/metrics` had no `status="500"` series to
+    alert on; the test meant to show 500s as visible checked a 404."""
+    from app.routes import models as models_routes
+
+    def broken():
+        raise RuntimeError("the registry is gone")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(models_routes, "get_registry", broken)
+        response = client.get("/models", headers={"X-API-Key": "ro-key"})
+
+    assert response.status_code == 500
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+    assert 'apiv3_requests_total{method="GET",route="/models",status="500"} 1' in client.get("/metrics").text
+
+
 def test_a_log_record_carries_the_id_even_outside_a_request():
     """Startup and the training child log too; the filter must not raise there."""
     record = logging.LogRecord("api_v3", logging.INFO, __file__, 1, "msg", None, None)
@@ -151,6 +172,21 @@ def test_scanning_urls_cannot_mint_unbounded_series(client):
 
     assert body.count("route=\"<unmatched>\"") >= 1
     assert "definitely-not-a-route" not in body
+
+
+def test_inventing_methods_cannot_mint_unbounded_series(client):
+    """S13 (audit 2026-09-30): the method was a label taken as sent, and to uvicorn's h11
+    parser any token is a method -- 200 invented ones made 600 series. The methods HTTP
+    defines are kept apart; anything else is one bucket, like an unmatched route."""
+    for n in range(5):
+        client.request(f"BREW{n}", "/health")
+    client.request("PATCH", "/health")
+
+    body = client.get("/metrics").text
+
+    assert "BREW" not in body
+    assert body.count('apiv3_requests_total{method="OTHER",route="/health"') == 1
+    assert 'apiv3_requests_total{method="PATCH",route="/health"' in body
 
 
 def test_the_queue_depth_is_exported(client):

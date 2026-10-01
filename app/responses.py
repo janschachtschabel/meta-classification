@@ -93,7 +93,10 @@ class ConfigResponse(BaseModel):
     )
     effective_max_models_in_memory: int = Field(
         ...,
-        description="Models the cache actually holds: `max_models_in_memory`, raised to fit every warmup model.",
+        description=(
+            "Models the cache actually holds: `max_models_in_memory`, raised to fit every warmup "
+            "model and the 5 models one `/predict/multi` call may name."
+        ),
     )
     warmup_models: list[str] = Field(
         ...,
@@ -118,6 +121,13 @@ class ConfigResponse(BaseModel):
         description=(
             "Largest accepted upload in MiB (`APIV3_MAX_UPLOAD_MB`) — a dataset, a model archive "
             "or a CSV to classify; a bigger one is refused with 413."
+        ),
+    )
+    max_json_mb: int = Field(
+        ...,
+        description=(
+            "Largest accepted request body in MiB for everything but an upload "
+            "(`APIV3_MAX_JSON_MB`) — a /predict batch, a /metadata request; bigger is 413."
         ),
     )
 

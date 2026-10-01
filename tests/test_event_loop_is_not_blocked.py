@@ -26,6 +26,9 @@ BLOCKING = {
     "list": "an iterdir plus a stat per bundle",
     "recent": "reads the job-history file",
     "read_all": "reads the whole feedback file",
+    # The route called this one, and on a process's first correction it counts what is
+    # on disk -- 240 MB of corrections held the loop for 2.9 s (audit 2026-09-30, R02).
+    "append": "counts the feedback file on a process's first correction, then writes to it",
 }
 
 # Receivers whose attributes the names above actually refer to. Without this, any local

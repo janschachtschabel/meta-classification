@@ -110,9 +110,12 @@ def test_count_rows_cached_by_mtime_and_size(tmp_path, monkeypatch):
 
 
 def test_detect_task_type():
-    assert data.detect_task_type([["a"], ["b"], ["a"]], 3) == "multiclass"
-    assert data.detect_task_type([["a"], ["b"]], 2) == "binary"
-    assert data.detect_task_type([["a", "b"], ["a"]], 2) == "multilabel"
+    """Read off the target matrix since audit 2026-09-30, T04 (it took raw label lists)."""
+    import numpy as np
+
+    assert data.detect_task_type(np.array([[1, 0, 0], [0, 1, 0], [1, 0, 0]])) == "multiclass"
+    assert data.detect_task_type(np.array([[1, 0], [0, 1]])) == "binary"
+    assert data.detect_task_type(np.array([[1, 1], [1, 0]])) == "multilabel"
 
 
 def test_prepare_targets_uses_a_compact_dtype():
@@ -128,11 +131,14 @@ def test_prepare_targets_uses_a_compact_dtype():
 
 
 def test_prepare_targets_drops_rare_labels_and_empty_rows():
-    labels = [["a"], ["a"], ["a"], ["b"]]  # 'b' occurs only once
+    # 'b' occurs only once. 'c' is there so that 'a' is not on every row left once 'b's row
+    # goes: a label needs rows without it too (audit 2026-09-30, T01), and the old fixture
+    # -- 'a' alone -- asserted exactly the constant column that made bundles unloadable.
+    labels = [["a"], ["a"], ["a"], ["c"], ["c"], ["b"]]
     matrix, classes, row_keep = data.prepare_targets(labels, min_samples=2)
-    assert classes == ["a"]
-    assert matrix.shape == (3, 1)
-    assert row_keep.tolist() == [True, True, True, False]
+    assert classes == ["a", "c"]
+    assert matrix.shape == (5, 2)
+    assert row_keep.tolist() == [True, True, True, True, True, False]
 
 
 def test_preparing_targets_costs_what_survives_not_what_arrived():
@@ -389,20 +395,24 @@ def test_text_column_weights_repeat_a_field_in_the_combined_text(tmp_path):
     assert weighted.texts == ["Bruch Bruch Bruch lange Beschreibung"]
 
 
-def test_text_column_weights_ignore_columns_absent_from_the_csv(tmp_path):
-    """load_dataset already skips requested columns the CSV lacks; a weight for such
-    a column must not resurrect it or shift the others."""
+def test_a_weighted_text_column_the_csv_lacks_is_refused_with_its_name(tmp_path):
+    """This test used to pin the opposite: load_dataset skipped requested columns the CSV
+    lacked, and a weight for one must not resurrect it. The skipping was the bug (audit
+    2026-09-30, T03 -- the bundle recorded a column it never saw), so a missing column is
+    refused now, weighted or not, and the caller learns which one."""
+    from app.errors import TrainingInputError
+
     csv = tmp_path / "w2.csv"
     csv.write_text(
         "properties.cclom:title;properties.ccm:taxonid\nBruch;math\n", encoding="utf-8"
     )
-    loaded = dataset_load.load_dataset(
-        csv,
-        ["properties.cclom:title", "properties.cclom:general_description"],
-        LABEL_COL,
-        text_column_weights={"properties.cclom:general_description": 5},
-    )
-    assert loaded.texts == ["Bruch"]
+    with pytest.raises(TrainingInputError, match="properties.cclom:general_description"):
+        dataset_load.load_dataset(
+            csv,
+            ["properties.cclom:title", "properties.cclom:general_description"],
+            LABEL_COL,
+            text_column_weights={"properties.cclom:general_description": 5},
+        )
 
 
 def test_validate_dataset_warns_about_rows_without_labels(tmp_path):
@@ -497,3 +507,33 @@ def test_without_train_only_rows_the_split_is_what_it_always_was(stratified):
         after = data.three_way_split(n, val_size=0.15, test_size=0.15, seed=42,
                                      y=y if stratified else None, train_only=train_only)
         assert all(np.array_equal(a, b) for a, b in zip(before, after, strict=True))
+
+
+
+def test_a_quote_inside_an_unquoted_field_does_not_merge_rows(tmp_path):
+    """T14 (audit 2026-09-30): counting quote parity per line took an inch mark for an opening
+    quote, and every line after it for the inside of a field -- 10 rows came out as 3."""
+    csv = tmp_path / "inch.csv"
+    rows = ["title;labels"] + [f'Monitor {i} mit 24" Diagonale;uri:x' for i in range(10)]
+    csv.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    assert data.count_rows(csv) == 10
+
+
+def test_rows_are_counted_with_the_delimiter_the_header_uses(tmp_path):
+    """A quote opens a field only at its start, which needs the delimiter: the header says
+    which one when the caller does not."""
+    csv = tmp_path / "comma.csv"
+    csv.write_text('title,labels\n"Zwei\nZeilen",uri:a\n"Eine Zeile",uri:b\n', encoding="utf-8")
+
+    assert data.count_rows(csv) == 2
+    assert data.count_rows(csv, separator=",") == 2
+
+
+def test_a_field_longer_than_the_csv_modules_default_limit_is_counted(tmp_path):
+    """csv.reader caps a field at 131,072 characters unless told otherwise; the training
+    reader has no such cap, so a long description must not break the count."""
+    csv = tmp_path / "long.csv"
+    csv.write_text("title;labels\n" + "x" * 200_000 + ";uri:a\nkurz;uri:b\n", encoding="utf-8")
+
+    assert data.count_rows(csv) == 2

@@ -110,3 +110,81 @@ def test_the_workspace_note_describes_the_bundle_format_the_code_writes():
 
     missing = sorted(name for name in REQUIRED_FILES if f"`{name}`" not in line)
     assert not missing, f"the workspace note omits required bundle files: {missing}"
+
+
+
+def _interop_snippet() -> str:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    interop = readme[readme.index("## Model interop / export"):]
+    code = interop[interop.index("```python") + len("```python"):]
+    return code[:code.index("```")]
+
+
+def test_the_readme_interop_snippet_loads_a_bundle_while_trusting_nothing(tmp_path, monkeypatch):
+    """S07 (audit 2026-09-30): the snippet passed `trusted=sio.get_untrusted_types(file=...)`,
+    which trusts every type a file declares -- the code-execution path the app's own loader
+    refuses (`model_io._safe_skops_load`). A bundle of this app declares none, so
+    `trusted=[]` loads it and refuses one that declares more. The snippet runs here against a
+    bundle the app just trained, word AND char vectorizer, so the recipe is one that works."""
+    from app.profiles import Profile, TrainingConfig
+    from app.registry import Registry
+    from app.settings import Settings
+    from app.training import run_training
+
+    code = _interop_snippet()
+    loads = [node for node in ast.walk(ast.parse(code))
+             if isinstance(node, ast.Call) and ast.unparse(node.func) == "sio.load"]
+    assert len(loads) == 2, "the snippet loads both skops files"
+    for call in loads:
+        trusted = next((kw.value for kw in call.keywords if kw.arg == "trusted"), None)
+        assert isinstance(trusted, ast.List) and not trusted.elts, f"trusts more: {ast.unparse(call)}"
+
+    subjects = {"uri:math": "Bruchrechnung mit Nennern und Zählern üben",
+                "uri:bio": "Photosynthese im Blatt und Zellatmung im Versuch"}
+    rows = [f"{text} Teil {i};{uri}" for uri, text in subjects.items() for i in range(12)]
+    (tmp_path / "set.csv").write_text("title;labels\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    settings = Settings(data_dir=tmp_path, models_dir=tmp_path / "models", auth_enabled=False)
+    profile = Profile("p", c_grid=[1.0], use_char=True)
+    config = TrainingConfig(default_profile="p", profiles={"p": profile}, validation_size=0.2,
+                            test_size=0.2, min_text_length=5, drop_duplicates=True,
+                            min_samples_per_label=2)
+    run_training({"dataset_name": "set.csv", "model_name": "m", "text_columns": ["title"],
+                  "label_column": "labels", "csv_separator": ";", "label_separator": ",",
+                  "label_filter": None},
+                 settings, config, profile, Registry(settings.models_dir, 2),
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+
+    monkeypatch.chdir(settings.models_dir / "m")
+    namespace: dict = {}
+    exec(compile(code, "README.md (interop snippet)", "exec"), namespace)
+
+    assert namespace["char_vec"] is not None, "both halves of the vectorizer were exercised"
+    assert namespace["proba"].shape == (1, len(namespace["cfg"]["classes"]))
+
+
+# --- W01: the documented install is the tested tree -------------------------------------------
+
+
+def test_the_readme_installs_the_tree_the_suite_was_run_against():
+    """W01 (audit 2026-09-30): the README installed `requirements.txt -c requirements.lock`,
+    which pins the 17 direct dependencies and resolves the rest fresh. A fresh venv got an
+    anyio whose deprecation warning `filterwarnings = error` turns into collection errors in
+    ten test modules, while CI -- installing the hashed tree -- stayed green. The README now
+    installs what CI and the image install."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    installs = [line.strip() for line in readme.splitlines() if line.strip().startswith("pip install")]
+
+    assert not [line for line in installs if "-c requirements.lock" in line], installs
+    assert sum("--require-hashes -r requirements-hashes.lock" in line for line in installs) >= 2, installs
+
+
+def test_the_readme_names_every_profile_key():
+    """W08 (audit 2026-09-30): the README's list of profile fields named 7 of the 13 the
+    loader reads, and read as complete -- `stratified_splits`, `selection_tol` and the rest
+    were findable only in docs/configuration.md."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    [sentence] = [line for line in readme.splitlines() if line.startswith("Add your own profiles")]
+    keys = _profile_keys() - {"c_grid"}  # the lower-case spelling is an accepted alias
+
+    assert not sorted(k for k in keys if f"`{k}`" not in sentence), sentence
+

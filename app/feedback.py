@@ -4,11 +4,12 @@ The recognition rate improves with use, or it improves only when somebody produc
 new export. This is the first half of that loop: what a person noticed, written down in
 a shape ``/train`` can consume directly.
 
-Append-only, and deliberately uncapped — unlike ``job_history``, which is a log bounded
-at 200 entries. This is not a log: it IS the data the next run learns from, and the
-oldest correction is worth exactly as much as the newest. So a line is appended and the
-file is never rewritten, which also means a crash can cost at most the line being
-written rather than the whole collection.
+Append-only, and never pruned — unlike ``job_history``, which is a log bounded at 200
+entries. This is not a log: it IS the data the next run learns from, and the oldest
+correction is worth exactly as much as the newest. So a line is appended and the file is
+never rewritten, which also means a crash can cost at most the line being written rather
+than the whole collection. What is bounded is growth: at ``APIV3_MAX_FEEDBACK_MB`` new
+corrections are refused, because a readonly key could otherwise fill the volume.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import csv
 import io
 import json
 import logging
+import os
 import threading
 from datetime import UTC, datetime
 
@@ -30,6 +32,20 @@ logger = logging.getLogger("api_v3.feedback")
 EXPORT_COLUMNS = ("text", "labels")
 CSV_SEPARATOR = ";"
 LABEL_SEPARATOR = ","
+# What makes a spreadsheet read a cell as a formula: OWASP's list, and the one the admin UI's
+# own download guards with (`query.js`, FORMULA_LEAD).
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _spreadsheet_safe(cell: str) -> str:
+    """``cell`` with a leading tab where a spreadsheet would read it as a formula.
+
+    The export is opened in a spreadsheet as often as it is trained on, and any readonly key
+    can write a correction: `=HYPERLINK(...)` was exported as a live formula (audit
+    2026-09-30, S08). A tab, not the usual apostrophe: the loader cleans the text and trims
+    the labels, so a training run reads exactly the rows it read before.
+    """
+    return f"\t{cell}" if cell.startswith(_FORMULA_LEAD) else cell
 
 _lock = threading.Lock()
 # How many corrections are on disk. Counted once from the file and then kept, because
@@ -41,6 +57,28 @@ _count: int | None = None
 
 def _feedback_path():
     return get_settings().feedback_file
+
+
+def _max_bytes() -> int:
+    return get_settings().max_feedback_mb * 2**20
+
+
+def _ends_mid_line(path) -> bool:
+    """Was the last write cut short? A non-empty file whose last byte is not a newline.
+
+    A full volume or a kill mid-write leaves the last line without its newline, and the next
+    correction appended onto it became part of one line the reader drops -- the retry the
+    503 recommends included (audit 2026-09-30, R06).
+    """
+    try:
+        with path.open("rb") as handle:
+            end = handle.seek(0, os.SEEK_END)
+            if not end:
+                return False
+            handle.seek(end - 1)
+            return handle.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
 
 
 def append(record: dict) -> int:
@@ -59,11 +97,26 @@ def append(record: dict) -> int:
         if _count is None:
             # First write of this process: establish the count from what a READER sees,
             # so a line that never finished being written is not counted as a correction.
-            _count = len(read_all())
+            # Line by line: the file is uncapped, and as a list 240 MB of it took 769 MB
+            # (audit 2026-09-30, R02).
+            _count = sum(1 for _ in _iter_entries())
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            # Ending a torn line first costs that line, which was lost already -- and keeps
+            # this correction a line of its own.
+            torn = "\n" if _ends_mid_line(path) else ""
+            line = torn + json.dumps(entry, ensure_ascii=False) + "\n"
+            size = path.stat().st_size if path.exists() else 0
+            if size + len(line.encode("utf-8")) > _max_bytes():
+                # Checked before the write, so the file is left exactly as it was (R02).
+                raise FeedbackWriteError(
+                    "The correction was NOT recorded: the corrections file has reached its cap "
+                    f"(APIV3_MAX_FEEDBACK_MB, {get_settings().max_feedback_mb} MB). Everything "
+                    "collected so far is kept: export it (GET /feedback/export), then raise the "
+                    "cap, or move the file aside and restart the server."
+                )
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                handle.write(line)
         except OSError as exc:
             # The one write in this app that may NOT degrade to a logged warning. The job
             # history can: by the time it is written the run is finished and saved, so the
@@ -184,6 +237,6 @@ def iter_csv(limit: int | None = None, offset: int = 0):
         seen += 1
         if seen <= offset:
             continue
-        writer.writerow([text, LABEL_SEPARATOR.join(labels)])
+        writer.writerow([_spreadsheet_safe(text), _spreadsheet_safe(LABEL_SEPARATOR.join(labels))])
         written += 1
         yield drain()

@@ -7,3 +7,6 @@ ruff==0.12.9
 mypy==1.16.1
 types-PyYAML==6.0.12.20250516
 coverage[toml]==7.16.1
+# The licence gate's tool: CI's audit job installs this exact pin, and
+# tests/test_deployment_config.py runs the gate's command with it (audit 2026-09-30, B05).
+pip-licenses==5.5.5

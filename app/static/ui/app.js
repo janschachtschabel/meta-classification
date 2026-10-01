@@ -19,51 +19,6 @@ function applyBarWidths(root) {
   });
 }
 
-/* Two regions, not one, and the difference is not cosmetic.
-
-   `role="status"` is POLITE: a screen reader finishes what it is saying first and may drop
-   the message entirely. That is right for "model deleted" and wrong for the failure that
-   explains why nothing happened — and seven call sites were routing errors through it.
-
-   A message is appended rather than assigned, because assigning erased an unread message
-   when a second one arrived (two failed deletes in a row showed one). Every message carries
-   a dismiss button, and an error is not scheduled to disappear at all: a 4-second auto-hide
-   on text the user has to act on is a limit on reading it (SC 2.2.1), and a long German
-   error does not fit in four seconds. Confirmations still fade, but hovering or focusing
-   the stack holds them. */
-const TOAST_HIDE_MS = 6000;
-
-function pushToast(regionSel, msg, hideAfter) {
-  const region = $(regionSel);
-  const item = document.createElement("div");
-  item.className = "toast-item";
-  item.innerHTML = `<span>${esc(msg)}</span>` +
-    `<button type="button" class="toast-x" data-toast-dismiss ` +
-    `aria-label="${esc(t("common.dismiss"))}">&times;</button>`;
-  item.querySelector("[data-toast-dismiss]").addEventListener("click", () => item.remove());
-  region.appendChild(item);
-  if (hideAfter) {
-    // Cleared on hover/focus so the stack can be read at the reader's pace, and re-armed
-    // on leave — `:hover` alone would only stop the CSS, not the timer.
-    let timer = setTimeout(() => item.remove(), hideAfter);
-    const hold = () => clearTimeout(timer);
-    const resume = () => { timer = setTimeout(() => item.remove(), hideAfter); };
-    item.addEventListener("mouseenter", hold);
-    item.addEventListener("mouseleave", resume);
-    item.addEventListener("focusin", hold);
-    item.addEventListener("focusout", resume);
-  }
-  return item;
-}
-
-/* A confirmation: something asked for happened. Polite, and fades. */
-function toast(msg) { return pushToast("#toast", msg, TOAST_HIDE_MS); }
-
-/* A failure: assertive, and stays until dismissed. */
-function toastError(err) {
-  return pushToast("#toast-alert", (err && err.message) || String(err), 0);
-}
-
 /* Copy with a fallback, because `navigator.clipboard` is undefined outside a secure
    context and this app documents that TLS terminates at a proxy — so over http:// all
    three Copy buttons did nothing at all: no write, no toast, no error. The deprecated
@@ -104,15 +59,20 @@ async function copyText(text, confirmation) {
    hands the work an `isCurrent()` predicate. The work awaits and reports its own failures —
    which is why the token is a predicate rather than this helper awaiting the promise: the
    error belongs in the caller's own error element, and swallowing it here to keep the
-   wrapper tidy would be the same silent failure FE-12 is about. */
+   wrapper tidy would be the same silent failure FE-12 is about.
+
+   The predicate is the work's ONLY argument, whatever the wrapper is called with. It is
+   bound as a listener, and forwarding the listener's event made the event the handler's
+   `isCurrent`: the first call threw, and the Training tab could not load a single column
+   (audit 2026-09-30, U01). The work reads its input from the page, never from the event. */
 function latestOnly(work, waitMs = 150) {
   let seq = 0;
   let pending;
-  return (...args) => {
+  return () => {
     clearTimeout(pending);
     pending = setTimeout(() => {
       const mine = ++seq;
-      work(...args, () => mine === seq);
+      work(() => mine === seq);
     }, waitMs);
   };
 }
@@ -140,18 +100,35 @@ function closer(close) {
   };
 }
 
+/* Disabled for as long as its work runs, so a second press cannot start it twice -- and the
+   focus given back afterwards. A focused button that turns disabled hands the focus to
+   <body>, and enabling it again does not return it: after every submit a keyboard or
+   screen-reader user was back at the top of the page (audit 2026-09-30, U09). Only where the
+   button had the focus, and only if nothing else has taken it since. Returns the call that
+   ends the busy state. */
+function busy(button) {
+  const hadFocus = document.activeElement === button;
+  button.disabled = true;
+  return () => {
+    button.disabled = false;
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (hadFocus && lost && button.isConnected) button.focus();
+  };
+}
+
 /* ---------- login / shell ---------- */
 
 async function boot() {
   window.addEventListener("apiv3-unauthorized", showLogin);
   $("#login-form").addEventListener("submit", onLogin);
-  $("#logout-btn").addEventListener("click", () => { Api.clearKey(); showLogin(); });
+  $("#logout-btn").addEventListener("click", signOut);
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
   document.querySelector('[role="tablist"]').addEventListener("keydown", onTablistKeydown);
   $("#query-form").addEventListener("submit", onQuery);
   document.querySelectorAll('input[name="query-mode"]').forEach(
     (radio) => radio.addEventListener("change", onQueryModeChange));
   $("#train-chip").addEventListener("click", () => switchTab("training"));
+  $("#train-stop").addEventListener("click", stopTraining);
   $("#train-form").addEventListener("submit", onTrainStart);
   // Debounced and latest-wins: see loadDatasetColumns in training.js for why, and
   // latestOnly below for what it guarantees. Wrapped here, where every module has loaded.
@@ -182,6 +159,18 @@ async function boot() {
   showLogin();
 }
 
+/* Signing out hands the page to the next person, so nothing of this session may stay on it.
+   Hiding the app left the query text, its result and any share link -- a bearer capability --
+   in place for whoever signed in next (audit 2026-09-30, S09). A fresh page is the only state
+   that stays clean as views are added; the forms are reset first, because Firefox puts field
+   values back on a reload. (A 401 mid-session still just shows the sign-in: that is the same
+   person, whose typed text should survive re-entering a key.) */
+function signOut() {
+  Api.clearKey();
+  document.querySelectorAll("form").forEach((form) => form.reset());
+  location.reload();
+}
+
 function showLogin() {
   stopStatusPolling();
   $("#view-app").hidden = true;
@@ -193,7 +182,7 @@ async function onLogin(ev) {
   ev.preventDefault();
   const btn = $("#login-btn"), errEl = $("#login-error");
   errEl.hidden = true;
-  btn.disabled = true;
+  const idle = busy(btn);
   Api.setKey($("#api-key").value.trim());
   try {
     await Api.get("/models");            // any valid key answers 200 here
@@ -202,7 +191,7 @@ async function onLogin(ev) {
   } catch (err) {
     Api.clearKey();
     showError(errEl, err.status === 401 ? { message: t("login.rejected") } : err);
-  } finally { btn.disabled = false; }
+  } finally { idle(); }
 }
 
 function showApp(keyless) {
@@ -214,7 +203,12 @@ function showApp(keyless) {
   startStatusPolling();
 }
 
-const loaders = { query: loadQueryTab, training: loadTrainingTab, models: loadModels, datasets: loadDatasets };
+const loaders = {
+  query: loadQueryTab,
+  training: () => { loadTrainingTab(); loadTrainHistory(); },
+  models: loadModels,
+  datasets: loadDatasets,
+};
 
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((b) => {

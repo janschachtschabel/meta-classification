@@ -261,6 +261,32 @@ def test_the_bulk_csv_is_unchanged_when_no_metadata_was_asked_for(tmp_path):
     assert result["html"].split("\n")[0] == "row,text,uri,label,confidence"
 
 
+_ANSWER = '"row,uri,label,confidence,above_threshold\\n0,uri:a,A,0.50,\\n1,,,,\\n"'
+
+
+@needs_node
+def test_a_csv_answer_covering_fewer_rows_than_were_sent_says_so(tmp_path):
+    """U02 (audit 2026-09-30): a stream cut short ends like a finished one, and the view
+    said "Fertig … 500 Eingabezeilen" for a 700-row file. `X-Input-Rows` is what the
+    answer has to cover; fewer is reported where the success message used to be."""
+    result = _render(f'csvSummary({_ANSWER}, "items-predictions.csv", 700)', tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert "query.csv.incomplete" in result["html"]
+    assert 'role="alert"' in result["html"]
+
+
+@needs_node
+def test_a_complete_csv_answer_is_not_flagged(tmp_path):
+    """Both rows answered -- one with labels, one refused -- is complete; an answer from a
+    server that does not send the count is not judged at all."""
+    for expected in ("2", "null"):
+        result = _render(f'csvSummary({_ANSWER}, "items-predictions.csv", {expected})', tmp_path)
+
+        assert result["ok"], result.get("error")
+        assert "query.csv.incomplete" not in result["html"], expected
+
+
 def test_the_metadata_option_is_hidden_where_it_cannot_be_delivered():
     """`/predict/csv` streams its answer from the server, and this view never holds the
     rows — so in CSV mode there is nothing to attach metadata to.

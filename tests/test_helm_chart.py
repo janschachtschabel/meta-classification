@@ -5,12 +5,15 @@ A substring survives an inverted condition: the word is present either way, so t
 stay green while the logic is wrong, and the audit rows they back said "verified" on the
 strength of a grep. Only the template engine answers what a given set of values produces.
 
-GitHub's ubuntu runners ship helm, so this is a real gate in CI; elsewhere it skips and says
-so. The substring tests stay where they are — they cost nothing and still hold without helm.
+GitHub's ubuntu runners ship helm, and GitLab's suite job installs a checksum-pinned one
+(`.gitlab-ci.yml`, pinned by `tests/test_deployment_config.py`), so this is a real gate in both
+CIs; elsewhere it skips and says so. The substring tests stay where they are — they cost
+nothing and still hold without helm.
 """
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from itertools import chain
@@ -36,6 +39,9 @@ pytestmark = pytest.mark.skipif(
 KEYS = ("config.auth.adminKey=render-test", "config.auth.readonlyKey=render-test")
 # Silences the TLS guard, so a secret-path render fails for its own reason and not OPS-4's.
 INSECURE = "ingress.allowInsecure=true"
+# Names the proxy uvicorn may believe, so a render with the (default) ingress fails for its
+# own reason and not S04's.
+PROXIED = "config.limits.forwardedAllowIps=10.42.0.0/16"
 
 
 def _helm(*overrides: str) -> subprocess.CompletedProcess[str]:
@@ -83,14 +89,27 @@ def _mounted_secret(objects: list[dict[str, Any]]) -> str:
 def test_an_external_secret_replaces_the_charts_own_and_the_pod_reads_it():
     """With `existingSecret` set the chart must render no Secret at all. Two candidates for
     one envFrom is worse than none: nothing says which the pod ends up reading."""
-    objects = _render("config.auth.existingSecret=classify-api-keys", INSECURE)
+    objects = _render("config.auth.existingSecret=classify-api-keys", INSECURE, PROXIED)
 
     assert _of_kind(objects, "Secret") == [], "the chart still renders a Secret beside the external one"
     assert _mounted_secret(objects) == "classify-api-keys"
 
 
+def test_nothing_on_the_pod_is_derived_from_the_keys():
+    """S12 (audit 2026-09-30): a `checksum/secret-env` pod annotation carried a SHA-256 of the
+    rendered Secret, readable by anyone allowed to read pods -- and with the rest of that
+    manifest public, a weak key could be confirmed offline against it. Two releases that
+    differ only in their keys render the same StatefulSet."""
+    first = _render("config.auth.adminKey=render-test-a", "config.auth.readonlyKey=render-test-b",
+                    INSECURE, PROXIED)
+    second = _render("config.auth.adminKey=render-test-c", "config.auth.readonlyKey=render-test-d",
+                     INSECURE, PROXIED)
+
+    assert _of_kind(first, "StatefulSet") == _of_kind(second, "StatefulSet")
+
+
 def test_without_an_external_secret_the_chart_renders_and_mounts_its_own():
-    objects = _render(*KEYS, INSECURE)
+    objects = _render(*KEYS, INSECURE, PROXIED)
 
     [secret] = _of_kind(objects, "Secret")
     assert set(secret["data"]) == {"APIV3_API_KEY_ADMIN", "APIV3_API_KEY_READONLY"}
@@ -101,7 +120,7 @@ def test_a_missing_key_refuses_the_release_and_says_what_to_do_instead():
     """The refusal is the only text the operator sees — the render aborts here, so NOTES.txt
     is never printed. A message naming only `adminKey` sends them to `--set adminKey=`, which
     puts the key in their shell history, the CI log and the release secret."""
-    message = _refused(INSECURE)
+    message = _refused(INSECURE, PROXIED)
 
     assert "config.auth.adminKey" in message
     assert "existingSecret" in message, (
@@ -114,7 +133,7 @@ def test_a_missing_key_refuses_the_release_and_says_what_to_do_instead():
 
 
 def test_an_ingress_without_tls_refuses_the_release():
-    message = _refused(*KEYS)
+    message = _refused(*KEYS, PROXIED)
 
     assert "ingress.tls" in message
     assert "X-API-Key" in message, "the refusal does not say WHAT leaks, so it reads as pedantry"
@@ -123,7 +142,7 @@ def test_an_ingress_without_tls_refuses_the_release():
 def test_the_documented_escape_hatch_renders_an_ingress_without_tls():
     """`allowInsecure` is the only way to say "TLS terminates above me" — if it did not work,
     a mesh or cloud-load-balancer deployment could not use the chart at all."""
-    [ingress] = _of_kind(_render(*KEYS, INSECURE), "Ingress")
+    [ingress] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "Ingress")
 
     assert "tls" not in ingress["spec"]
 
@@ -131,6 +150,10 @@ def test_the_documented_escape_hatch_renders_an_ingress_without_tls():
 def test_tls_values_reach_the_rendered_ingress():
     objects = _render(
         *KEYS,
+        PROXIED,
+        # The host the TLS entry names is the one the ingress serves: TLS for another host
+        # than the default one is refused since B11.
+        "ingress.hosts[0]=classify.example.de",
         "ingress.tls[0].secretName=classify-tls",
         "ingress.tls[0].hosts[0]=classify.example.de",
     )
@@ -139,6 +162,50 @@ def test_tls_values_reach_the_rendered_ingress():
     assert ingress["spec"]["tls"] == [
         {"secretName": "classify-tls", "hosts": ["classify.example.de"]}
     ]
+
+
+# --- S04: whom uvicorn believes about a client's address -------------------------------------
+
+
+def test_an_ingress_with_the_rate_limiter_and_no_trusted_proxy_refuses_the_release():
+    """S04 (audit 2026-09-30): behind the ingress every request reaches the pod from the
+    controller, so without forwardedAllowIps all clients share ONE rate-limit bucket and one
+    busy client throttles everyone. values.yaml asked for the setting; nothing enforced it."""
+    message = _refused(*KEYS, INSECURE)
+
+    assert "config.limits.forwardedAllowIps" in message
+    assert "rateLimitEnabled=false" in message, "and the way out for whoever cannot name the proxy"
+
+
+def test_trusting_every_address_refuses_the_release():
+    """With "*" any client names its own address in X-Forwarded-For: its own rate-limit
+    bucket, or someone else's to exhaust."""
+    message = _refused(*KEYS, INSECURE, "config.limits.forwardedAllowIps=*")
+
+    assert "config.limits.forwardedAllowIps" in message
+
+
+@pytest.mark.parametrize("values", [
+    (PROXIED,), ("config.limits.rateLimitEnabled=false",), ("ingress.enabled=false",),
+])
+def test_a_named_proxy_no_limiter_or_no_ingress_renders(values):
+    _render(*KEYS, INSECURE, *values)
+
+
+@pytest.mark.parametrize("grace, wait", [("60", "50"), ("5", "0")])
+def test_the_shutdown_wait_stays_inside_the_pods_grace_period(grace, wait):
+    """R03 (audit 2026-09-30): the app waits that long for a running training before recording
+    it as interrupted -- longer than the grace, and the kubelet's kill comes first."""
+    [configmap] = _of_kind(_render(*KEYS, INSECURE, PROXIED, f"terminationGracePeriod={grace}"),
+                           "ConfigMap")
+
+    assert configmap["data"]["APIV3_SHUTDOWN_WAIT_SECONDS"] == wait
+
+
+def test_the_trusted_proxy_reaches_uvicorn():
+    [configmap] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "ConfigMap")
+
+    assert configmap["data"]["FORWARDED_ALLOW_IPS"] == "10.42.0.0/16"
 
 
 def _documented_commands() -> list[list[str]]:
@@ -175,3 +242,156 @@ def test_the_tls_guard_leaves_a_release_without_an_ingress_alone():
     objects = _render(*KEYS, "ingress.enabled=false")
 
     assert _of_kind(objects, "Ingress") == []
+
+
+# --- B07: Prometheus scrapes each pod once ---------------------------------------------------
+
+
+def _selects(selector: dict[str, Any], labels: dict[str, str]) -> bool:
+    """A label selector as Kubernetes evaluates it (the operators this chart uses)."""
+    if any(labels.get(key) != value for key, value in selector.get("matchLabels", {}).items()):
+        return False
+    for expression in selector.get("matchExpressions", []):
+        present = expression["key"] in labels
+        if expression["operator"] == "DoesNotExist" and present:
+            return False
+        if expression["operator"] == "Exists" and not present:
+            return False
+    return True
+
+
+def test_the_service_monitor_scrapes_each_pod_once():
+    """B07 (audit 2026-09-30): the ServiceMonitor selected by the chart's selector labels,
+    which the normal Service and the headless one both carry -- so Prometheus scraped every
+    pod through both, and each counter in /metrics arrived twice."""
+    objects = _render(*KEYS, INSECURE, PROXIED, "global.metrics.servicemonitor.enabled=true")
+    [monitor] = _of_kind(objects, "ServiceMonitor")
+
+    scraped = [service for service in _of_kind(objects, "Service")
+               if _selects(monitor["spec"]["selector"], service["metadata"]["labels"])]
+
+    assert len(scraped) == 1, [s["metadata"]["name"] for s in scraped]
+    assert scraped[0]["spec"].get("clusterIP") != "None", "it scrapes the headless Service"
+
+
+# --- B08: the pod asks for the memory its training plans with --------------------------------
+
+_BINARY = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+
+
+def _bytes(quantity: str) -> int:
+    for suffix, factor in _BINARY.items():
+        if quantity.endswith(suffix):
+            return int(float(quantity[: -len(suffix)]) * factor)
+    return int(quantity)
+
+
+def test_the_pod_requests_the_memory_its_training_plans_with():
+    """B08 (audit 2026-09-30): the pod requested 1 Gi under an 8 Gi limit, and a training
+    plans with 85 % of the limit (APIV3_TRAIN_MEMORY_MB=auto) -- 6.8 Gi. The scheduler placed
+    it where 1 Gi was free, and under node pressure a pod above its request is the first one
+    evicted, mid-run."""
+    [statefulset] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "StatefulSet")
+    [container] = statefulset["spec"]["template"]["spec"]["containers"]
+    resources = container["resources"]
+
+    planned = 0.85 * _bytes(resources["limits"]["memory"])
+    assert _bytes(resources["requests"]["memory"]) >= planned, resources
+
+
+# --- B09: keyless mode in a pod is what it is: kubectl port-forward ---------------------------
+
+
+def test_keyless_mode_behind_an_ingress_refuses_the_release():
+    """B09 (audit 2026-09-30): `config.auth.enabled=false` was offered "for cluster-internal
+    use", and since S-1 keyless mode serves loopback callers only -- inside a pod that is
+    `kubectl port-forward`, nothing else. Every request through the ingress, and from every
+    other pod, would be answered 403: a release that renders and cannot be used."""
+    message = _refused("config.auth.enabled=false", INSECURE, PROXIED)
+
+    assert "config.auth.enabled" in message and "port-forward" in message, message
+
+
+def test_keyless_mode_without_an_ingress_renders_for_port_forward():
+    [configmap] = _of_kind(_render("config.auth.enabled=false", "ingress.enabled=false"), "ConfigMap")
+
+    assert configmap["data"]["APIV3_AUTH_ENABLED"] == "false"
+
+
+def test_the_chart_no_longer_offers_keyless_mode_for_cluster_internal_use():
+    documented = [
+        line for path in (CHART / "values.yaml", CHART / "README.md")
+        for line in path.read_text(encoding="utf-8").splitlines() if "auth.enabled" in line
+    ]
+
+    assert documented and not [line for line in documented if "cluster-internal" in line], documented
+
+
+# --- B11: the chart's guards check what they stand for ------------------------------------------
+
+
+@pytest.mark.parametrize("replicas", ["2", "3"])
+def test_more_than_one_replica_refuses_the_release(replicas):
+    """B11 (audit 2026-09-30): the training job, the model cache, the rate limiter and the share
+    links live in one process, and `replicaCount=3` rendered three pods each with its own --
+    a share link made in one unknown to the others, three trainings at once."""
+    message = _refused(*KEYS, INSECURE, PROXIED, f"replicaCount={replicas}")
+
+    assert "replicaCount" in message, message
+
+
+def test_no_replica_still_renders_for_scaling_down():
+    [statefulset] = _of_kind(_render(*KEYS, INSECURE, PROXIED, "replicaCount=0"), "StatefulSet")
+
+    assert statefulset["spec"]["replicas"] == 0
+
+
+HOST = "ingress.hosts[0]=classify.example.org"
+
+
+@pytest.mark.parametrize("tls", [
+    ("ingress.tls[0].secretName=classify-tls",),
+    ("ingress.tls[0].secretName=other-tls", "ingress.tls[0].hosts[0]=other.example.org"),
+])
+def test_tls_that_does_not_cover_the_host_refuses_the_release(tls):
+    """B11: the guard checked only that `ingress.tls` was not empty, so an entry without hosts,
+    or one for another host, passed -- and the API key went over the wire in cleartext for the
+    host the ingress actually serves."""
+    message = _refused(*KEYS, PROXIED, HOST, *tls)
+
+    assert "classify.example.org" in message, message
+
+
+@pytest.mark.parametrize("covering", ["classify.example.org", "*.example.org"])
+def test_tls_that_covers_the_host_renders(covering):
+    objects = _render(*KEYS, PROXIED, HOST, "ingress.tls[0].secretName=classify-tls",
+                      f"ingress.tls[0].hosts[0]={covering}")
+
+    [ingress] = _of_kind(objects, "Ingress")
+    assert ingress["spec"]["tls"][0]["hosts"] == [covering]
+
+
+# --- B11: GitLab's chart job fails when a guard fires on values meant to pass --------------------
+
+
+def _gitlab_chart_commands() -> list[list[str]]:
+    jobs = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+    return [shlex.split(line) for line in jobs["helm lint"]["script"] if line.startswith("helm ")]
+
+
+def test_the_gitlab_chart_job_renders_what_it_lints():
+    """B11 (audit 2026-09-30): `helm lint` runs the templates in lint mode, where `required`
+    and `fail` only log [INFO] -- the job ended 0 with every guard firing. It now also renders,
+    which fails on the first guard; run here exactly as the job runs it, from the repo root."""
+    commands = _gitlab_chart_commands()
+    renders = [c for c in commands if c[1] == "template"]
+    assert renders, "the GitLab chart job renders nothing, so no guard can fail it"
+
+    for command in commands:
+        done = subprocess.run([HELM, *command[1:]], cwd=ROOT, capture_output=True, text=True,  # noqa: S603
+                              timeout=120, check=False)
+        assert done.returncode == 0, f"{' '.join(command)}:\n{done.stdout}{done.stderr}"
+
+    refused = subprocess.run([HELM, *renders[0][1:], "--set", "replicaCount=2"], cwd=ROOT,  # noqa: S603
+                             capture_output=True, text=True, timeout=120, check=False)
+    assert refused.returncode != 0, "a guard firing does not fail the GitLab chart job"

@@ -852,22 +852,25 @@ def test_drop_unlearnable_removes_orphaned_rows_and_remaps_split():
     from app.prepare import _drop_unlearnable
 
     texts = np.array([f"text {i}" for i in range(6)], dtype=object)
+    # Label "c" gives "a" a train negative: a label on every train row is dropped too
+    # (audit 2026-09-30, T01), which the old two-label fixture would now test instead.
     y = np.array([
-        [1, 0], [1, 0], [1, 0],  # rows 0-2 (train): only label "a" has positives here
-        [0, 1],                  # row 3 (val): label "b" exists ONLY outside train
-        [1, 0], [0, 1],          # rows 4 (val) / 5 (test)
+        [1, 0, 0], [1, 0, 0],    # rows 0-1 (train)
+        [0, 0, 1],               # row 2 (train): "a" is not on every train row
+        [0, 1, 0],               # row 3 (val): label "b" exists ONLY outside train
+        [1, 0, 0], [0, 1, 0],    # rows 4 (val) / 5 (test)
     ])
     splits = (np.array([0, 1, 2]), np.array([3, 4]), np.array([5]))
 
     marks = np.array([0, 1, 0, 2, 4, 0], dtype=np.int8)
 
     texts2, y2, classes2, (tr2, va2, te2), marks2 = _drop_unlearnable(
-        texts, y, ["a", "b"], splits, marks)
+        texts, y, ["a", "b", "c"], splits, marks)
 
     assert marks2.tolist() == [0, 1, 0, 4], "the provenance marks follow their rows"
-    assert classes2 == ["a"]
+    assert classes2 == ["a", "c"]
     assert list(texts2) == ["text 0", "text 1", "text 2", "text 4"]
-    assert y2.shape == (4, 1)
+    assert y2.shape == (4, 2)
     assert (y2.sum(axis=1) > 0).all(), "orphaned all-zero rows must be dropped"
     assert tr2.tolist() == [0, 1, 2]
     assert va2.tolist() == [3]  # old row 4 -> new position 3
@@ -1007,7 +1010,12 @@ def test_import_rejects_unsafe_archive(tmp_path):
 
 def test_crashed_save_leaves_no_visible_model(tmp_path):
     """Bundles are written atomically: a leftover hidden tmp dir (crashed save)
-    is invisible to list()/exists() and gets cleaned up by the next save."""
+    is invisible to list()/exists(), and the startup sweep removes it.
+
+    The next save used to remove it as well -- and that was the bug of audit 2026-09-30,
+    R01: a save cannot tell a crash's leftover from another operation's staging in
+    progress, and an import took a training's finished bundle that way. A save now writes
+    into a directory of its own and leaves the others alone."""
     settings = _settings(tmp_path)
     registry = Registry(settings.models_dir, settings.max_models_in_memory)
     stale = Path(settings.models_dir) / ".tiny_model.tmp"
@@ -1022,10 +1030,11 @@ def test_crashed_save_leaves_no_visible_model(tmp_path):
         _request(), settings, config, config.get("fast"), _registry(settings),
         on_progress=lambda **_: None, should_stop=lambda: False,
     )
-    assert not stale.exists()  # next save cleaned the stale tmp dir
     bundle = Path(settings.models_dir) / "tiny_model"
     for required in ("config.json", "metrics.json", "head.skops", "vectorizer.skops"):
         assert (bundle / required).exists()  # rename only publishes complete bundles
+    assert stale.exists(), "a save leaves stagings it did not make alone"
+    assert registry.sweep_stale_tmp() == 1 and not stale.exists(), "the startup sweep removes it"
 
 
 def test_training_aborts_with_an_actionable_message_when_no_label_has_enough_rows(tmp_path):
@@ -1080,17 +1089,31 @@ def test_shipped_config_and_code_defaults_describe_the_same_profiles():
     """`profiles._DEFAULTS` is the fallback when config.yaml is missing, so the two are
     duplicated by design — and silently drift apart, which would make behaviour depend on
     whether the file happens to exist. Pin them together."""
+    from dataclasses import asdict
+
     from app.profiles import _DEFAULTS, load_training_config
 
     shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
     assert set(shipped.profiles) == set(_DEFAULTS), "profile names differ"
     for name, profile in shipped.profiles.items():
-        fallback = _DEFAULTS[name]
-        assert profile.c_grid == fallback.c_grid, f"{name}: C grid differs"
-        assert profile.use_char == fallback.use_char, f"{name}: use_char differs"
-        assert profile.max_word_features == fallback.max_word_features, f"{name}: word cap differs"
-        assert profile.threshold_per_label == fallback.threshold_per_label, f"{name}: thresholds differ"
-        assert profile.cv_folds == fallback.cv_folds, f"{name}: evaluation mode differs"
+        # Every field but the prose: comparing five of them let `stratified_splits` drift --
+        # without config.yaml, `auto` and `best` split unstratified (audit 2026-09-30, T11).
+        shipped_fields = {k: v for k, v in asdict(profile).items() if k != "description"}
+        fallback_fields = {k: v for k, v in asdict(_DEFAULTS[name]).items() if k != "description"}
+        assert shipped_fields == fallback_fields, f"{name}: the code default differs from config.yaml"
+
+
+def test_without_config_yaml_the_training_defaults_are_the_shipped_ones(tmp_path):
+    """The rest of the file falls back too: without it, the column weights the shipped
+    config applies to WLO exports were gone (audit 2026-09-30, T11)."""
+    from app.profiles import load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+    fallback = load_training_config(tmp_path / "missing.yaml")
+
+    for field in ("text_column_weights", "min_samples_per_label", "min_text_length",
+                  "drop_duplicates", "validation_size", "test_size", "cv_folds", "default_profile"):
+        assert getattr(fallback, field) == getattr(shipped, field), field
 
 
 def test_loading_a_bundle_with_a_container_label_warns(tmp_path, caplog):

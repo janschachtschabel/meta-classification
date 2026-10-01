@@ -140,6 +140,57 @@ def test_the_public_download_route_validates_the_stored_name():
     assert "resolve_dataset" in body, "download_shared bypasses the dataset policy"
 
 
+def test_a_model_link_whose_stored_name_leaves_the_models_directory_is_a_404(monkeypatch, tmp_path):
+    """S11 (audit 2026-09-30): the dataset branch re-checks the stored name (SEC-11), the
+    model branch did not -- and `Registry._path` is a plain join. A store entry naming
+    `../elsewhere/m` exported a bundle from beside the models directory to anyone holding
+    the link. The store is a JSON file on the volume; the route is public."""
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    from fastapi.testclient import TestClient
+
+    from app.profiles import Profile, TrainingConfig
+    from app.registry import Registry, get_registry
+    from app.settings import Settings, get_settings
+    from app.sharing import get_share_store
+    from app.training import run_training
+
+    fixtures = Path(__file__).parent / "fixtures"
+    elsewhere = Settings(data_dir=fixtures, models_dir=tmp_path / "elsewhere", auth_enabled=False)
+    profile = Profile("fast", "TF-IDF", True, True, [1.0])
+    config = TrainingConfig(default_profile="fast", profiles={"fast": profile}, validation_size=0.2,
+                            test_size=0.2, min_text_length=5, drop_duplicates=True,
+                            min_samples_per_label=2)
+    run_training({"dataset_name": "tiny.csv", "model_name": "m",
+                  "text_columns": ["properties.cclom:title"], "label_column": "properties.ccm:taxonid",
+                  "csv_separator": ";", "label_separator": ",", "label_filter": None},
+                 elsewhere, config, profile, Registry(elsewhere.models_dir, 2),
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+    (tmp_path / "models").mkdir()
+    links = tmp_path / "share_links.json"
+    expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    links.write_text(json.dumps({"forged": {"kind": "model", "name": "../elsewhere/m",
+                                            "expires_at": expires}}), encoding="utf-8")
+    for key, value in {"APIV3_AUTH_ENABLED": "true", "APIV3_API_KEY_ADMIN": "admin-key",
+                       "APIV3_API_KEY_READONLY": "ro-key", "APIV3_DATA_DIR": str(tmp_path),
+                       "APIV3_MODELS_DIR": str(tmp_path / "models"),
+                       "APIV3_SHARE_LINKS_FILE": str(links)}.items():
+        monkeypatch.setenv(key, value)
+    for cached in (get_settings, get_registry, get_share_store):
+        cached.cache_clear()
+    from app.main import create_app
+
+    try:
+        response = TestClient(create_app()).get("/share/forged")
+    finally:
+        for cached in (get_settings, get_registry, get_share_store):
+            cached.cache_clear()
+
+    assert response.status_code == 404, f"{response.status_code}, {len(response.content)} bytes"
+    assert not list((tmp_path / "models").glob(".export-*"))
+
+
 # --- SEC-12: two imports of one name cannot clobber each other -----------------------------
 
 

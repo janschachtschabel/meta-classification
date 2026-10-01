@@ -147,6 +147,25 @@ def test_shrinkage_off_by_default_leaves_every_threshold_where_it_was():
         global_t, pytest.approx(plain))
 
 
+@pytest.mark.parametrize("shrink_k", [None, 10.0])
+def test_a_label_no_cut_can_hit_keeps_the_global_threshold(shrink_k):
+    """T05 (audit 2026-09-30): the guard looked at positives only. A label WITH positives that
+    all score under the lowest cut has F1 0 at every cut, and argmax then picked the grid
+    minimum, 0.05 -- in the audit's runs 20 of 379 label cuts, firing on 12.8 % of test rows
+    for a label on 0.7 %."""
+    y = np.zeros((20, 2), dtype=np.int8)
+    y[:10, 0] = 1
+    y[:2, 1] = 1
+    proba = np.zeros((20, 2))
+    proba[:10, 0], proba[10:, 0] = 0.9, 0.1
+    proba[:, 1] = 0.01
+
+    global_t, columns = thresholds.tune_threshold_columns(y, proba, per_label=True,
+                                                           shrink_k=shrink_k)
+
+    assert columns[1] == pytest.approx(global_t)
+
+
 def test_shrinkage_leaves_a_label_with_no_positives_at_the_global_threshold():
     """The zero-positive case already fell back to the global; under shrinkage it is
     the limit of the same rule (weight 0), not a second special case."""
@@ -176,8 +195,9 @@ def _naive_search(y, proba, grid):
 
     This is the reference the vectorised sweep has to reproduce exactly — including how
     it breaks ties (ascending grid, strict `>`, so the LOWEST cut reaching the maximum
-    wins) and how it treats a label with no positives (keep the global cut; every
-    threshold scores 0 there, and the `>` rule would otherwise hand it the grid minimum).
+    wins) and how it treats a label with no positives, or with positives no cut reaches
+    (keep the global cut; every threshold scores 0 there, and the `>` rule would otherwise
+    hand it the grid minimum -- audit 2026-09-30, T05 added the second case).
     """
     from sklearn.metrics import f1_score
 
@@ -199,7 +219,8 @@ def _naive_search(y, proba, grid):
                              zero_division=0)
             if score > best_f1:
                 best_f1, best_t = score, float(threshold)
-        columns[col] = best_t
+        if best_f1 > 0:
+            columns[col] = best_t
     return best_global, columns
 
 

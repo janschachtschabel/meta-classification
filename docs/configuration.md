@@ -42,6 +42,8 @@ limits see real client IPs · storage paths on a persistent volume.
 | `APIV3_MODELS_DIR` | `./models` | Trained model bundles. |
 | `APIV3_SHARE_LINKS_FILE` | `./share_links.json` | Persisted expiring share links. |
 | `APIV3_FEEDBACK_FILE` | `./feedback.jsonl` | Corrections recorded via `POST /feedback` — not a log but the data a later run learns from, and never pruned. |
+| `APIV3_SHUTDOWN_WAIT_SECONDS` | `50` | How long a shutdown waits for a running training to stop at its next checkpoint. A run still running then, and every queued run, is recorded in the job history as `interrupted`. Keep it inside the platform's grace period: the chart sets it to `terminationGracePeriod` − 10, compose stops with 60 s. |
+| `APIV3_MAX_FEEDBACK_MB` | `1024` | Size at which that file stops growing: further corrections answer 503 (nothing is dropped), so a readonly key cannot fill the volume the models live on. Export, then raise it or move the file aside and restart. |
 | `APIV3_JOB_HISTORY_FILE` | `./job_history.jsonl` | How finished runs ended (`GET /train/history`), newest 200. |
 | `APIV3_CONFIG_FILE` | `./config.yaml` | Training profiles file (layer 2 above). |
 
@@ -79,8 +81,8 @@ and seed that file on the volume once.
 | Variable | Default | Description |
 |---|---|---|
 | `APIV3_AUTH_ENABLED` | `true` | `false` = full access without a key, for **loopback callers only**; everyone else gets 403 — a container's host too, since it arrives from the bridge gateway. |
-| `APIV3_API_KEY_ADMIN` | – | Admin key: `/train`, `/train/stop`, dataset/model import, export, delete, analyze. |
-| `APIV3_API_KEY_READONLY` | – | Readonly key: `/predict*`, `/train/status`, listings. |
+| `APIV3_API_KEY_ADMIN` | – | Admin key: `/train`, `/train/stop`, dataset/model import, export, delete, analyze. ASCII only, and not the `change-me-…` placeholder from `.env.example` — the API refuses to start with either. |
+| `APIV3_API_KEY_READONLY` | – | Readonly key: `/predict*`, `/train/status`, listings. Same rules as the admin key. |
 | `APIV3_UI_ENABLED` | `true` | Serve the admin UI at `/ui`. The page itself is public like `/docs`; every data request carries the key the user signs in with (with auth disabled, the UI skips the sign-in). |
 
 No key is ever required for `/health`, `/metrics` and `GET /share/{id}`
@@ -92,10 +94,12 @@ No key is ever required for `/health`, `/metrics` and `GET /share/{id}`
 |---|---|---|
 | `APIV3_CORS_ALLOW_ORIGINS` | *(empty)* | Comma-separated browser-origin allowlist; empty = no cross-origin access. |
 | `APIV3_MAX_UPLOAD_MB` | `200` | Upload cap for datasets/model bundles (streamed; aborts at the cap). |
-| `APIV3_MAX_MODELS_IN_MEMORY` | `2` | LRU cache size: models kept resident in RAM. Raised automatically to fit `WARMUP_MODELS`; `GET /config` reports the resolved `effective_max_models_in_memory`. |
+| `APIV3_MAX_JSON_MB` | `10` | Cap for every other request body — a `/predict` batch, a `/metadata` request (JSON, parsed into objects that cost many times its bytes). Checked on the declared size and on the bytes as they arrive, chunked bodies included; no body is read before its API key checks out. |
+| `APIV3_MAX_MODELS_IN_MEMORY` | `2` | LRU cache size: models kept resident in RAM. Raised automatically to at least 5 — the models one `/predict/multi` call may name, which a smaller cache evicted from under each other on every call — and to fit `WARMUP_MODELS`; `GET /config` reports the resolved `effective_max_models_in_memory`. The cache only holds models that were asked for. |
 | `APIV3_WARMUP_MODELS` | *(empty)* | Comma-separated model names to preload + warm on startup so their first `/predict` pays no cold skops-load — the practical setting for a server answering several target fields. **All listed models stay resident** (the cache is sized to fit them). Best-effort: a missing or unloadable name is logged and skipped, never fatal to startup. Wired through `docker-compose.yml` and the Helm chart (`config.limits.warmupModels`). |
 | `APIV3_WARMUP_METADATA` | `false` | Run the `/metadata` generators once on startup so the first request pays no cold load — measured 330–380 ms for that request, 10 ms after. Off by default because the cost is permanent rather than one-off: `wordfreq` loads its German frequency table on first use (~58 MB resident, measured), and it then stays for the life of the process. Turn it on where `/metadata` is served; leave it off on a box that mostly trains, where `ThreadBudget` would get fewer parallel head fits for a table nothing reads. Best-effort: a failure is logged, never fatal to startup. |
 | `APIV3_MAX_CONCURRENT_CSV` | `4` | How many `POST /predict/csv` streams may run at once; over it the answer is `503` with `Retry-After`. Each stream is a sync generator inside a `StreamingResponse`, which Starlette iterates on one anyio threadpool worker for the *whole* classification — minutes for a 200 MB file — and that pool (40 workers) is shared with every non-async route and every `asyncio.to_thread` call. Unbounded, enough concurrent bulk jobs made every other endpoint wait for a worker. Rejecting beats queueing here: a queued request holds its connection and its uploaded temp file while waiting for work that has not started. |
+| `APIV3_MAX_CONCURRENT_METADATA` | `2` | How many `POST /metadata` batches may run at once; over it the answer is `503` with `Retry-After`, for the same reason as above: each batch holds a pool worker for its whole run, which is seconds when its texts are long. A request is also held to 1,000,000 characters across its texts (a `422` beyond). |
 | `APIV3_RATE_LIMIT_ENABLED` | `true` | In-process limiter, keyed on client IP. A throttled request answers `429` with `Retry-After` set to the bucket's window in seconds. |
 | `APIV3_RATE_LIMIT_PREDICT` | `300/minute` | `/predict`, `/predict/batch`, `/predict/multi`, `/predict/explain`, `/predict/csv`, `/metadata` — one shared bucket, so size it for the total if a deployment leans on `/metadata`. |
 | `APIV3_RATE_LIMIT_TRAIN` | `5/minute` | `POST /train` **and** `POST /models/{name}/evaluate` — one shared bucket, because both occupy the same single background worker. |
@@ -110,8 +114,8 @@ No key is ever required for `/health`, `/metrics` and `GET /share/{id}`
 | `APIV3_CPU_MAX_PERCENT` | `60` | Hard CPU budget for a training run: effective threads = `min(N_JOBS, available cores × percent/100)`. Keeps the API responsive; `100` disables the cap. `GET /config` shows the resolved value. |
 | `APIV3_TRAIN_MEMORY_MB` | `auto` | Memory budget for a training run, in MiB. It bounds the head-fit threads: every concurrent per-label fit holds ~2.5× the feature matrix in solver buffers, so a run that would outgrow the budget trains with fewer threads — slower, same model — instead of being OOM-killed. `auto` = 85 % of the container's cgroup memory limit (Docker `--memory`, a Kubernetes memory limit) when there is one, otherwise no cap; `0` = no cap. It also **refuses a run that cannot fit**: before each fit it weighs the three things held together — the head (`labels × features` float32, nothing releases it), the dense targets (`rows × labels`) and the matrix plus one fit's copies of it — against the budget, judged at ONE thread (fewer is not possible; above that the thread count is this budget's other job). A run that does not fit is stopped with the numbers and the levers instead of being OOM-killed minutes later. In practice it is a label-count problem: at 200 000 features and 250 000 rows the line sits near 3 500 labels, which `min_samples_per_label` controls. Being over the budget is not the same as being out of memory — the budget is usually well below the container — so the same working set is weighed a second time against the **cgroup limit**, on top of what the process already holds. That one is the kernel's number and is checked even at `0`: switching the throttle off is a choice about tuning, not about physics. `GET /config` shows the resolved `effective_train_memory_mb`. |
 | `APIV3_TRAINING_ISOLATION` | `process` | Where a training runs. `process` = in a child process (`python -m app.train_worker`, JSON over pipes, nothing pickled): when the run ends, all of its memory goes back to the OS instead of staying with the process that serves requests. An OOM kill ends the run with an error that names the likely cause, instead of taking the API down: the child raises its own `oom_score_adj`, so the kernel picks it and not the API. (On Kubernetes that holds only where the kubelet does not kill the whole container — since 1.28 it does on cgroup v2, unless `singleProcessOOMKill` is set, 1.32+; there `APIV3_TRAIN_MEMORY_MB` is what keeps a run inside the limit.) A hard stop ends the run at once. `APIV3_TRAIN_MEMORY_MB` still covers both processes: the child counts the API process' memory as held. The cost is an interpreter start per run and a cold first `/predict` of the new model. `thread` = inside the API process, as before (what the test suite uses). `GET /config` shows it. |
-| `APIV3_SOLVER` | `newton-cg` | LogisticRegression solver. `newton-cg`/`saga` keep float32 and release the GIL (all cores read ONE input matrix; each concurrent fit adds ~2–2.5× the matrix in solver buffers, which `APIV3_TRAIN_MEMORY_MB` accounts for); `lbfgs`/`liblinear` upcast to float64. |
-| `APIV3_PARALLEL_BACKEND` | `threading` | joblib backend for the per-label fits. |
+| `APIV3_SOLVER` | `newton-cg` | LogisticRegression solver. `newton-cg`/`saga` keep float32 and release the GIL (all cores read ONE input matrix; each concurrent fit adds ~2–2.5× the matrix in solver buffers, which `APIV3_TRAIN_MEMORY_MB` accounts for); `lbfgs`/`liblinear` upcast to float64. Also `sag`; anything else — `newton-cholesky` included, whose dense Hessian is n_features² — stops the start. |
+| `APIV3_PARALLEL_BACKEND` | `threading` | joblib backend for the per-label fits: `threading`, `loky`, `multiprocessing` or `sequential`; anything else stops the start. |
 | `APIV3_TFIDF_MAX_WORD_FEATURES` | `80000` | Word-n-gram vocabulary cap (main RAM lever; profiles may override). |
 | `APIV3_TFIDF_MAX_CHAR_FEATURES` | `120000` | Char-n-gram vocabulary cap. |
 | `APIV3_RANDOM_SEED` | `42` | Split/CV seed (reproducibility). |
@@ -241,6 +245,14 @@ CSV only where the counts provably line up, plus a reconstruction pass — measu
 python scripts/fetch_vocab_labels.py                        # -> data/label_names.json
 python scripts/patch_bundle_labels.py --apply               # repair EXISTING bundles
 ```
+
+Over the API: `PUT /label-names` (admin) takes the mapping as JSON and replaces the file whole
+(at least one entry; an empty mapping is refused); `GET /label-names` (readonly) returns it.
+
+In a container the data directory is the volume (`/data/datasets`): copy the file there
+(`docker cp`, `kubectl cp`) and run the repair inside the container (`docker exec … python
+scripts/patch_bundle_labels.py --apply`). The image carries both bundle repairs; they take
+their directories from `APIV3_DATA_DIR` and `APIV3_MODELS_DIR` like the app.
 
 `fetch_vocab_labels.py` downloads SKOS vocabularies (add URLs at the top of the file) and
 is **build-time only** — `app/` never fetches a URL, which is the same SSRF boundary that

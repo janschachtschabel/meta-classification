@@ -14,24 +14,57 @@ keeps a half-written bundle unpublishable would then live in two places.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
+import secrets
 import shutil
 import tempfile
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
 
-from . import model_archive, model_report
+from . import durability, model_archive, model_report
 from .classifier import ClassifierModel
-from .model_io import CARD_FILE, MANIFEST_FILE, UnsafeModelError, _read_bundle, _write_bundle
+from .manifest import CARD_FILE, MANIFEST_FILE
+from .model_io import (
+    UnsafeModelError,
+    _read_bundle,
+    _write_bundle,
+    check_loadable,
+)
 from .settings import get_settings
+from .staged_archives import StagedArchives
+
+logger = logging.getLogger("api_v3.registry")
+
+# How many evaluation records a bundle keeps, newest last: enough to compare a model across
+# datasets, which is their point -- appended for good, they grew the document every model
+# detail reads and every export packs without end (audit 2026-09-30, R15).
+MAX_EVALUATIONS = 50
 
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
-_BACKUP_SUFFIX = ".prebackup"
+BACKUP_SUFFIX = ".prebackup"
+
+
+# A bundle renamed aside while `publish` replaces it; see `sweep_stale_tmp`.
+_REPLACED = re.compile(r"^\.(?P<name>.+)\.replaced-[0-9a-f]+\.tmp$")
+
+
+def is_backup_name(name: str) -> bool:
+    """Is ``name`` a repair backup's -- never a model, to any route?
+
+    The label repair keeps the untouched bundle as ``<name>.prebackup``; serving it hands out
+    exactly the weights the repair removed. The listing hid such names, every other route
+    served them, and a model trained or imported under one was invisible and live at once
+    (audit 2026-09-30, R15).
+    """
+    return name.endswith(BACKUP_SUFFIX)
 
 
 # `Registry.list` shadows the builtin inside the class body, so any annotation after
@@ -55,12 +88,18 @@ class Registry:
         # acquires `_disk_lock` while holding `_lock` — no ordering cycle/deadlock.
         self._lock = threading.Lock()
         self._disk_lock = threading.Lock()
+        # Taken only while `_disk_lock` is held, never the other way round (see stage_export).
+        self._staged = StagedArchives(self.dir)
+        # Names an import holds from before its upload until it is installed (`importing`).
+        self._importing: set[str] = set()
+        # What each cached model was loaded from (`_stamp`), checked on every get().
+        self._stamps: dict[str, tuple[int, int] | None] = {}
 
     def _path(self, name: str) -> Path:
         return self.dir / name
 
     def exists(self, name: str) -> bool:
-        return (self._path(name) / "config.json").exists()
+        return not is_backup_name(name) and (self._path(name) / "config.json").exists()
 
     def list(self) -> list[str]:
         if not self.dir.exists():
@@ -72,7 +111,7 @@ class Registry:
         return sorted(
             p.name for p in self.dir.iterdir()
             if not p.name.startswith(".")
-            and not p.name.endswith(_BACKUP_SUFFIX)
+            and not is_backup_name(p.name)
             and (p / "config.json").exists()
         )
 
@@ -87,8 +126,16 @@ class Registry:
             return 0
         removed = 0
         with self._disk_lock:
-            for path in self.dir.iterdir():
+            for path in list(self.dir.iterdir()):
                 if not (path.name.startswith(".") and path.name.endswith(".tmp")):
+                    continue
+                replaced = _REPLACED.match(path.name)
+                if replaced and path.is_dir() and not self._path(replaced["name"]).exists():
+                    # A replace killed between its two renames (`publish`): the old bundle
+                    # goes back instead of out with the rest (audit 2026-09-30, W04).
+                    os.replace(path, self._path(replaced["name"]))
+                    logger.warning("Restored model %r from a replace that was cut short",
+                                   replaced["name"])
                     continue
                 if path.is_dir():
                     shutil.rmtree(path, ignore_errors=True)
@@ -99,14 +146,34 @@ class Registry:
                     removed += 1
         return removed
 
-    def _tmp_path(self, name: str) -> Path:
-        """Hidden staging dir for atomic writes (safe_name rejects leading dots,
-        so a real model can never collide with it)."""
-        return self.dir / f".{name}.tmp"
+    def new_staging(self, name: str) -> Path:
+        """A fresh hidden directory to write one bundle of ``name`` into -- its own, whatever
+        else is staging the same name.
+
+        One per operation (audit 2026-09-30, R01): a training and an import of one name shared
+        `.{name}.tmp`, and each removed what it found there as a crash leftover, so a failing
+        import took a training's finished bundle with it and two that overlapped published a
+        mix. A leading dot (which ``safe_name`` refuses, so no model collides) and a `.tmp`
+        end: invisible to list()/exists(), and the startup sweep's if nothing publishes it.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=f".{name}.", suffix=".tmp", dir=self.dir))
 
     def _evict(self) -> None:
         while len(self._cache) > self.max:
-            self._cache.popitem(last=False)
+            evicted, _ = self._cache.popitem(last=False)
+            self._stamps.pop(evicted, None)
+
+    def _stamp(self, name: str) -> tuple[int, int] | None:
+        """What says a bundle on disk changed: its config.json's mtime and size, or None when
+        it is gone. Every rewrite of a bundle rewrites config.json -- a publish, the label
+        repairs -- and the repairs run beside the server, which kept serving the model it had
+        cached until a restart (audit 2026-09-30, R15). One stat per get()."""
+        try:
+            stat = (self._path(name) / "config.json").stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
 
     def in_memory_count(self) -> int:
         """Number of models currently resident in the LRU cache (RAM signal)."""
@@ -132,14 +199,14 @@ class Registry:
         before staging and again under the disk lock. /train refuses existing
         names at SUBMIT time, which does not cover a model imported while the
         run waited in the queue — trusting it let a queued run destroy that
-        import. Replacing is not atomic (rmtree, then rename).
+        import. Replacing renames the old bundle aside first (see ``publish``).
 
         ``on_step`` is called with a short description before each sub-step; the
         training job routes it into progress updates so even a very slow save
         keeps emitting a liveness heartbeat.
         """
-        self.stage(name, model, metadata, on_step, overwrite=overwrite)
-        self.publish(name, model=model, overwrite=overwrite, on_step=on_step)
+        staged = self.stage(name, model, metadata, on_step, overwrite=overwrite)
+        self.publish(name, staged, model=model, overwrite=overwrite, on_step=on_step)
 
     def stage(
         self,
@@ -149,34 +216,46 @@ class Registry:
         on_step: Callable[[str], None] = lambda _msg: None,
         *,
         overwrite: bool = False,
+        into: Path | None = None,
     ) -> Path:
-        """Write the bundle into its hidden staging dir — invisible until :meth:`publish`.
+        """Write the bundle into a hidden staging dir — invisible until :meth:`publish` — and
+        return it: ``into`` (one :meth:`new_staging` made), or a new one.
 
         Separate from publishing so a training in a CHILD process can stage while the
         API process publishes under its own disk lock: a second Registry in the child
-        would bring a second lock, and bypass the one this registry serialises on.
+        would bring a second lock, and bypass the one this registry serialises on. The
+        parent makes the directory and hands it over, so it can discard it whatever
+        becomes of the child.
         """
         if not overwrite and self.exists(name):
             raise FileExistsError(name)
-        tmp = self._tmp_path(name)
+        tmp = into if into is not None else self.new_staging(name)
         # Stage the (possibly multi-minute) skops dump WITHOUT the disk lock: the
-        # tmp dir is uniquely named and invisible to readers (list()/exists() skip
-        # dot-dirs), so a concurrent read of ANOTHER model is not blocked by it.
-        # Only one training runs at a time, so no concurrent save writes this tmp.
-        if tmp.exists():
-            shutil.rmtree(tmp)  # leftover from a previous crash
+        # tmp dir is this operation's own and invisible to readers (list()/exists()
+        # skip dot-dirs), so nothing else reads or writes it meanwhile.
         _write_bundle(tmp, model, metadata, on_step)
+        try:
+            # Before anything can publish it: a bundle the loader would refuse must not
+            # become a model (audit 2026-09-30, T01).
+            check_loadable(tmp)
+        except UnsafeModelError:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        # On disk before a rename can expose it, and here rather than in publish: outside
+        # the disk lock, and in the child process that wrote it (audit 2026-09-30, R13).
+        durability.sync_tree(tmp)
         return tmp
 
     def publish(
         self,
         name: str,
+        staged: Path,
         *,
         model: ClassifierModel | None = None,
         overwrite: bool = False,
         on_step: Callable[[str], None] = lambda _msg: None,
     ) -> None:
-        """Move the staged bundle into place atomically, under the disk lock.
+        """Move the bundle staged in ``staged`` into place atomically, under the disk lock.
 
         ``model`` goes straight into the cache when this process has it; a bundle
         staged by another process is loaded on first use instead.
@@ -184,18 +263,33 @@ class Registry:
         :raises FileExistsError: if the name was taken meanwhile (and ``overwrite`` is
             off); the staged bundle is removed rather than left behind.
         """
-        tmp = self._tmp_path(name)
         with self._disk_lock:
             target = self._path(name)
+            aside: Path | None = None
             if target.exists():
                 if not overwrite:  # appeared while we staged
-                    shutil.rmtree(tmp, ignore_errors=True)
+                    shutil.rmtree(staged, ignore_errors=True)
                     raise FileExistsError(name)
-                shutil.rmtree(target)
+                # Renamed aside, not removed: rmtree-then-rename left a window with no model,
+                # and an error or a kill inside it lost the model for good -- the next start
+                # swept the staged copy too (audit 2026-09-30, W04). An error between the two
+                # renames puts the old bundle back below; a kill, `sweep_stale_tmp` at the
+                # next start.
+                aside = self.dir / f".{name}.replaced-{secrets.token_hex(4)}.tmp"
+                os.replace(target, aside)
             # Stepping again after the dumps marks them finished — otherwise a
             # stall here would be indistinguishable from one inside the last dump.
             on_step("Publishing bundle (atomic rename)")
-            os.replace(tmp, target)
+            try:
+                os.replace(staged, target)
+            except BaseException:
+                if aside is not None:
+                    os.replace(aside, target)
+                shutil.rmtree(staged, ignore_errors=True)
+                raise
+            durability.sync_dir(self.dir)  # the rename itself (R13)
+            if aside is not None:
+                shutil.rmtree(aside, ignore_errors=True)
             if model is None:
                 return
             # Publish to the cache while STILL holding _disk_lock: a concurrent
@@ -203,14 +297,40 @@ class Registry:
             # between the rename and the cache insert and leave the model cached
             # but absent on disk. (Nesting is one-directional — no path takes
             # _disk_lock while holding _lock — so there is no ordering cycle.)
+            stamp = self._stamp(name)
             with self._lock:
                 self._cache[name] = model
+                self._stamps[name] = stamp
                 self._cache.move_to_end(name)
                 self._evict()
 
-    def discard_staged(self, name: str) -> None:
+    @contextmanager
+    def importing(self, name: str) -> Iterator[None]:
+        """Hold ``name`` for one import, from before its upload until it is installed or failed.
+
+        An upload takes minutes, and nothing else could see it coming: a training of the same
+        name was accepted meanwhile, and whichever published second failed after all its work
+        (audit 2026-09-30, R01). A second import of the name is refused at once
+        (``FileExistsError``); ``/train`` asks :meth:`is_importing`. Under ``_lock`` -- a set,
+        no I/O -- so the lock order (``_disk_lock`` before ``_lock``) is untouched.
+        """
+        with self._lock:
+            if name in self._importing:
+                raise FileExistsError(name)
+            self._importing.add(name)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._importing.discard(name)
+
+    def is_importing(self, name: str) -> bool:
+        with self._lock:
+            return name in self._importing
+
+    def discard_staged(self, staged: Path) -> None:
         """Remove a staged bundle that will not be published (a stopped or killed run)."""
-        shutil.rmtree(self._tmp_path(name), ignore_errors=True)
+        shutil.rmtree(staged, ignore_errors=True)
 
     def load_fresh(self, name: str) -> tuple[ClassifierModel, dict]:
         with self._disk_lock:
@@ -219,9 +339,11 @@ class Registry:
             return _read_bundle(self._path(name))
 
     def get(self, name: str) -> ClassifierModel:
-        """Return a cached model (LRU), loading from disk on miss."""
+        """Return a cached model (LRU), loading from disk on a miss -- or when the bundle on
+        disk changed since it was cached (``_stamp``)."""
+        stamp = self._stamp(name)
         with self._lock:
-            if name in self._cache:
+            if name in self._cache and stamp is not None and self._stamps.get(name) == stamp:
                 self._cache.move_to_end(name)
                 return self._cache[name]
         # Miss path: read AND publish to the cache while holding _disk_lock, so a
@@ -231,11 +353,24 @@ class Registry:
         # weights. Nesting _lock inside _disk_lock is the documented legal order
         # (save() does the same); the reverse never happens.
         with self._disk_lock:
+            # Again, now that the disk lock is ours: loads take turns on it, and a request
+            # that waited behind the one loading this model finds it here instead of reading
+            # it once more -- eight waiting requests loaded one model eight times (audit
+            # 2026-09-30, R04).
+            stamp = self._stamp(name)  # under the lock: what is loaded is what is stamped
+            with self._lock:
+                if name in self._cache and stamp is not None and self._stamps.get(name) == stamp:
+                    self._cache.move_to_end(name)
+                    return self._cache[name]
             if not self.exists(name):
+                with self._lock:  # removed by hand: it must not keep answering from memory
+                    self._cache.pop(name, None)
+                    self._stamps.pop(name, None)
                 raise FileNotFoundError(name)
             model, _ = _read_bundle(self._path(name))
             with self._lock:
                 self._cache[name] = model
+                self._stamps[name] = stamp
                 self._cache.move_to_end(name)
                 self._evict()
         return model
@@ -289,7 +424,10 @@ class Registry:
         the newest would throw away exactly the comparison this exists for.
         """
         def edit(metadata: dict) -> None:
-            metadata.setdefault("evaluations", []).append(record)
+            evaluations = metadata.setdefault("evaluations", [])
+            evaluations.append(record)
+            # The newest MAX_EVALUATIONS (R15): every one ever made grew the bundle without end.
+            del evaluations[:-MAX_EVALUATIONS]
 
         self._edit_metadata(name, edit)
 
@@ -309,7 +447,9 @@ class Registry:
             edit(metadata)
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            durability.sync_file(tmp)  # R13: never an empty metrics.json after a power cut
             os.replace(tmp, path)
+            durability.sync_dir(path.parent)
 
     def delete(self, name: str) -> None:
         # Pop the cache INSIDE the disk-lock section, AFTER the rmtree: popping
@@ -320,7 +460,18 @@ class Registry:
         with self._disk_lock:
             if not self.exists(name):
                 raise FileNotFoundError(name)
-            shutil.rmtree(self._path(name))
+            # A rename first, which frees the name in one step, then the removal. As one
+            # rmtree, a delete cut short -- a file another process holds, an I/O error -- left
+            # part of the bundle under the name: no model, but in the way of the next import
+            # (audit 2026-09-30, R11). Hidden and ending in .tmp, a leftover is the startup
+            # sweep's to remove.
+            doomed = self.dir / f".{name}.deleted-{secrets.token_hex(4)}.tmp"
+            os.replace(self._path(name), doomed)
+            try:
+                shutil.rmtree(doomed)
+            except OSError as exc:
+                logger.warning("Deleted model %r, but could not remove all of it yet (%s); "
+                               "the next start does.", name, exc)
             with self._lock:
                 # Every spelling, not just this one: on a case-insensitive
                 # filesystem get("M") loads the bundle "m" and caches it under
@@ -330,27 +481,28 @@ class Registry:
                 key = name.casefold()
                 for cached in [k for k in self._cache if k.casefold() == key]:
                     del self._cache[cached]
+                    self._stamps.pop(cached, None)
 
-    def stage_export(self, name: str) -> Path:
-        """Pack the bundle into a staging file beside the bundles and return its path.
+    def stage_export(self, name: str) -> tuple[Path, Callable[[], None]]:
+        """The bundle's archive in a staging file beside the bundles, and its release.
 
         Here rather than in the route (audit ARC-1) because *where* the staging file goes
         is this class's business: on a container ``/tmp`` is often tmpfs, i.e. RAM, which
         would give back exactly what streaming to a file removes — and the hidden
         ``.*.tmp`` name is the one ``sweep`` already cleans, so a download that dies
-        mid-flight leaks nothing permanently. The caller owns deleting it once sent.
+        mid-flight leaks nothing permanently.
+
+        Downloads of one bundle state share one file (``staged_archives``; each used to pack
+        its own, audit 2026-09-30 S02). The caller calls the release once the body is sent;
+        the last one deletes the file. Raises ``FileNotFoundError`` for an unknown name.
         """
-        self.dir.mkdir(parents=True, exist_ok=True)
-        handle, staged = tempfile.mkstemp(prefix=".export-", suffix=".zip.tmp", dir=self.dir)
-        os.close(handle)
-        path = Path(staged)
-        try:
-            with path.open("wb") as stream:
-                self.export_to(name, stream)
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
-        return path
+        with self._disk_lock:
+            sources = self._packable(name)
+            # What the archive is packed from, down to each member's size and mtime: after an
+            # `update_info` or a re-publish, a download gets a fresh archive, not the old one.
+            state = (name, tuple((member, stat.st_size, stat.st_mtime_ns)
+                                 for member, stat in ((m, p.stat()) for m, p in sources.items())))
+            return self._staged.acquire(state, lambda stream: model_archive.pack_into(stream, name, sources))
 
     def export_to(self, name: str, target: BinaryIO) -> None:
         """Write the bundle's archive into ``target`` (card + manifest added by ``model_archive``).
@@ -369,16 +521,19 @@ class Registry:
         alternative, holding open handles outside the lock, would make ``delete``
         fail outright on Windows.
         """
-        packable = model_archive.ALLOWED_MEMBERS - {MANIFEST_FILE, CARD_FILE}
         with self._disk_lock:
-            if not self.exists(name):
-                raise FileNotFoundError(name)
-            sources = {
-                file.name: file
-                for file in sorted(self._path(name).iterdir())
-                if file.is_file() and file.name in packable
-            }
-            model_archive.pack_into(target, name, sources)
+            model_archive.pack_into(target, name, self._packable(name))
+
+    def _packable(self, name: str) -> dict[str, Path]:
+        """The members an export packs, by name. The caller holds ``_disk_lock``."""
+        if not self.exists(name):
+            raise FileNotFoundError(name)
+        packable = model_archive.ALLOWED_MEMBERS - {MANIFEST_FILE, CARD_FILE}
+        return {
+            file.name: file
+            for file in sorted(self._path(name).iterdir())
+            if file.is_file() and file.name in packable
+        }
 
     def import_zip(self, name: str, data: bytes) -> dict:
         """Install a model from archive bytes already in memory.
@@ -406,15 +561,13 @@ class Registry:
         # Under the disk lock so a concurrent load/save/delete can never observe
         # the tmp dir or the exists()->replace window mid-flight.
         with self._disk_lock:
-            tmp = self._tmp_path(name)
-            if tmp.exists():
-                shutil.rmtree(tmp)
-            tmp.mkdir(parents=True)
+            tmp = self.new_staging(name)
             try:
                 # Writes the members straight into the staging dir, one at a time, and
                 # removes them all again if any check fails.
                 model_archive.unpack_into(archive_path, tmp)
                 _read_bundle(tmp)  # validates config + skops safety; raises if unsafe
+                durability.sync_tree(tmp)  # on disk before the rename exposes it (R13)
             except Exception as exc:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if isinstance(exc, KeyError):
@@ -432,6 +585,7 @@ class Registry:
                     # Lost a same-name import race; report it as the usual conflict.
                     raise FileExistsError(name) from None
                 raise
+            durability.sync_dir(self.dir)
         return self.info(name)  # outside the disk lock: info() re-acquires it sequentially
 
 

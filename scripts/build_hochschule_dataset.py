@@ -21,11 +21,15 @@ import argparse
 import csv
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
 csv.field_size_limit(10_000_000)
 _DATA = Path(__file__).resolve().parent.parent / "data"
+sys.path.insert(0, str(_DATA.parent))
+
+from app.label_names import pair_names  # noqa: E402
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--jsonl", default=str(_DATA / "staging_hochschule_raw.jsonl"),
@@ -91,6 +95,31 @@ def uni_labels(*cells: object) -> list[str]:
     return out
 
 
+def _values(cell: object, separator: str) -> list[str]:
+    """A multi-value field as its items: edu-sharing gives a list, the CSV export a string."""
+    if isinstance(cell, list):
+        return [str(v).strip() for v in cell if str(v).strip()]
+    return [part.strip() for part in str(cell or "").split(separator) if part.strip()]
+
+
+def kept_names(kept: list[str], *fields: tuple[object, object]) -> str:
+    """Display names for exactly the URIs kept, in their order.
+
+    Each source field's URIs are paired with that field's own names -- `pair_names`, which
+    pairs only what provably lines up -- and the kept URIs are then looked up. The name column
+    used to be copied whole: it still held the names of the URIs the vocabulary filter had
+    dropped, or another field's names, and whenever the counts happened to line up every kept
+    subject got its neighbour's name (audit 2026-09-30, W06). Empty unless every kept URI has
+    a name, since a partial list shifts just the same.
+    """
+    names: dict[str, str] = {}
+    for uris, shown in fields:
+        separator = "|" if isinstance(uris, str) and "|" in uris else ","
+        for uri, name in pair_names(_values(uris, separator), _values(shown, separator)):
+            names.setdefault(uri, name)
+    return ", ".join(names[uri] for uri in kept) if all(uri in names for uri in kept) else ""
+
+
 # --- 1..2 staging ---------------------------------------------------------------------
 staging: list[dict] = []
 stats: Counter[str] = Counter()
@@ -109,8 +138,10 @@ with open(JSONL, encoding="utf-8") as handle:
         if not labels:
             stats["dropped: no higher-ed subject"] += 1
             continue
-        names = joined(props.get("ccm:oeh_taxonid_university_DISPLAYNAME")) or joined(
-            props.get("ccm:taxonid_DISPLAYNAME"))
+        names = kept_names(
+            labels,
+            (props.get("ccm:oeh_taxonid_university"), props.get("ccm:oeh_taxonid_university_DISPLAYNAME")),
+            (props.get("ccm:taxonid"), props.get("ccm:taxonid_DISPLAYNAME")))
         staging.append({
             TITLE: first(props.get("cclom:title")),
             DESC: first(props.get("cclom:general_description")),
@@ -139,7 +170,10 @@ with open(EXPORT, encoding="utf-8", newline="") as handle:
             DESC: row.get(DESC) or "",
             KEYWORDS: row.get(KEYWORDS) or "",
             LABELS: ", ".join(labels),
-            LABEL_NAMES: row.get(LABEL_NAMES) or "",
+            LABEL_NAMES: kept_names(
+                labels, (row.get(LABELS), row.get(LABEL_NAMES)),
+                (row.get("properties.ccm:oeh_taxonid_university"),
+                 row.get("properties.ccm:oeh_taxonid_university_DISPLAYNAME"))),
             WWWURL: row.get(WWWURL) or "",
             SOURCE: row.get(SOURCE) or "",
             ORIGIN: "export300k",

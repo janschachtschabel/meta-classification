@@ -1,3 +1,9 @@
+{{- /* Audit 2026-09-30, B11: the comment below said "exactly one replica" and nothing held
+       it -- replicaCount=3 rendered three pods, each with its own training job, model cache,
+       rate limiter and share links. 0 stays possible: scaling down for maintenance. */}}
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail (printf "replicaCount is %v: this app keeps its training job, model cache, rate limiter and share links in one process, so a second replica is a second, inconsistent app (a share link made in one is unknown to the others). Use 1 -- or 0 to scale down -- and scale with CPU and memory instead." .Values.replicaCount) }}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -13,9 +19,15 @@ spec:
   template:
     metadata:
       labels: {{ include "classification-api.labels" . | nindent 8 }}
+      {{- /*
+        No checksum of the key Secret here (audit 2026-09-30, S12): a pod annotation is
+        readable by anyone allowed to read pods, the rest of that manifest is public, and a
+        weak key could be confirmed offline against its hash. New keys reach the pod with a
+        restart: `kubectl rollout restart statefulset/<release>`, or a changed podAnnotations
+        value in the same upgrade.
+      */}}
       annotations:
         checksum/configmap-env: {{ include (print .Template.BasePath "/configmap-env.yaml") . | sha256sum | trunc 63 }}
-        checksum/secret-env: {{ include (print .Template.BasePath "/secret-env.yaml") . | sha256sum | trunc 63 }}
         {{- if not .Values.global.metrics.servicemonitor.enabled }}
         prometheus.io/scrape: "false"
         {{- end }}
@@ -107,9 +119,9 @@ spec:
       - name: tmp
         # sizeLimit, not an unbounded emptyDir: this is NODE ephemeral storage, so an
         # upload that outgrows it would evict neighbours on the same node rather than
-        # fail this pod. The app refuses a declared body over APIV3_MAX_UPLOAD_MB before
-        # reading it, so the headroom here only has to cover concurrent uploads that are
-        # each within the cap.
+        # fail this pod. The app reads no body before its API key checks out, and stops one
+        # at APIV3_MAX_UPLOAD_MB as it arrives (chunked too), so the headroom here only has
+        # to cover concurrent uploads that are each within the cap.
         emptyDir:
           sizeLimit: {{ .Values.tmpSizeLimit | quote }}
       {{- if not .Values.persistence.enabled }}

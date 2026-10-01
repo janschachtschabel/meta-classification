@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..classifier import ClassifierModel, Prediction
+from ..dataset_load import combine_text_columns
 from ..explain import explain_prediction
 from ..limiter import limiter, predict_limit
 from ..schemas import ExplainRequest, MultiPredictRequest, PredictRequest
 from ..security import require_role
-from ._bundles import load_model
+from ._bundles import load_model, text_columns_for
 
 router = APIRouter(tags=["Prediction"])
 
@@ -36,6 +38,28 @@ def _pred_dict(p: Prediction) -> dict:
     return d
 
 
+def _texts_for(model_name: str, body: PredictRequest | MultiPredictRequest) -> list[str]:
+    """What to classify: the texts as sent, or each record assembled the way the model's
+    training text was -- its text columns, each repeated by its weight. Before, every client
+    had to rebuild that itself, or classified a different text than the model was fit on
+    (audit 2026-09-30, improvement 1)."""
+    if body.records is None:
+        assert body.texts is not None  # the request validates exactly one of the two
+        return body.texts
+    try:
+        columns, weights = text_columns_for(model_name, None)
+    except HTTPException as exc:
+        raise HTTPException(400, f"Model '{model_name}' does not record which fields it was "
+                                 "trained on; send `texts` instead.") from exc
+    for at, record in enumerate(body.records):
+        # An empty text gets the model's base-rate answer, which reads like a classification.
+        if not any(column in record for column in columns):
+            raise HTTPException(400, f"Record {at} carries none of the fields model "
+                                     f"'{model_name}' was trained on: {', '.join(columns)}.")
+    frame = pd.DataFrame(body.records, columns=columns).fillna("")
+    return combine_text_columns(frame, columns, weights).tolist()
+
+
 def _applied_settings(model: ClassifierModel, body: PredictRequest | MultiPredictRequest) -> dict:
     # Report what was actually APPLIED, per model. The rule is the model's — how a task
     # type decides, and therefore what ranking size that amounts to — and asking it here
@@ -50,14 +74,15 @@ def _applied_settings(model: ClassifierModel, body: PredictRequest | MultiPredic
 
 
 def _build_response(model: ClassifierModel, body: PredictRequest, top_k: int | None) -> dict:
+    texts = _texts_for(body.model_name, body)
     predictions = model.predict(
-        body.texts, top_k=top_k, threshold=body.threshold, label_filter=body.label_filter,
+        texts, top_k=top_k, threshold=body.threshold, label_filter=body.label_filter,
         include_baseline_diff=body.include_baseline_diff,
         include_label_f1=body.include_label_f1,
     )
     results = [
         {"text": _truncate(text), "predictions": [_pred_dict(p) for p in row]}
-        for text, row in zip(body.texts, predictions, strict=False)
+        for text, row in zip(texts, predictions, strict=False)
     ]
     return {
         "model_name": body.model_name,
@@ -73,14 +98,17 @@ def _load_and_build_multi(body: MultiPredictRequest) -> dict:
 
 
 def _build_multi_response(models: dict[str, ClassifierModel], body: MultiPredictRequest) -> dict:
+    # Per model: from records, each assembles its own text from its own columns and weights.
+    texts = {name: _texts_for(name, body) for name in models}
     per_model = {
         name: model.predict(
-            body.texts, top_k=body.top_k, threshold=body.threshold, label_filter=body.label_filter,
+            texts[name], top_k=body.top_k, threshold=body.threshold, label_filter=body.label_filter,
             include_baseline_diff=body.include_baseline_diff,
             include_label_f1=body.include_label_f1,
         )
         for name, model in models.items()
     }
+    shown = texts[next(iter(models))]  # the echo: the first model's text
     results = [
         {
             "text": _truncate(text),
@@ -88,7 +116,7 @@ def _build_multi_response(models: dict[str, ClassifierModel], body: MultiPredict
                 name: [_pred_dict(p) for p in rows[i]] for name, rows in per_model.items()
             },
         }
-        for i, text in enumerate(body.texts)
+        for i, text in enumerate(shown)
     ]
     return {
         "model_names": list(models),

@@ -56,6 +56,10 @@
         <button class="tab" data-tab="datasets" id="tab-btn-datasets" role="tab" aria-controls="tab-datasets" aria-selected="false" tabindex="-1" data-i18n="shell.tab.datasets"></button>
       </nav>
       <button id="train-chip" class="chip" hidden data-i18n-title="shell.trainChip"></button>
+      <!-- The chip's spoken counterpart: a run's transitions, heard from every tab. Inside the
+           Training panel it was hidden, and so not in the accessibility tree, whenever another
+           tab was shown (audit 2026-09-30, U09). -->
+      <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
       <span id="auth-off-badge" class="muted" hidden data-i18n="shell.authDisabled"></span>
       <label class="lang-switch">
         <span class="visually-hidden" data-i18n="shell.language"></span>
@@ -113,6 +117,8 @@
             <div class="opts">
               <label for="query-topk" data-i18n-html="query.topk.label"></label>
               <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
+              <label for="query-threshold" data-i18n-html="query.threshold.label"></label>
+              <input id="query-threshold" type="number" min="0" max="1" step="0.05" inputmode="decimal">
               <div id="query-signals">
                 <label class="check"><input id="query-diff" type="checkbox" checked>
                   <span data-i18n-html="query.diff.label"></span></label>
@@ -140,19 +146,24 @@
       <section id="tab-training" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-training" tabindex="0" hidden>
         <h2 data-i18n="train.heading"></h2>
         <div class="card" id="train-status-card">
-          <h3 data-i18n="train.status.heading"></h3>
+          <h3 id="train-status-heading" tabindex="-1" data-i18n="train.status.heading"></h3>
           <!-- Shown after three failed polls. The card keeps its last state on purpose —
                one dropped tick should not blank a running job — but without this it kept
                that state forever, and a dead backend read exactly like a live run. -->
           <p id="train-stale" class="error" role="alert" hidden
              data-i18n="trainStatus.connectionLost"></p>
-          <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
-               NOT be a live region — SRs would re-announce it continuously. Phase
-               transitions are announced via the dedicated SR-only element below. -->
+          <!-- Changes every poll tick (elapsed/ETA count up), so it must NOT be a live region
+               — SRs would re-announce it continuously; transitions are announced by
+               #train-announce in the top bar. Updated in place, never rebuilt: rebuilding took
+               the focus off Stop and any text selection with it (renderTrainStatus). -->
           <div id="train-status" class="train-status">
-            <p class="muted" data-i18n="train.status.loading"></p>
+            <p class="muted" id="train-status-loading" data-i18n="train.status.loading"></p>
+            <div class="progress" id="train-progress" role="progressbar" aria-valuemin="0"
+                 aria-valuemax="100" data-i18n-aria-label="trainStatus.progressLabel" hidden><span></span></div>
+            <dl id="train-status-rows"></dl>
+            <div id="train-status-notes"></div>
+            <button type="button" class="small danger" id="train-stop" data-i18n="trainStatus.stop" hidden></button>
           </div>
-          <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
           <p id="train-queue" class="muted" aria-live="polite" hidden></p>
         </div>
         <form id="train-form" class="card" novalidate>
@@ -266,6 +277,12 @@
           <button type="submit" id="train-btn" data-i18n="train.submit"></button>
         </form>
         <details class="help" data-i18n-html="train.help"></details>
+        <!-- Last: the runs that finished, for looking back -- below the form an editor comes
+             to the tab to use. -->
+        <div class="card" id="train-history-card">
+          <h3 data-i18n="trainHistory.heading"></h3>
+          <div id="train-history"><p class="muted" data-i18n="common.loading"></p></div>
+        </div>
       </section>
 
       <!-- ---- Models ---- -->
@@ -315,7 +332,7 @@
        the sentence explaining why nothing happened. Neither is `hidden`: a live region
        that is display:none when written is not reliably announced at all. -->
   <div id="toast" class="toast-stack" role="status" aria-live="polite"></div>
-  <div id="toast-alert" class="toast-stack" role="alert" aria-live="assertive"></div>
+  <div id="toast-alert" class="toast-stack toast-alert" role="alert" aria-live="assertive"></div>
 </div>
 
 <!-- The string maps come first: every module below may call t() while it loads,
@@ -325,6 +342,7 @@
 <script src="strings-en.js"></script>
 <script src="i18n.js"></script>
 <script src="api.js"></script>
+<script src="toasts.js"></script>
 <script src="pills.js"></script>
 <script src="query.js"></script>
 <script src="explain.js"></script>
@@ -336,7 +354,9 @@
 <script src="datasets.js"></script>
 <script src="dataset-detail.js"></script>
 <script src="train-status.js"></script>
+<script src="train-history.js"></script>
 <script src="training.js"></script>
+<script src="preflight.js"></script>
 <script src="app.js"></script>
 <dialog id="model-detail" aria-labelledby="model-detail-title"></dialog>
 <dialog id="dataset-detail" aria-labelledby="dataset-detail-title"></dialog>

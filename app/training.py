@@ -22,8 +22,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from .classifier import ClassifierModel
+from .data import CLEANING_VERSION
 from .deploy import Fitted, fit_evaluate_deploy
-from .errors import TrainingInputError
+from .errors import TrainingInputError, UnsafeModelError
 from .memory import MiB, PeakSampler, held_bytes
 from .prepare import Prepared, prepare_data
 from .profiles import Profile, TrainingConfig
@@ -93,6 +94,9 @@ def _build_metadata(
         "created_at": datetime.now(UTC).isoformat(),
         "evaluation": evaluation,
         "dataset": req["dataset_name"],
+        # How its bytes were read: an encoding decided wrongly is invisible in the metrics
+        # (training and test see the same text), so the bundle says what it was.
+        "csv_encoding": prep.csv_encoding.describe(),
         "text_columns": req["text_columns"],
         # Anchored in the bundle: the model was fit on text where these fields are
         # repeated, so a caller who wants matching behaviour has to know about it.
@@ -136,6 +140,13 @@ def _build_metadata(
             uri: int(count)
             for uri, count in zip(prep.classes, prep.y_all.sum(axis=0), strict=True)
         },
+        # Labels the dataset had enough rows of that were NOT trained: too few rows lack them
+        # to learn anything from (prepare). Omitted when there are none.
+        **({"ubiquitous_labels": list(prep.ubiquitous_labels)} if prep.ubiquitous_labels else {}),
+        # Copies of a text dropped although their labels differed: the first row's labels
+        # were trained, the others' were not (T10). Omitted when there were none.
+        **({"conflicting_duplicates": prep.conflicting_duplicates}
+           if prep.conflicting_duplicates else {}),
         "metrics": fitted.metrics,
         "training_time_seconds": round(elapsed, 1),
         # What the run needed, so the next run of this size can be sized before it
@@ -177,7 +188,9 @@ def run_training(
             f"Model '{req['model_name']}' already exists — it was created while this training "
             "was queued. Delete it or train under another name."
         )
-    start = time.time()
+    # Monotonic: a difference of wall-clock readings went negative when the clock was set back
+    # during the run (audit 2026-09-30, R15). Timestamps stay wall-clock (datetime.now).
+    start = time.monotonic()
     # Most specific wins: request > profile > config. The profile carries the mode that
     # suits its size class, but an explicit request value still overrides it.
     req_cv = req.get("cv_folds")
@@ -215,8 +228,9 @@ def run_training(
             # publishes THIS object straight into the LRU cache, so a freshly trained
             # model would otherwise serve without label_f1 until it is evicted.
             per_label_f1=dict(fitted.metrics.get("per_label_f1", {})),
+            text_cleaning=CLEANING_VERSION,
         )
-        elapsed = time.time() - start
+        elapsed = time.monotonic() - start
         metadata = _build_metadata(
             req, settings, profile, prep, fitted, elapsed, cv_folds=cv_folds,
             resources={
@@ -227,8 +241,17 @@ def run_training(
         )
         # Bundle sub-steps feed the job heartbeat: a big skops dump can crawl for
         # many minutes under memory pressure, and phase/progress stay frozen then.
-        registry.save(req["model_name"], model, metadata,
-                      on_step=lambda detail: report(phase_detail=detail))
+        try:
+            registry.save(req["model_name"], model, metadata,
+                          on_step=lambda detail: report(phase_detail=detail))
+        except UnsafeModelError as exc:
+            # The staged bundle failed the load check (Registry.stage). Said as it is:
+            # the message names a file and a type, and "see server logs" would leave the
+            # operator with a run that failed for no visible reason.
+            raise TrainingInputError(
+                f"The trained model could not be saved in a form this server loads ({exc}); "
+                "nothing was published."
+            ) from exc
     logger.info("Training done: %s f1_macro=%.4f in %.1fs",
                 req["model_name"], fitted.metrics["f1_macro"], elapsed)
 

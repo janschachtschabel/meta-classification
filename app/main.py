@@ -16,10 +16,22 @@ from slowapi.errors import RateLimitExceeded
 from . import __version__, correlation, middleware
 from .correlation import RequestIdFilter
 from .docs_content import DESCRIPTION, FAVICON_SVG, SWAGGER_HTML, TAGS_METADATA
+from .errors import ShareStoreWriteError
 from .lifecycle import lifespan
 from .limiter import limiter
 from .log_filters import RedactShareTokens
-from .routes import datasets, feedback, metadata, models, predict, predict_bulk, share, system, training
+from .routes import (
+    datasets,
+    feedback,
+    label_names,
+    metadata,
+    models,
+    predict,
+    predict_bulk,
+    share,
+    system,
+    training,
+)
 from .settings import get_settings
 
 # Boot-time, but deliberately NOT in `lifecycle`: this has to run at import, before anything
@@ -51,12 +63,12 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     """
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     request_id = correlation.of_request(request)
-    # The header is set here rather than by the middleware because this response never
-    # passes through it: ServerErrorMiddleware is outside the whole stack.
+    # The headers are set here rather than by the middleware because this response never
+    # passes through it: ServerErrorMiddleware is outside the whole stack (audit R05).
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error.", "request_id": request_id},
-        headers={"X-Request-ID": request_id},
+        headers={"X-Request-ID": request_id, **middleware.hardening_headers(request.url.path)},
     )
 
 
@@ -92,8 +104,13 @@ async def _validation_error_handler(
     client code written against any other 4xx — ``body["detail"].startswith(...)`` — raises
     on exactly the status a client hits most while integrating (audit API-7). The per-field
     information is what a form needs, so it is kept under ``errors`` rather than dropped.
+
+    Without the ``input`` each error carries: echoed, a text over the cap came back whole
+    (10.4 MB in, 10.4 MB out), and a value pydantic refuses because no response can carry
+    it -- a lone surrogate has no UTF-8 form, and the JSON encoder refuses NaN -- turned
+    the 422 into a 500 (audit 2026-09-30, V05). Field, rule and message say what to fix.
     """
-    errors = exc.errors()
+    errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
     where = ".".join(str(part) for part in errors[0].get("loc", ())) if errors else "request"
     first = errors[0].get("msg", "invalid") if errors else "invalid"
     detail = f"Validation error at {where}: {first}"
@@ -101,10 +118,17 @@ async def _validation_error_handler(
         detail += f" (and {len(errors) - 1} more)"
     return JSONResponse(
         status_code=422,
-        # jsonable_encoder: an error's `input`/`ctx` can hold whatever the caller sent,
-        # including values json.dumps refuses (bytes, a ValueError from a validator).
+        # jsonable_encoder: an error's `ctx` can hold values json.dumps refuses (the
+        # ValueError a validator raised).
         content={"detail": detail, "errors": jsonable_encoder(errors)},
     )
+
+
+async def _share_store_write_handler(request: Request, exc: ShareStoreWriteError) -> JSONResponse:
+    """503 for a link change the store could not write: the request was valid, nothing was
+    changed, and retrying once the volume has room is the right move -- which a sanitized
+    500 says to nobody (audit 2026-09-30, S05). Five routes change links; one mapping."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 def create_app() -> FastAPI:
@@ -126,6 +150,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(ShareStoreWriteError, _share_store_write_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, _unhandled_exception_handler)
     middleware.install(app, settings)
 
@@ -139,6 +164,9 @@ def create_app() -> FastAPI:
             allow_credentials="*" not in origins,
             allow_methods=["*"],
             allow_headers=["*"],
+            # How many rows a /predict/csv answer must cover: a page on another origin
+            # cannot tell a stream cut short from a finished one without it.
+            expose_headers=["X-Input-Rows"],
         )
 
     # Self-hosted API docs (replaces the disabled CDN-backed /docs).
@@ -171,6 +199,7 @@ def create_app() -> FastAPI:
     app.include_router(models.router)
     app.include_router(share.router)
     app.include_router(datasets.router)
+    app.include_router(label_names.router)
     app.include_router(feedback.router)
 
     if settings.ui_enabled:

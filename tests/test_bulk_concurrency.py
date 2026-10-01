@@ -104,12 +104,12 @@ def client(monkeypatch, tmp_path):
     (tmp_path / "models").mkdir()
     get_settings.cache_clear()
     get_registry.cache_clear()
-    concurrency.reset_csv_slots()
+    concurrency.reset_slots()
     with TestClient(create_app()) as test_client:
         yield test_client
     get_settings.cache_clear()
     get_registry.cache_clear()
-    concurrency.reset_csv_slots()
+    concurrency.reset_slots()
 
 
 def test_the_limit_comes_from_the_setting(client):

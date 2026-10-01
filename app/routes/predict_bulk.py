@@ -21,14 +21,14 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
 from .. import predict_csv as predict_csv_mod
-from ..bundle_meta import as_mapping, as_names
 from ..concurrency import csv_slots
 from ..errors import TrainingInputError
 from ..limiter import limiter, predict_limit
-from ..registry import get_registry
+from ..schemas.common import separator_problem
+from ..schemas.serving import Threshold, TopK
 from ..security import require_role, spool_upload_capped
 from ..settings import Settings, get_settings
-from ._bundles import load_model
+from ._bundles import load_model, text_columns_for
 
 router = APIRouter(tags=["Prediction"])
 
@@ -44,24 +44,6 @@ def _download_name(upload_name: str | None, model_name: str) -> str:
     return f"{stem or model_name}-predictions.csv"
 
 
-def _text_columns_for(model_name: str, requested: list[str] | None) -> tuple[list[str], dict]:
-    """Which columns to read, and how often each is repeated — from the bundle.
-
-    How a text is assembled is part of what the model was fit on, so the columns and
-    their weights are read from the bundle rather than asked of the caller. An explicit
-    ``text_columns`` overrides the names (a newer export may call them something else);
-    the weights then narrow to those columns, exactly as a training request narrows them.
-    """
-    metadata = as_mapping(get_registry().info(model_name).get("metadata"))
-    columns = requested or as_names(metadata.get("text_columns"))
-    if not columns:
-        raise HTTPException(
-            400, "This bundle does not record which text columns it was trained on; "
-                 "pass text_columns explicitly.")
-    weights = as_mapping(metadata.get("text_column_weights"))
-    return columns, {col: weight for col, weight in weights.items() if col in columns}
-
-
 @router.post("/predict/csv", summary="Classify every row of a CSV (upload → CSV download)")
 @limiter.limit(predict_limit)
 async def predict_csv(
@@ -75,15 +57,16 @@ async def predict_csv(
             "weights then apply to the names that match. Omitted = the columns the model was trained on."
         ),
     ),
-    separator: str = Form(";", description="The CSV's field delimiter: exactly one character (else 400)."),
-    threshold: float | None = Form(
+    separator: str = Form(
+        ";", description="The CSV's field delimiter: exactly one character, not a line break (else 400)."),
+    threshold: Threshold | None = Form(
         None,
         description=(
             "One confidence cut for every label, replacing the model's tuned per-label thresholds. "
             "Multilabel only: binary/multiclass decide by argmax. Omitted = the tuned ones."
         ),
     ),
-    top_k: int | None = Form(
+    top_k: TopK | None = Form(
         None,
         description=(
             "Ranking mode: exactly the N most probable labels per row, regardless of thresholds "
@@ -108,16 +91,19 @@ async def predict_csv(
     readable off the result.
 
     Nothing is materialised on either side: the CSV is read in chunks and the answer
-    leaves as it is produced. Size limit and rate limit as for the other uploads.
+    leaves as it is produced. Before the first byte, the whole file is parsed once — a
+    broken row is a 400 naming it, not an answer silently cut short — and the response
+    header `X-Input-Rows` says how many input rows the answer covers (its highest `row`
+    + 1), so a client can tell a complete answer from a dropped connection. Size limit and
+    rate limit as for the other uploads.
     **Auth:** readonly.
     """
-    if len(separator) != 1:
-        # pandas treats a multi-char sep as a regex (python engine) -> ReDoS, and this
-        # route is reachable with a readonly key on a single worker. Same guard, same
-        # reason as GET /datasets/{name}.
-        raise HTTPException(400, "separator must be a single character.")
+    if problem := separator_problem(separator):
+        # Reachable with a readonly key on a single worker: the same guard, for the same
+        # reasons, as GET /datasets/{name} and every request model's csv_separator.
+        raise HTTPException(400, problem)
     model = await asyncio.to_thread(load_model, model_name)
-    columns, weights = _text_columns_for(model_name, text_columns)
+    columns, weights = text_columns_for(model_name, text_columns)
 
     # Spooled to our own file rather than read from the upload's own handle: the
     # response body is produced AFTER this function returns, and the request's
@@ -130,7 +116,7 @@ async def predict_csv(
         await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, path)
         # Before a byte is streamed: once the response starts, the status line is
         # already 200 and a bad header could only arrive as garbage in the body.
-        await asyncio.to_thread(predict_csv_mod.check_columns, path, columns, separator=separator)
+        checked = await asyncio.to_thread(predict_csv_mod.check_input, path, columns, separator=separator)
     except TrainingInputError as exc:
         path.unlink(missing_ok=True)
         raise HTTPException(400, str(exc)) from exc
@@ -155,7 +141,7 @@ async def predict_csv(
         try:
             yield from predict_csv_mod.classify_csv(
                 path, model, text_columns=columns, weights=weights,
-                separator=separator, threshold=threshold, top_k=top_k,
+                separator=separator, threshold=threshold, top_k=top_k, encoding=checked.encoding,
             )
         finally:
             slots.release()
@@ -164,6 +150,9 @@ async def predict_csv(
         released_stream(),
         media_type="text/csv",
         headers={"Content-Disposition":
-                 f'attachment; filename="{_download_name(file.filename, model_name)}"'},
+                 f'attachment; filename="{_download_name(file.filename, model_name)}"',
+                 # What the answer must account for: its highest `row` + 1. A stream cut
+                 # short ends like a finished one, so this is how a client can tell.
+                 "X-Input-Rows": str(checked.rows)},
         background=BackgroundTask(path.unlink, missing_ok=True),
     )

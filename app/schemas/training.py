@@ -7,7 +7,15 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
-from .common import CSV_SEPARATOR, DATASET_NAME, LABEL_COLUMN, LABEL_FILTER, LABEL_SEPARATOR, OptionalFilter
+from .common import (
+    CSV_SEPARATOR,
+    DATASET_NAME,
+    LABEL_COLUMN,
+    LABEL_FILTER,
+    LABEL_SEPARATOR,
+    CsvSeparator,
+    OptionalFilter,
+)
 
 
 class ModelInfo(BaseModel):
@@ -125,6 +133,8 @@ class TrainRequest(BaseModel):
             "rarer labels are dropped. Declared (not auto-scaled) because dropping labels is a "
             "decision worth seeing: 20 suits datasets of a few thousand rows and up, but a small "
             "dataset needs a lower value or training aborts with 'not enough data'. "
+            "Omitted = the server's default (`default_min_samples_per_label` in "
+            "`GET /train/profiles`: config.yaml's value, else 20). "
             "null = auto (scales with dataset size: 2 / 5 / 20 / 35)."
         ),
     )
@@ -192,10 +202,8 @@ class TrainRequest(BaseModel):
             "(`use_char: false`, e.g. `fast`)."
         ),
     )
-    # Exactly one character: pandas parses a multi-char sep as a REGEX (python
-    # engine) — a crafted one can backtrack catastrophically (ReDoS), and in
-    # /train it would hang the training thread outside any stop checkpoint.
-    csv_separator: str = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
+    # One character, not a line break: see common.separator_problem.
+    csv_separator: CsvSeparator = Field(";", min_length=1, max_length=1, description=CSV_SEPARATOR)
     label_separator: str = Field(",", min_length=1, description=LABEL_SEPARATOR)
     info: ModelInfo | None = Field(
         None,

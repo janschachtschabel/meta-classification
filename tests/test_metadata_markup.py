@@ -172,9 +172,17 @@ def test_a_style_body_does_not_reach_the_output():
     assert "color" not in result.description
 
 
-def test_an_unclosed_script_tag_removes_the_rest_rather_than_hanging():
-    """A page truncated mid-script must not leave the opening tag's text behind."""
-    assert clean_text("<h1>Titel</h1><script>var x = 1;") == "Titel"
+def test_an_unclosed_script_tag_loses_only_its_tag():
+    """This test used to pin the opposite: an unclosed `<script>` took the rest of the text
+    with it, so that a page truncated mid-script left no code behind. But a text ABOUT HTML
+    says `<script>` in its prose, and lost everything after the word -- description and
+    keywords came from what was left (audit 2026-09-30, M05). A body goes only with its
+    closing tag now; a truncated page keeps a line of code, which the sentence filters see.
+    Not hanging is pinned by `test_script_removal_does_not_backtrack`."""
+    cleaned = clean_text("<h1>Titel</h1><script>var x = 1;")
+
+    assert cleaned.startswith("Titel")
+    assert "<script>" not in cleaned
 
 
 def test_a_closed_atx_heading_loses_both_marker_runs():
@@ -194,8 +202,9 @@ def test_a_prose_mention_of_a_tag_is_not_treated_as_one():
     """
     cleaned = clean_text("Ein &lt;script&gt;-Tag im Quelltext ist ein Sicherheitsrisiko.")
 
-    assert "Sicherheitsrisiko" in cleaned
-    assert "<script>" not in cleaned
+    # The sentence as its author wrote it: `&lt;script&gt;` MEANS the characters `<script>`.
+    # (It used to assert `<script>` was absent -- an artifact of decoding before the tags went.)
+    assert cleaned == "Ein <script>-Tag im Quelltext ist ein Sicherheitsrisiko."
 
 
 def test_script_removal_does_not_backtrack():
@@ -320,3 +329,64 @@ def test_a_heading_inside_a_header_element_still_counts():
             "<p>Brüche begegnen uns im Alltag häufig: beim Teilen einer Pizza.</p>")
 
     assert generate(page).title == "Brüche addieren"
+
+
+
+# --- M05 (audit 2026-09-30): markup handling that invented sentences and cut words -----------
+
+
+def test_an_escaped_comparison_is_prose_not_a_tag():
+    """Entities were decoded BEFORE the tags went, so `&lt; ... &gt;` became a tag that took
+    the prose between with it -- and the description was a sentence the text does not have."""
+    text = ("Für alle x &lt; 5 gilt die erste Regel, und für y &gt; 3 gilt die zweite Regel. "
+            "Beide Regeln stehen im Lehrbuch auf Seite zwölf.")
+
+    assert clean_text(text).startswith("Für alle x < 5 gilt die erste Regel, und für y > 3")
+    assert "Für alle x 3 gilt" not in generate(text).description
+
+
+def test_a_spaced_comparison_is_prose_not_a_tag():
+    """A tag starts with `<` and a letter, `/`, `!` or `?` -- never with a space or a digit."""
+    assert clean_text("Wenn a < b und c > d, dann gilt a + c < b + d.") == (
+        "Wenn a < b und c > d, dann gilt a + c < b + d.")
+
+
+def test_a_literal_script_tag_in_prose_keeps_the_rest_of_the_text():
+    text = ("Das <script>-Element lädt JavaScript in eine Seite.\n"
+            "Der zweite Absatz erklärt, warum Formulare validiert werden müssen.")
+
+    assert "Der zweite Absatz erklärt" in clean_text(text)
+
+
+def test_a_commented_out_banner_is_not_text():
+    text = ("<!-- <h1>Werbung: Jetzt kaufen</h1> -->\n<h1>Bruchrechnung</h1>\n"
+            "<p>Brüche werden erweitert, gekürzt und addiert.</p>")
+
+    assert "Werbung" not in clean_text(text)
+    assert generate(text).title == "Bruchrechnung"
+
+
+def test_an_inline_tag_does_not_split_a_word():
+    """A browser renders `<b>Bruch</b>rechnung` as one word, and `H<sub>2</sub>O` as H2O."""
+    assert clean_text("<p><b>Bruch</b>rechnung mit H<sub>2</sub>O</p>") == "Bruchrechnung mit H2O"
+
+
+def test_a_closed_heading_with_windows_line_endings_loses_its_markers():
+    """`\\r\\n` left the `\\r` inside the heading line, so the closing run survived as the
+    title: `Bruchrechnung ###`. Line endings are normalised before any markup rule runs."""
+    assert clean_text("### Bruchrechnung ###\r\nBrüche werden gekürzt.").split("\n")[0] == "Bruchrechnung"
+
+
+def test_an_escaped_markdown_marker_stays_a_character():
+    """Entities are decoded last, so an escaped `#` is the author's character, not a heading."""
+    assert clean_text("&#35; ist das Zeichen für eine Nummer.") == "# ist das Zeichen für eine Nummer."
+
+
+def test_comment_and_element_removal_take_linear_time():
+    """The two new passes find their closing delimiters in Python: an unclosed opener must
+    not rescan the rest of the text once per occurrence."""
+    for hostile in ("<!--" * 25_000, "<!-- x" * 16_000, "<nav>" * 20_000, "<footer>x" * 10_000,
+                    "<script>" * 6_000 + "</script>"):
+        started = time.perf_counter()
+        clean_text(hostile)
+        assert time.perf_counter() - started < 2.0, f"slow on {hostile[:8]!r} run"

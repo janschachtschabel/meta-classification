@@ -96,6 +96,71 @@ def test_a_damaged_line_costs_that_line_only(store):
     assert [entry["text"] for entry in feedback.read_all()] == ["good", "after"]
 
 
+def test_a_torn_last_line_does_not_swallow_the_next_correction(store):
+    """R06 (audit 2026-09-30): a write cut short -- a full volume, a kill -- leaves a last line
+    without its newline, and the next correction was appended onto it: one merged line the
+    reader drops, taking the new correction along. That includes the retry the 503 tells
+    the editor to send."""
+    feedback.append(_correction("Der Wiener Kongress", ["uri:hist"]))
+    with store.open("a", encoding="utf-8") as handle:
+        handle.write('{"text": "abgerissen", "model_na')
+
+    collected = feedback.append(_correction("Bruchrechnung", ["uri:math"]))
+
+    texts = [entry["text"] for entry in feedback.read_all()]
+    assert texts == ["Der Wiener Kongress", "Bruchrechnung"]
+    assert collected == 2, "the count is what a reader sees"
+
+
+def test_the_first_count_streams_the_file_instead_of_holding_it(store):
+    """R02 (audit 2026-09-30): a process's first correction counted what was on disk by loading
+    the whole file as a list -- 240 MB of corrections took 769 MB, and 2.9 s on the event
+    loop. The file is uncapped on purpose, so the count is a pass over its lines."""
+    import tracemalloc
+
+    line = json.dumps({"text": "x" * 1000, "model_name": "m", "predicted": [],
+                       "corrected": ["uri:a"], "source": "ui"}) + "\n"
+    store.write_text(line * 20_000, encoding="utf-8")  # ~20 MB
+
+    tracemalloc.start()
+    try:
+        collected = feedback.append(_correction("Bruchrechnung", ["uri:math"]))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert collected == 20_001
+    assert peak < 4 * 2**20, f"{peak / 2**20:.1f} MiB for a {store.stat().st_size / 2**20:.0f} MiB file"
+
+
+def test_the_corrections_file_stops_growing_at_its_cap(store, monkeypatch):
+    """R02 (audit 2026-09-30): the file is uncapped on purpose -- every correction is training
+    data -- and a readonly key can append 24-60 MB a minute within the rate limit, until the
+    volume the models live on is full. At APIV3_MAX_FEEDBACK_MB a new correction is refused
+    and nothing on disk changes; what was collected stays, for the export."""
+    feedback.append(_correction("Der Wiener Kongress", ["uri:hist"]))
+    size = store.stat().st_size
+    monkeypatch.setattr(feedback, "_max_bytes", lambda: size + 10)
+
+    with pytest.raises(FeedbackWriteError, match="APIV3_MAX_FEEDBACK_MB"):
+        feedback.append(_correction("Bruchrechnung und Gleichungen", ["uri:math"]))
+
+    assert store.stat().st_size == size
+    assert [entry["text"] for entry in feedback.read_all()] == ["Der Wiener Kongress"]
+
+
+def test_the_cap_is_the_setting(monkeypatch):
+    from app.settings import Settings, get_settings
+
+    assert Settings().max_feedback_mb == 1024
+    monkeypatch.setenv("APIV3_MAX_FEEDBACK_MB", "3")
+    get_settings.cache_clear()
+    try:
+        assert feedback._max_bytes() == 3 * 2**20
+    finally:
+        get_settings.cache_clear()
+
+
 def test_a_correction_that_cannot_be_saved_fails_instead_of_vanishing(tmp_path, monkeypatch):
     """The one failure this module must not swallow.
 
@@ -150,6 +215,34 @@ def test_the_export_actually_loads_as_a_dataset(store, tmp_path):
 
     assert data.texts == ["Der Wiener Kongress von 1815", "Bruchrechnung und Gleichungen"]
     assert data.label_lists == [["uri:hist"], ["uri:math", "uri:stats"]]
+
+
+def test_the_export_hands_a_spreadsheet_no_formula_and_training_the_same_rows(store, tmp_path):
+    """S08 (audit 2026-09-30): any readonly key can send a correction, and the export wrote
+    its text and labels as they came -- `=HYPERLINK(...)` stayed a live formula for whoever
+    opened the file in a spreadsheet. A cell that would start one gets a leading tab, as the
+    UI's own download does (`query.js`, FORMULA_LEAD). Training cleans and trims it away
+    again, so the run reads exactly the rows it read before."""
+    from app.data import clean_text
+    from app.dataset_load import load_dataset
+
+    formula = '=HYPERLINK("https://example.org/x";"Lösung ansehen")'
+    feedback.append(_correction(formula, ["@uri:math", "uri:hist"]))
+    feedback.append(_correction("-5 Grad am Morgen, +3 Grad am Mittag", ["uri:geo"]))
+    feedback.append(_correction("Der Wiener Kongress von 1815", ["uri:hist"]))
+
+    exported = "".join(feedback.iter_csv())
+    rows = list(csv.reader(io.StringIO(exported), delimiter=feedback.CSV_SEPARATOR))[1:]
+    for cell in (cell for row in rows for cell in row):
+        assert cell[0] not in "=+-@", f"starts a formula: {cell!r}"
+
+    path = tmp_path / "feedback.csv"
+    path.write_text(exported, encoding="utf-8")
+    data = load_dataset(path, ["text"], "labels", separator=feedback.CSV_SEPARATOR,
+                        label_separator=feedback.LABEL_SEPARATOR)
+    assert data.texts == [clean_text(formula), "-5 Grad am Morgen, +3 Grad am Mittag",
+                          "Der Wiener Kongress von 1815"]
+    assert data.label_lists == [["@uri:math", "uri:hist"], ["uri:geo"], ["uri:hist"]]
 
 
 def test_the_export_streams_without_holding_the_file(store):

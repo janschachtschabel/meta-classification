@@ -246,9 +246,14 @@ function renderLabelTable(box, labels, sort) {
 /* ---------- the panel ---------- */
 
 function curlFor(name) {
+  /* The name is quoted twice: as a JSON string inside the body, and the body as one POSIX
+     single-quoted word, where only `'` needs care -- it closes the word, so it is closed,
+     escaped and reopened. `safe_name` allows `'`, `$`, `(` and backticks, and this command
+     is pasted into a shell: `m'$(touch x)'` ran its command (audit 2026-09-30, S06). */
+  const body = `{"texts": ["..."], "model_name": ${JSON.stringify(name)}}`;
   return `curl -X POST ${location.origin}/predict -H "X-API-Key: $KEY" ` +
     `-H "Content-Type: application/json" ` +
-    `-d '{"texts": ["..."], "model_name": "${name}"}'`;
+    `-d '${body.replace(/'/g, "'\\''")}'`;
 }
 
 async function showModelDetail(name) {
@@ -256,7 +261,7 @@ async function showModelDetail(name) {
   dialog.innerHTML = `<div class="detail" tabindex="-1">
     <h2 id="model-detail-title">${esc(name)}</h2>
     <p class="muted">${t("common.loading")}</p></div>`;
-  dialog.showModal();
+  openModal(dialog);
   const frame = dialog.querySelector(".detail");
   frame.focus();
 
