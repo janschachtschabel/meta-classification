@@ -110,3 +110,53 @@ def test_the_workspace_note_describes_the_bundle_format_the_code_writes():
 
     missing = sorted(name for name in REQUIRED_FILES if f"`{name}`" not in line)
     assert not missing, f"the workspace note omits required bundle files: {missing}"
+
+
+
+def _interop_snippet() -> str:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    interop = readme[readme.index("## Model interop / export"):]
+    code = interop[interop.index("```python") + len("```python"):]
+    return code[:code.index("```")]
+
+
+def test_the_readme_interop_snippet_loads_a_bundle_while_trusting_nothing(tmp_path, monkeypatch):
+    """S07 (audit 2026-09-30): the snippet passed `trusted=sio.get_untrusted_types(file=...)`,
+    which trusts every type a file declares -- the code-execution path the app's own loader
+    refuses (`model_io._safe_skops_load`). A bundle of this app declares none, so
+    `trusted=[]` loads it and refuses one that declares more. The snippet runs here against a
+    bundle the app just trained, word AND char vectorizer, so the recipe is one that works."""
+    from app.profiles import Profile, TrainingConfig
+    from app.registry import Registry
+    from app.settings import Settings
+    from app.training import run_training
+
+    code = _interop_snippet()
+    loads = [node for node in ast.walk(ast.parse(code))
+             if isinstance(node, ast.Call) and ast.unparse(node.func) == "sio.load"]
+    assert len(loads) == 2, "the snippet loads both skops files"
+    for call in loads:
+        trusted = next((kw.value for kw in call.keywords if kw.arg == "trusted"), None)
+        assert isinstance(trusted, ast.List) and not trusted.elts, f"trusts more: {ast.unparse(call)}"
+
+    subjects = {"uri:math": "Bruchrechnung mit Nennern und Zählern üben",
+                "uri:bio": "Photosynthese im Blatt und Zellatmung im Versuch"}
+    rows = [f"{text} Teil {i};{uri}" for uri, text in subjects.items() for i in range(12)]
+    (tmp_path / "set.csv").write_text("title;labels\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    settings = Settings(data_dir=tmp_path, models_dir=tmp_path / "models", auth_enabled=False)
+    profile = Profile("p", c_grid=[1.0], use_char=True)
+    config = TrainingConfig(default_profile="p", profiles={"p": profile}, validation_size=0.2,
+                            test_size=0.2, min_text_length=5, drop_duplicates=True,
+                            min_samples_per_label=2)
+    run_training({"dataset_name": "set.csv", "model_name": "m", "text_columns": ["title"],
+                  "label_column": "labels", "csv_separator": ";", "label_separator": ",",
+                  "label_filter": None},
+                 settings, config, profile, Registry(settings.models_dir, 2),
+                 on_progress=lambda **_: None, should_stop=lambda: False)
+
+    monkeypatch.chdir(settings.models_dir / "m")
+    namespace: dict = {}
+    exec(compile(code, "README.md (interop snippet)", "exec"), namespace)
+
+    assert namespace["char_vec"] is not None, "both halves of the vectorizer were exercised"
+    assert namespace["proba"].shape == (1, len(namespace["cfg"]["classes"]))

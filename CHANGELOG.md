@@ -42,6 +42,11 @@ brackets are its finding numbers.
   training's budget does not see. Such a 4,000-character fragment could also come back as a
   keyword. Past 64 characters a token now ends a phrase like a stopword and is stemmed
   without being remembered. (M04; the keyword half of M06)
+- **The README's interop example no longer switches off skops' safety check.** It loaded a
+  bundle with `trusted=sio.get_untrusted_types(file=…)`, which trusts every type the file
+  declares — the way a crafted `.skops` file runs code, and the one the API's own loader
+  refuses. A bundle of this app declares none, so the example passes `trusted=[]` and says
+  why; the suite now runs the snippet against a freshly trained bundle. (S07)
 
 ### Fixed
 

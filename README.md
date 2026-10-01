@@ -775,15 +775,21 @@ instead of 0.3 s and 3 MB. Re-attaching them is two lines:
 
 ```python
 import json
+from pathlib import Path
+
 import skops.io as sio
 from scipy.sparse import hstack
 
-cfg = json.load(open("config.json", encoding="utf-8"))
-word_vec, char_vec = sio.load("vectorizer.skops", trusted=sio.get_untrusted_types(file="vectorizer.skops"))
-head = sio.load("head.skops", trusted=sio.get_untrusted_types(file="head.skops"))
+cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
+# trusted=[]: a bundle of this app declares no type beyond skops' safe defaults, so nothing
+# needs trusting, and a file that declares more is refused instead of loaded. Never pass
+# sio.get_untrusted_types(...) here: that trusts whatever the file asks for, which is how
+# a crafted .skops file runs code.
+word_vec, char_vec = sio.load("vectorizer.skops", trusted=[])
+head = sio.load("head.skops", trusted=[])
 
 # The vocabularies ship separately — attach them before transforming.
-for sub, terms in zip([word_vec, char_vec], json.load(open("vocabulary.json", encoding="utf-8"))):
+for sub, terms in zip([word_vec, char_vec], json.loads(Path("vocabulary.json").read_text(encoding="utf-8"))):
     if sub is not None:
         sub.vocabulary_ = {term: index for index, term in enumerate(terms)}
 
