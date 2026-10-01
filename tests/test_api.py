@@ -434,6 +434,23 @@ def test_link_changes_the_store_cannot_write_answer_503_and_change_nothing(train
     assert client.get(link["share_url"]).status_code == 404
 
 
+def test_a_bundle_deleted_between_check_and_export_is_a_404(trained_model, monkeypatch):
+    """R09 (audit 2026-09-30): both routes check `exists()` and then stage the archive. A
+    delete in between made `stage_export` raise FileNotFoundError -- a 500 on the admin
+    export and on the public share link alike (API-2 of 2026-09-20, fixed only for loading).
+    The window is narrowed to nothing here: the check passes, the bundle is not there."""
+    from app.registry import get_registry
+
+    monkeypatch.setattr(get_registry(), "exists", lambda name: True)
+    answers = TestClient(app, raise_server_exceptions=False)
+    exported = answers.post("/models/gone/export", headers=ADMIN)
+    link = client.post("/models/gone/export", headers=ADMIN, json={"generate_share_url": True}).json()
+    shared = answers.get(link["share_url"])
+
+    assert (exported.status_code, shared.status_code) == (404, 404), (exported.text, shared.text)
+    assert "gone" not in shared.text, "a public caller learns no more than from an unknown link"
+
+
 def test_a_bundle_named_in_upper_case_can_be_imported(trained_model):
     """Found beside V04 (audit 2026-09-30): the model import compared `.zip` case-sensitively
     too, so a bundle saved as `FAECHER.ZIP` was refused as not being a ZIP."""

@@ -277,6 +277,9 @@ brackets are its finding numbers.
   `Content-Security-Policy` or `nosniff`, and `/metrics` never showed a `status="500"`
   series, the one an "API is failing" alert needs. The counter now records it before the
   error travels on, and the 500 handler sets the same headers. (R05)
+- **A model deleted while its export starts is a 404.** The export and the public share link
+  check that the model exists and then pack it; a delete in between answered 500. It is now
+  the same 404 as a missing model — on the share link without the model's name. (R09)
 
 ## [4.0.1] — 2026-09-27
 

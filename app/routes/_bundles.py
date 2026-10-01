@@ -47,7 +47,12 @@ def staged_zip_response(name: str) -> FileResponse:
     why, and shares it between downloads of the same bundle; this owns the response that
     streams it and releases this download's hold once the body is sent.
     """
-    path, release = get_registry().stage_export(name)
+    try:
+        path, release = get_registry().stage_export(name)
+    except FileNotFoundError as exc:
+        # Deleted between the caller's exists() and here -- a 404 like a plain missing model,
+        # never a 500 (audit 2026-09-30, R09). Without the name: the share link is public.
+        raise HTTPException(404, "Model no longer exists.") from exc
     try:
         return FileResponse(
             path, media_type="application/zip",
