@@ -26,9 +26,8 @@ from typing import BinaryIO
 
 from . import durability, model_archive, model_report
 from .classifier import ClassifierModel
+from .manifest import CARD_FILE, MANIFEST_FILE
 from .model_io import (
-    CARD_FILE,
-    MANIFEST_FILE,
     UnsafeModelError,
     _read_bundle,
     _write_bundle,

@@ -27,15 +27,15 @@ from typing import IO, BinaryIO
 from . import model_card
 from .bundle_meta import as_mapping
 from .label_names import label_vocabulary
-from .model_io import (
+from .manifest import (
     CARD_FILE,
     MANIFEST_FILE,
-    UnsafeModelError,
     build_manifest,
     digest_file,
     verify_digests,
     verify_manifest,
 )
+from .model_io import UnsafeModelError
 
 # One block per read while streaming a member to disk. 1 MiB is large enough that the syscall
 # count is irrelevant next to the inflate, and small enough to be invisible in the peak.
@@ -232,7 +232,7 @@ def unpack_into(archive_path: Path, target: Path) -> None:
     (audit API-5). Here the zip is read from the file, one member at a time, in blocks.
 
     The checksums are computed while streaming and compared afterwards with the same rules the
-    buffered path uses (``model_io.verify_digests``). A member is therefore written before it
+    buffered path uses (``manifest.verify_digests``). A member is therefore written before it
     is known to be intact, so **every member is removed again if anything fails** — a caller
     must never be handed a partially verified bundle to publish.
 
