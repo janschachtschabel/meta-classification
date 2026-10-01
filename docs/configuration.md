@@ -79,8 +79,8 @@ and seed that file on the volume once.
 | Variable | Default | Description |
 |---|---|---|
 | `APIV3_AUTH_ENABLED` | `true` | `false` = full access without a key, for **loopback callers only**; everyone else gets 403 — a container's host too, since it arrives from the bridge gateway. |
-| `APIV3_API_KEY_ADMIN` | – | Admin key: `/train`, `/train/stop`, dataset/model import, export, delete, analyze. |
-| `APIV3_API_KEY_READONLY` | – | Readonly key: `/predict*`, `/train/status`, listings. |
+| `APIV3_API_KEY_ADMIN` | – | Admin key: `/train`, `/train/stop`, dataset/model import, export, delete, analyze. ASCII only, and not the `change-me-…` placeholder from `.env.example` — the API refuses to start with either. |
+| `APIV3_API_KEY_READONLY` | – | Readonly key: `/predict*`, `/train/status`, listings. Same rules as the admin key. |
 | `APIV3_UI_ENABLED` | `true` | Serve the admin UI at `/ui`. The page itself is public like `/docs`; every data request carries the key the user signs in with (with auth disabled, the UI skips the sign-in). |
 
 No key is ever required for `/health`, `/metrics` and `GET /share/{id}`

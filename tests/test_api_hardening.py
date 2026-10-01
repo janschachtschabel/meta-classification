@@ -318,6 +318,41 @@ def test_startup_refuses_auth_without_an_admin_key(monkeypatch, tmp_path):
         get_registry.cache_clear()
 
 
+@pytest.mark.parametrize("variable, value, says", [
+    ("APIV3_API_KEY_ADMIN", "change-me-admin-key", "placeholder"),
+    ("APIV3_API_KEY_READONLY", "change-me-readonly-key", "placeholder"),
+    ("APIV3_API_KEY_ADMIN", "Schlüssel-der-Redaktion-2026", "ASCII"),
+    ("APIV3_API_KEY_READONLY", "nur–lesen-2026", "ASCII"),
+])
+def test_startup_refuses_a_key_that_is_a_placeholder_or_not_ascii(monkeypatch, tmp_path, variable, value, says):
+    """S10 (audit 2026-09-30): a non-ASCII key made every request that carried a key a 500
+    (`compare_digest` refuses non-ASCII text) and could not be matched reliably anyway --
+    clients encode such a header differently. The `.env.example` placeholders were taken as
+    they are: keys anyone who has read the repository knows. Both now stop the start."""
+    from fastapi.testclient import TestClient
+
+    for key, setting in {"APIV3_AUTH_ENABLED": "true", "APIV3_API_KEY_ADMIN": "admin-key",
+                         "APIV3_API_KEY_READONLY": "ro-key", variable: value,
+                         "APIV3_DATA_DIR": str(tmp_path / "data"),
+                         "APIV3_MODELS_DIR": str(tmp_path / "models")}.items():
+        monkeypatch.setenv(key, setting)
+    from app.registry import get_registry
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    get_registry.cache_clear()
+    from app.main import create_app
+
+    try:
+        with pytest.raises(RuntimeError, match=variable) as refused, TestClient(create_app()):
+            pass
+    finally:
+        get_settings.cache_clear()
+        get_registry.cache_clear()
+    assert says in str(refused.value)
+    assert value not in str(refused.value), "a key is never echoed, not even a bad one"
+
+
 def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
     """Every other default path is anchored to the api_v3 folder so the app works
     from any working directory. The .env file was the exception — a relative name,

@@ -84,14 +84,26 @@ def sweep_upload_staging(data_dir: Path) -> int:
     return removed
 
 
+# The prefix of the keys `.env.example` ships: published, so they protect nothing.
+_PLACEHOLDER_PREFIX = "change-me"
+_MAKE_A_KEY = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+
+
 def _check_auth_configuration(settings: Settings) -> None:
-    """Refuse to start an authenticated deployment that nobody can administer.
+    """Refuse to start an authenticated deployment that nobody can administer -- or that
+    anyone could.
 
     With auth on and no admin key, ``_role_for_key`` can never return "admin": every
     request 401s and no model can ever be trained, imported or deleted. That reads
     like a client-side key problem and has cost real debugging time, so fail here
     with the variable name instead. A readonly-only deployment is legitimate, so
     only the admin key is required.
+
+    A key that is set must also be usable and secret (audit 2026-09-30, S10). Outside ASCII
+    it made every request carrying a key a 500 (``compare_digest`` refuses non-ASCII text),
+    and it could not be matched reliably anyway: clients encode such a header differently.
+    And the ``.env.example`` placeholders are known to anyone who has read the repository.
+    The messages name the variable, never the value.
     """
     if not settings.auth_enabled:
         return
@@ -101,6 +113,21 @@ def _check_auth_configuration(settings: Settings) -> None:
             "request would be rejected with 401. Set the key, or run with "
             "APIV3_AUTH_ENABLED=false for local use."
         )
+    for variable, key in (("APIV3_API_KEY_ADMIN", settings.api_key_admin),
+                          ("APIV3_API_KEY_READONLY", settings.api_key_readonly)):
+        if not key:
+            continue
+        if not key.isascii():
+            raise RuntimeError(
+                f"{variable} contains characters outside ASCII. A key travels in an HTTP "
+                "header, where clients encode those differently, so it could never be "
+                f"matched reliably. Use a random ASCII key: {_MAKE_A_KEY}"
+            )
+        if key.startswith(_PLACEHOLDER_PREFIX):
+            raise RuntimeError(
+                f"{variable} is still the placeholder from .env.example, which anyone who "
+                f"has read the repository knows. Set a key of your own: {_MAKE_A_KEY}"
+            )
     if settings.api_key_admin == settings.api_key_readonly:
         logger.warning(
             "APIV3_API_KEY_ADMIN and APIV3_API_KEY_READONLY are identical — the "

@@ -79,6 +79,12 @@ brackets are its finding numbers.
   would start one (`= + - @`, tab, CR) now gets a leading tab, as the admin UI's own download
   does; training cleans and trims it away, so a run reads exactly the rows it read before.
   (S08)
+- **The API refuses to start with a key that cannot work or protect.** A configured key
+  outside ASCII made every request carrying a key a 500 — the readonly key's too, as the
+  admin key is compared first — and could not be matched reliably anyway, since clients
+  encode such a header differently. The `change-me-…` placeholders from `.env.example` were
+  accepted as they are: keys anyone who has read the repository knows. Both now stop the
+  start with a message naming the variable (never the value) and how to make a key. (S10)
 
 ### Fixed
 
