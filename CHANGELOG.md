@@ -107,6 +107,12 @@ brackets are its finding numbers.
   now every client behind the ingress shared one rate-limit bucket — and refuses `"*"`.
   Name the controller's addresses (pair a whole pod range with a NetworkPolicy), or set
   `config.limits.rateLimitEnabled=false` and limit at the ingress. (S04)
+- **"curl kopieren" no longer pastes a model's name as shell code.** The admin UI put the
+  name between single quotes as it is, and model names may contain `'`, `$`, `(` and
+  backticks: a model called `m'$(touch x)'` — named on training or taken from an imported
+  archive's file name — ran its command in the shell of whoever pasted the snippet, readonly
+  key or not. The name is now a JSON string inside a properly quoted shell word; the suite
+  pastes the generated command into a real shell to check. (S06)
 
 ### Fixed
 

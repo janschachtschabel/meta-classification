@@ -79,7 +79,8 @@ def _run(tmp_path: Path, body: str, modules: tuple[str, ...] = (), helpers: tupl
     script = tmp_path / "handler-test.cjs"
     script.write_text("\n".join(parts), encoding="utf-8")
     done = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ["node", str(script)], capture_output=True, text=True, timeout=30, check=True,
+        # node writes UTF-8; without the encoding, Windows decodes it as cp1252.
+        ["node", str(script)], capture_output=True, encoding="utf-8", timeout=30, check=True,
     )
     lines = [line for line in done.stdout.splitlines() if line.startswith("RESULT ")]
     assert lines, f"the script reported nothing: {done.stdout}{done.stderr}"
@@ -150,3 +151,42 @@ def test_an_answer_overtaken_by_a_newer_choice_is_not_applied(tmp_path):
     """)
 
     assert result["applied"] == [1]
+
+
+
+# --- S06: a copied command carries the model's name and nothing else --------------------------
+
+
+@needs_node
+@pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX shell to paste into")
+@pytest.mark.parametrize("name", [
+    "m'$(touch PWNED)'",
+    "Fächer (neu) & `touch PWNED` $HOME",
+    "plain_model",
+])
+def test_the_copied_curl_command_runs_nothing_but_curl(tmp_path, name):
+    """S06 (audit 2026-09-30): "curl kopieren" put the name between single quotes as it is,
+    and `safe_name` allows `'`, `$`, `(`, `)` and backticks -- a model called
+    `m'$(touch PWNED)'` ran its command in the shell of whoever pasted the snippet, readonly
+    key or not. Pasted into a real shell here, with `curl` a function that records what it
+    was handed."""
+    command = _run(tmp_path, helpers=("model-detail.js:curlFor",), body=f"""
+        globalThis.location = {{ origin: "http://localhost:8000" }};
+        report({{ command: curlFor({json.dumps(name)}) }});
+    """)["command"]
+    script = "\n".join([
+        "curl() { for arg in \"$@\"; do printf '%s\\000' \"$arg\"; done > argv.bin; }",
+        "KEY=test-key",
+        command,
+    ])
+
+    # A file, not `sh -c`: on Windows an argument passes through the command line's codepage
+    # on its way into MSYS, which turns the umlaut into something else before any quoting.
+    (tmp_path / "paste.sh").write_bytes(script.encode("utf-8"))
+    subprocess.run(["sh", "paste.sh"], cwd=tmp_path, check=True, timeout=30)  # noqa: S603, S607
+
+    assert not (tmp_path / "PWNED").exists(), "the pasted command ran a command of the name's"
+    argv = (tmp_path / "argv.bin").read_bytes().decode("utf-8").split("\0")[:-1]
+    body = json.loads(argv[argv.index("-d") + 1])
+    assert body["model_name"] == name
+    assert "X-API-Key: test-key" in argv, "the key still comes from the shell variable"
