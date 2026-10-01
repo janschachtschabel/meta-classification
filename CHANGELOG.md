@@ -304,6 +304,12 @@ brackets are its finding numbers.
   staging directory are now synced before the rename exposes them — for a training outside
   the disk lock, in the process that wrote it — and the models directory after; the same
   for an import and for `metrics.json` edits. (R13)
+- **A bundle whose files come from different models is refused.** An archive's members were
+  each checked, never against each other: a head from another training installed with 200,
+  and every prediction then failed with a 500 ("X has 182 features, but LogisticRegression
+  is expecting 7"). Loading — which an import runs before publishing — now checks that the
+  head takes the features the vectorizer makes and scores the classes `config.json` names;
+  a mixed archive is refused on import, a mixed bundle on disk answers 422. (R08)
 
 ## [4.0.1] — 2026-09-27
 

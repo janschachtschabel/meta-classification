@@ -202,6 +202,7 @@ def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
         vectorizer = TfidfBackend()
         vectorizer.word_vec = word_vec
         vectorizer.char_vec = char_vec
+        _check_parts_agree(head, vectorizer, config["classes"])
 
         model = ClassifierModel(
             vectorizer=vectorizer,
@@ -219,6 +220,31 @@ def _read_bundle(directory: Path) -> tuple[ClassifierModel, dict]:
     except (AttributeError, ValueError, KeyError, TypeError) as exc:
         raise UnsafeModelError(f"Invalid model bundle in {directory.name!r}: {exc!r}") from exc
     return model, metadata
+
+
+def _check_parts_agree(head, vectorizer: TfidfBackend, classes: list) -> None:
+    """Refuse a head that does not take this vectorizer's features or score these classes.
+
+    A bundle is importable, so its members can come from different runs. Such a mix installed
+    with 200 and failed every prediction with a 500 -- "X has 182 features, but
+    LogisticRegression is expecting 7" (audit 2026-09-30, R08). Read off what scikit-learn
+    records on the fitted head, so it costs nothing; a head that records no feature count is
+    left to fail as before rather than refused on a guess.
+    """
+    features = sum(len(sub.vocabulary_) for sub in (vectorizer.word_vec, vectorizer.char_vec)
+                   if sub is not None)
+    expected = getattr(head, "n_features_in_", None)
+    if expected is not None and expected != features:
+        raise UnsafeModelError(
+            f"The head takes {expected} features, the vectorizer makes {features}: the bundle's "
+            "files come from different models."
+        )
+    scored = len(getattr(head, "classes_", ()))
+    if scored != len(classes):
+        raise UnsafeModelError(
+            f"The head scores {scored} classes, config.json names {len(classes)}: the bundle's "
+            "files come from different models."
+        )
 
 
 def _text_cleaning(config: dict) -> int:
