@@ -124,7 +124,7 @@ def dataset_info(
         shaped = stats_mod.sample_rows(path, separator=separator)
     except TrainingInputError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"name": dataset_name, "rows": data_mod.count_rows(path), **shaped}
+    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped}
 
 
 @router.post("/datasets/analyze", summary="Analyze label distribution & text quality")

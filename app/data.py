@@ -11,7 +11,9 @@ API live in ``dataset_stats``. Both consume this module, never the reverse.
 
 from __future__ import annotations
 
+import csv
 import gzip
+import logging
 import re
 from pathlib import Path
 
@@ -122,39 +124,47 @@ def resolve_dataset(data_dir: Path, name: str) -> Path:
 # path -> (mtime_ns, size, rows). Bounded: cleared beyond 256 entries (the data
 # dir holds a handful of CSVs; stale keys from deleted files are harmless).
 _ROW_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
+# csv.reader caps a field at 131,072 characters unless told otherwise, below a long WLO
+# description; the training reader (pandas' C engine) has no such cap, so the count may not
+# either. Process-wide, which is fine: this is the only csv.reader the app runs.
+csv.field_size_limit(2**31 - 1)
+_DELIMITERS = (";", ",", "\t")
+logger = logging.getLogger(__name__)
 
 
-def count_rows(path: str | Path) -> int:
-    """Data rows (excluding the header) of a CSV.
+def count_rows(path: str | Path, separator: str | None = None) -> int:
+    """Data rows (excluding the header) of a CSV, counted the way a CSV reader reads them.
 
     A line break inside a quoted field does not start a record, and on this data that is the
     difference between a number and a wrong number: counting physical lines reported
     1,343,683 rows for the 340,630 records of ``data_300k.csv`` (3.94x) and 2,141,123 for the
     426,724 of the combined WLO export (5.02x), because descriptions are full of newlines.
 
-    Quote PARITY per line is enough to track this and stays a single cheap pass — an escaped
-    ``""`` contributes two quotes and so leaves the parity untouched. A full ``csv.reader``
-    pass would also be exact but parses every field for a number nobody trains on.
-
-    Gzip is decompressed first; counting newlines in the COMPRESSED bytes is meaningless.
-    Cached by (mtime, size) so repeated listings do not re-read multi-MB files.
+    Counted with ``csv.reader``. Quote parity per line -- the cheaper pass this used to be --
+    took a quote inside an unquoted field (an inch mark: `24" Diagonale`) for an opening one
+    and every following line for the inside of a field: 10 rows came out as 3 (audit
+    2026-09-30, T14). A reader takes a quote as one only where a field starts, which needs the
+    delimiter: ``separator``, else whichever of ``;``, ``,`` and tab the header line has most
+    of. Measured at half the old pass's speed (52 MB in 1.0 s against 0.48 s), once per file
+    version: cached by (mtime, size). Gzip is decompressed first; counting newlines in the
+    COMPRESSED bytes is meaningless.
     """
     path = Path(path)
     stat = path.stat()
-    key = str(path)
+    key = f"{path}|{separator or ''}"
     hit = _ROW_COUNT_CACHE.get(key)
     if hit is not None and hit[0] == stat.st_mtime_ns and hit[1] == stat.st_size:
         return hit[2]
     opener = gzip.open if is_gzipped(path) else open
-    rows = 0
-    inside_quotes = False
     with opener(path, "rt", encoding="utf-8", errors="ignore", newline="") as handle:
-        for line in handle:
-            if line.count('"') % 2:
-                inside_quotes = not inside_quotes
-            if not inside_quotes:
-                rows += 1
-    rows = max(0, rows - 1)  # header
+        header = handle.readline()
+        delimiter = separator or max(_DELIMITERS, key=header.count)
+        try:
+            rows = sum(1 for _ in csv.reader(handle, delimiter=delimiter))
+        except csv.Error as exc:
+            # A listing must not fail for one file a reader rejects; its count is unknown.
+            logger.warning("Cannot count the rows of %s: %s", path.name, exc)
+            rows = 0
     if len(_ROW_COUNT_CACHE) > 256:
         _ROW_COUNT_CACHE.clear()
     _ROW_COUNT_CACHE[key] = (stat.st_mtime_ns, stat.st_size, rows)

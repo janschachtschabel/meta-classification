@@ -507,3 +507,33 @@ def test_without_train_only_rows_the_split_is_what_it_always_was(stratified):
         after = data.three_way_split(n, val_size=0.15, test_size=0.15, seed=42,
                                      y=y if stratified else None, train_only=train_only)
         assert all(np.array_equal(a, b) for a, b in zip(before, after, strict=True))
+
+
+
+def test_a_quote_inside_an_unquoted_field_does_not_merge_rows(tmp_path):
+    """T14 (audit 2026-09-30): counting quote parity per line took an inch mark for an opening
+    quote, and every line after it for the inside of a field -- 10 rows came out as 3."""
+    csv = tmp_path / "inch.csv"
+    rows = ["title;labels"] + [f'Monitor {i} mit 24" Diagonale;uri:x' for i in range(10)]
+    csv.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    assert data.count_rows(csv) == 10
+
+
+def test_rows_are_counted_with_the_delimiter_the_header_uses(tmp_path):
+    """A quote opens a field only at its start, which needs the delimiter: the header says
+    which one when the caller does not."""
+    csv = tmp_path / "comma.csv"
+    csv.write_text('title,labels\n"Zwei\nZeilen",uri:a\n"Eine Zeile",uri:b\n', encoding="utf-8")
+
+    assert data.count_rows(csv) == 2
+    assert data.count_rows(csv, separator=",") == 2
+
+
+def test_a_field_longer_than_the_csv_modules_default_limit_is_counted(tmp_path):
+    """csv.reader caps a field at 131,072 characters unless told otherwise; the training
+    reader has no such cap, so a long description must not break the count."""
+    csv = tmp_path / "long.csv"
+    csv.write_text("title;labels\n" + "x" * 200_000 + ";uri:a\nkurz;uri:b\n", encoding="utf-8")
+
+    assert data.count_rows(csv) == 2

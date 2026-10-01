@@ -111,6 +111,11 @@ brackets are its finding numbers.
 - **Evaluation weights are bounded like training weights.** `/train` caps a text-column weight
   at 10; `/models/{name}/evaluate` took any number, and a typo like `1000000` made the API
   process build a million column names per row. Over 10 is now a 422. (T15)
+- **Row counts survive a quote inside an unquoted field.** The dataset views counted quote
+  parity per line, so an inch mark (`24" Diagonale`) opened a "field" that swallowed the
+  following lines: 10 rows were shown as 3. Rows are counted with a CSV reader now, which
+  takes a quote as one only where a field starts — using the dataset's separator where the
+  request names one, else the one its header line uses. (T14)
 
 ### Fixed
 
