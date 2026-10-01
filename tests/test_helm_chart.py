@@ -238,3 +238,33 @@ def test_the_tls_guard_leaves_a_release_without_an_ingress_alone():
     objects = _render(*KEYS, "ingress.enabled=false")
 
     assert _of_kind(objects, "Ingress") == []
+
+
+# --- B07: Prometheus scrapes each pod once ---------------------------------------------------
+
+
+def _selects(selector: dict[str, Any], labels: dict[str, str]) -> bool:
+    """A label selector as Kubernetes evaluates it (the operators this chart uses)."""
+    if any(labels.get(key) != value for key, value in selector.get("matchLabels", {}).items()):
+        return False
+    for expression in selector.get("matchExpressions", []):
+        present = expression["key"] in labels
+        if expression["operator"] == "DoesNotExist" and present:
+            return False
+        if expression["operator"] == "Exists" and not present:
+            return False
+    return True
+
+
+def test_the_service_monitor_scrapes_each_pod_once():
+    """B07 (audit 2026-09-30): the ServiceMonitor selected by the chart's selector labels,
+    which the normal Service and the headless one both carry -- so Prometheus scraped every
+    pod through both, and each counter in /metrics arrived twice."""
+    objects = _render(*KEYS, INSECURE, PROXIED, "global.metrics.servicemonitor.enabled=true")
+    [monitor] = _of_kind(objects, "ServiceMonitor")
+
+    scraped = [service for service in _of_kind(objects, "Service")
+               if _selects(monitor["spec"]["selector"], service["metadata"]["labels"])]
+
+    assert len(scraped) == 1, [s["metadata"]["name"] for s in scraped]
+    assert scraped[0]["spec"].get("clusterIP") != "None", "it scrapes the headless Service"

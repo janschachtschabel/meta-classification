@@ -15,7 +15,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "classification-api.fullname" . }}-headless
-  labels: {{ include "classification-api.labels" . | nindent 4 }}
+  labels:
+    {{- include "classification-api.labels" . | nindent 4 }}
+    # Kubernetes' own mark for a headless Service's endpoints; the ServiceMonitor leaves
+    # whatever carries it alone (servicemonitor.yaml).
+    service.kubernetes.io/headless: ""
 spec:
   type: ClusterIP
   clusterIP: None

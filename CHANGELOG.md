@@ -483,6 +483,10 @@ brackets are its finding numbers.
   installs rather than a fresh resolution of the direct pins, and runs a pinned pip-licenses
   (now in `requirements-dev.txt`). A test runs the workflow's own command against a GPLv2+
   and an MIT package. (B05)
+- **Prometheus scrapes each pod once.** The ServiceMonitor selected by the chart's selector
+  labels, which the normal and the headless Service both carry, so every pod was scraped
+  through both and each counter arrived twice. The headless Service is now marked and left
+  out. (B07)
 
 ## [4.0.1] — 2026-09-27
 

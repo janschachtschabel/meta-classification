@@ -8,6 +8,11 @@ metadata:
 spec:
   selector:
     matchLabels: {{ include "classification-api.selectorLabels" . | nindent 6 }}
+    # Both Services carry the selector labels, and selecting the headless one too scraped
+    # every pod twice (audit 2026-09-30, B07).
+    matchExpressions:
+    - key: service.kubernetes.io/headless
+      operator: DoesNotExist
   endpoints:
   - port: http
     path: /metrics
