@@ -8,7 +8,6 @@ each module has one reason to change.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import Counter
 from collections.abc import Callable
@@ -18,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from . import data as data_mod
+from . import label_sidecar
 from .csv_encoding import CsvEncoding
 from .dataset_load import load_dataset
 from .errors import TrainingInputError
@@ -32,31 +32,6 @@ logger = logging.getLogger(__name__)
 # where present, because a CSV that separates both URIs and display names with the same
 # character cannot be fully repaired from itself (see label_names.pair_names).
 # Generate with `python scripts/fetch_vocab_labels.py`.
-LABEL_NAMES_FILE = "label_names.json"
-
-
-def _authoritative_label_names(settings: Settings) -> dict[str, str]:
-    """Load the label-name sidecar; ``{}`` when absent or unusable.
-
-    Never fatal: correct display names are a reporting nicety, while a training run is
-    expensive. A malformed file is logged and ignored rather than failing the run.
-    """
-    path = Path(settings.data_dir) / LABEL_NAMES_FILE
-    if not path.exists():
-        return {}
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        logger.warning("Ignoring %s: %r", LABEL_NAMES_FILE, exc)
-        return {}
-    if not isinstance(loaded, dict):
-        logger.warning("Ignoring %s: expected a JSON object of uri -> name", LABEL_NAMES_FILE)
-        return {}
-    return {
-        uri: name.strip()
-        for uri, name in loaded.items()
-        if isinstance(uri, str) and isinstance(name, str) and name.strip()
-    }
 
 
 def _drop_unlearnable(
@@ -170,7 +145,7 @@ def prepare_data(
         drop_duplicates=training_cfg.drop_duplicates,
         label_filter=req.get("label_filter"),
         text_column_weights=text_column_weights,
-        label_names=_authoritative_label_names(settings),
+        label_names=label_sidecar.load(Path(settings.data_dir)),
         synthetic_rows=mode,
         on_progress=lambda msg: on_progress(phase_detail=msg),
     )
