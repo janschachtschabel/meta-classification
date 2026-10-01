@@ -18,6 +18,9 @@ from fastapi.security import APIKeyHeader
 from .settings import Settings, get_settings
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+# What a proxy adds to say whom it relays: the de-facto header uvicorn reads, the standard
+# one (RFC 7239), and nginx's.
+_FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
 
 
 def _role_for_key(key: str | None, settings: Settings) -> str | None:
@@ -38,14 +41,21 @@ def _role_for_key(key: str | None, settings: Settings) -> str | None:
 
 
 def _is_loopback_client(request: Request) -> bool:
-    """True when the request peer is a loopback address (127.0.0.0/8 or ::1).
+    """True when the request peer is a loopback address (127.0.0.0/8 or ::1) and no proxy
+    relayed the request.
 
     The rule data-prep already applies, so both apps mean the same by "local". A missing
     client (an in-process ASGI call) counts as loopback; an unparseable host — a proxy's
     hostname — counts as the network, because behind a proxy the operator must set a key.
-    uvicorn rewrites the peer from X-Forwarded-For only for FORWARDED_ALLOW_IPS, so a remote
-    caller cannot claim loopback unless that list trusts everyone (the chart warns: never "*").
+
+    A request carrying a forwarding header is never local (audit 2026-09-30, S04). uvicorn
+    rewrites the peer from X-Forwarded-For for EVERY peer in FORWARDED_ALLOW_IPS, so with an
+    ingress controller's pod CIDR there, any pod in it sending `X-Forwarded-For: 127.0.0.1`
+    was keyless admin; and a reverse proxy on this machine connects from loopback whoever it
+    relays. The rewritten peer is all the app sees — the header that caused it is the tell.
     """
+    if any(header in request.headers for header in _FORWARDING_HEADERS):
+        return False
     client = request.client
     if client is None:
         return True

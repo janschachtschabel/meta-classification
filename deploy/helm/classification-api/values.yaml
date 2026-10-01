@@ -186,11 +186,14 @@ config:
     warmupMetadata: false
     ## @param config.limits.rateLimitEnabled Enable the in-process rate limiter (keys on client IP — see README for proxy note)
     rateLimitEnabled: true
-    ## @param config.limits.forwardedAllowIps Addresses whose X-Forwarded-For uvicorn may trust (e.g. the
-    ## ingress controller's pod CIDR, "10.42.0.0/16"). Empty = trust nothing beyond localhost, which behind
-    ## an ingress means every client shares ONE rate-limit bucket, since they all arrive from the
-    ## controller's address. Set it whenever ingress.enabled is true and rateLimitEnabled is true.
-    ## Do NOT set "*": any client could then spoof the header and bypass the limiter entirely.
+    ## @param config.limits.forwardedAllowIps Addresses whose X-Forwarded-For uvicorn may trust: the ingress
+    ## controller's. Empty = trust nothing beyond localhost, which behind an ingress means every client
+    ## shares ONE rate-limit bucket, since they all arrive from the controller's address — so the chart
+    ## refuses to render with ingress.enabled and rateLimitEnabled but no value here (or set
+    ## rateLimitEnabled=false and limit at the ingress). Name the narrowest range that holds the
+    ## controller: every peer in it may claim any client address. A whole pod range (k3s: "10.42.0.0/16")
+    ## lets any pod in the cluster pick its own rate-limit bucket, unless a NetworkPolicy admits only the
+    ## controller to this pod. "*" is refused: any client could pick its bucket, or exhaust another's.
     forwardedAllowIps: ""
 
   ## @param config.extraEnv Extra plain environment variables (map) injected into the container

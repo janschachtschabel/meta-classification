@@ -38,6 +38,9 @@ pytestmark = pytest.mark.skipif(
 KEYS = ("config.auth.adminKey=render-test", "config.auth.readonlyKey=render-test")
 # Silences the TLS guard, so a secret-path render fails for its own reason and not OPS-4's.
 INSECURE = "ingress.allowInsecure=true"
+# Names the proxy uvicorn may believe, so a render with the (default) ingress fails for its
+# own reason and not S04's.
+PROXIED = "config.limits.forwardedAllowIps=10.42.0.0/16"
 
 
 def _helm(*overrides: str) -> subprocess.CompletedProcess[str]:
@@ -85,7 +88,7 @@ def _mounted_secret(objects: list[dict[str, Any]]) -> str:
 def test_an_external_secret_replaces_the_charts_own_and_the_pod_reads_it():
     """With `existingSecret` set the chart must render no Secret at all. Two candidates for
     one envFrom is worse than none: nothing says which the pod ends up reading."""
-    objects = _render("config.auth.existingSecret=classify-api-keys", INSECURE)
+    objects = _render("config.auth.existingSecret=classify-api-keys", INSECURE, PROXIED)
 
     assert _of_kind(objects, "Secret") == [], "the chart still renders a Secret beside the external one"
     assert _mounted_secret(objects) == "classify-api-keys"
@@ -96,14 +99,16 @@ def test_nothing_on_the_pod_is_derived_from_the_keys():
     rendered Secret, readable by anyone allowed to read pods -- and with the rest of that
     manifest public, a weak key could be confirmed offline against it. Two releases that
     differ only in their keys render the same StatefulSet."""
-    first = _render("config.auth.adminKey=render-test-a", "config.auth.readonlyKey=render-test-b", INSECURE)
-    second = _render("config.auth.adminKey=render-test-c", "config.auth.readonlyKey=render-test-d", INSECURE)
+    first = _render("config.auth.adminKey=render-test-a", "config.auth.readonlyKey=render-test-b",
+                    INSECURE, PROXIED)
+    second = _render("config.auth.adminKey=render-test-c", "config.auth.readonlyKey=render-test-d",
+                     INSECURE, PROXIED)
 
     assert _of_kind(first, "StatefulSet") == _of_kind(second, "StatefulSet")
 
 
 def test_without_an_external_secret_the_chart_renders_and_mounts_its_own():
-    objects = _render(*KEYS, INSECURE)
+    objects = _render(*KEYS, INSECURE, PROXIED)
 
     [secret] = _of_kind(objects, "Secret")
     assert set(secret["data"]) == {"APIV3_API_KEY_ADMIN", "APIV3_API_KEY_READONLY"}
@@ -114,7 +119,7 @@ def test_a_missing_key_refuses_the_release_and_says_what_to_do_instead():
     """The refusal is the only text the operator sees — the render aborts here, so NOTES.txt
     is never printed. A message naming only `adminKey` sends them to `--set adminKey=`, which
     puts the key in their shell history, the CI log and the release secret."""
-    message = _refused(INSECURE)
+    message = _refused(INSECURE, PROXIED)
 
     assert "config.auth.adminKey" in message
     assert "existingSecret" in message, (
@@ -127,7 +132,7 @@ def test_a_missing_key_refuses_the_release_and_says_what_to_do_instead():
 
 
 def test_an_ingress_without_tls_refuses_the_release():
-    message = _refused(*KEYS)
+    message = _refused(*KEYS, PROXIED)
 
     assert "ingress.tls" in message
     assert "X-API-Key" in message, "the refusal does not say WHAT leaks, so it reads as pedantry"
@@ -136,7 +141,7 @@ def test_an_ingress_without_tls_refuses_the_release():
 def test_the_documented_escape_hatch_renders_an_ingress_without_tls():
     """`allowInsecure` is the only way to say "TLS terminates above me" — if it did not work,
     a mesh or cloud-load-balancer deployment could not use the chart at all."""
-    [ingress] = _of_kind(_render(*KEYS, INSECURE), "Ingress")
+    [ingress] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "Ingress")
 
     assert "tls" not in ingress["spec"]
 
@@ -144,6 +149,7 @@ def test_the_documented_escape_hatch_renders_an_ingress_without_tls():
 def test_tls_values_reach_the_rendered_ingress():
     objects = _render(
         *KEYS,
+        PROXIED,
         "ingress.tls[0].secretName=classify-tls",
         "ingress.tls[0].hosts[0]=classify.example.de",
     )
@@ -152,6 +158,40 @@ def test_tls_values_reach_the_rendered_ingress():
     assert ingress["spec"]["tls"] == [
         {"secretName": "classify-tls", "hosts": ["classify.example.de"]}
     ]
+
+
+# --- S04: whom uvicorn believes about a client's address -------------------------------------
+
+
+def test_an_ingress_with_the_rate_limiter_and_no_trusted_proxy_refuses_the_release():
+    """S04 (audit 2026-09-30): behind the ingress every request reaches the pod from the
+    controller, so without forwardedAllowIps all clients share ONE rate-limit bucket and one
+    busy client throttles everyone. values.yaml asked for the setting; nothing enforced it."""
+    message = _refused(*KEYS, INSECURE)
+
+    assert "config.limits.forwardedAllowIps" in message
+    assert "rateLimitEnabled=false" in message, "and the way out for whoever cannot name the proxy"
+
+
+def test_trusting_every_address_refuses_the_release():
+    """With "*" any client names its own address in X-Forwarded-For: its own rate-limit
+    bucket, or someone else's to exhaust."""
+    message = _refused(*KEYS, INSECURE, "config.limits.forwardedAllowIps=*")
+
+    assert "config.limits.forwardedAllowIps" in message
+
+
+@pytest.mark.parametrize("values", [
+    (PROXIED,), ("config.limits.rateLimitEnabled=false",), ("ingress.enabled=false",),
+])
+def test_a_named_proxy_no_limiter_or_no_ingress_renders(values):
+    _render(*KEYS, INSECURE, *values)
+
+
+def test_the_trusted_proxy_reaches_uvicorn():
+    [configmap] = _of_kind(_render(*KEYS, INSECURE, PROXIED), "ConfigMap")
+
+    assert configmap["data"]["FORWARDED_ALLOW_IPS"] == "10.42.0.0/16"
 
 
 def _documented_commands() -> list[list[str]]:

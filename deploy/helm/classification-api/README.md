@@ -18,9 +18,10 @@ kubectl create secret generic classify-api-keys \
   --from-literal=APIV3_API_KEY_ADMIN=<strong-random-key> \
   --from-literal=APIV3_API_KEY_READONLY=<strong-random-key>
 
-# The tls values are not optional — see "TLS is not optional here" below.
+# Neither the tls values nor forwardedAllowIps are optional — see the two notes below.
 helm install classify deploy/helm/classification-api \
   --set config.auth.existingSecret=classify-api-keys \
+  --set config.limits.forwardedAllowIps=10.42.0.0/16 \
   --set ingress.hosts[0]=classify.example.de \
   --set ingress.tls[0].hosts[0]=classify.example.de \
   --set ingress.tls[0].secretName=classify-api-tls
@@ -48,6 +49,16 @@ same upgrade. Either way the keys map to the app's
 > With `ingress.enabled: true` the chart therefore refuses to render until either
 > `ingress.tls` is filled in or `ingress.allowInsecure: true` says TLS is terminated above
 > the ingress (a service mesh, a cloud load balancer) — something the chart cannot detect.
+
+> **Name the proxy the rate limiter may believe.** Behind the ingress every request reaches
+> the pod from the controller, so unless uvicorn may take the client address from
+> `X-Forwarded-For`, all clients share one rate-limit bucket and one busy client throttles
+> everyone. With `ingress.enabled` and `config.limits.rateLimitEnabled` the chart therefore
+> refuses to render without `config.limits.forwardedAllowIps` — the controller's addresses,
+> as narrow as you can name them (`10.42.0.0/16` above is k3s's whole pod range: every pod in
+> it may then claim any client address, so pair a range like that with a NetworkPolicy that
+> admits only the controller). `"*"` is refused. If you cannot name the controller, set
+> `config.limits.rateLimitEnabled=false` and limit at the ingress instead.
 
 ## Parameters
 
@@ -107,6 +118,7 @@ same upgrade. Either way the keys map to the app's
 | `config.limits.maxUploadMb`             | Upload cap in MB (keep ingress body-size in sync)                        | `200`         |
 | `config.limits.maxModelsInMemory`       | Trained models kept resident (LRU)                                       | `2`           |
 | `config.limits.rateLimitEnabled`        | Enable the in-process rate limiter                                       | `true`        |
+| `config.limits.forwardedAllowIps`       | Addresses whose `X-Forwarded-For` uvicorn believes: the ingress controller's. **Required** with ingress and rate limiter on (see below) | `""` |
 | `config.extraEnv`                       | Extra plain environment variables (map)                                  | `{}`          |
 
 ### Storage, scheduling & runtime

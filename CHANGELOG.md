@@ -95,6 +95,18 @@ brackets are its finding numbers.
   annotation is gone, so a `helm upgrade` that only changes the chart-managed keys no longer
   restarts the pod by itself: follow it with `kubectl rollout restart`, or change a
   `podAnnotations` value in the same upgrade (chart README). (S12)
+- **A proxy can no longer vouch for loopback, and the chart makes the rate limiter's proxy
+  explicit.** uvicorn rewrites a request's peer from `X-Forwarded-For` for every peer in
+  `FORWARDED_ALLOW_IPS`, and the chart suggested the ingress controller's pod range there:
+  any pod in it sending `X-Forwarded-For: 127.0.0.1` was keyless admin
+  (`APIV3_AUTH_ENABLED=false`), and could pick its own rate-limit bucket or exhaust
+  another's. Keyless mode now serves no request that carries a forwarding header
+  (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`) — a reverse proxy on the same machine
+  relays someone else too. **Chart, breaking:** with the ingress and the rate limiter on
+  (both default) it now refuses to render without `config.limits.forwardedAllowIps` — until
+  now every client behind the ingress shared one rate-limit bucket — and refuses `"*"`.
+  Name the controller's addresses (pair a whole pod range with a NetworkPolicy), or set
+  `config.limits.rateLimitEnabled=false` and limit at the ingress. (S04)
 
 ### Fixed
 

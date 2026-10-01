@@ -54,3 +54,29 @@ def test_the_public_probes_stay_public_whoever_asks(keyless):
     with TestClient(create_app(), client=("10.42.0.9", 50000)) as client:
         assert client.get("/health").status_code == 200
         assert client.get("/ready").status_code == 200
+
+
+
+def test_a_proxy_cannot_vouch_for_loopback(keyless):
+    """S04 (audit 2026-09-30): uvicorn rewrites the peer from X-Forwarded-For for every peer
+    FORWARDED_ALLOW_IPS trusts, and the chart suggested the ingress controller's pod CIDR
+    there -- so any pod in it sending `X-Forwarded-For: 127.0.0.1` was keyless admin. The
+    rewritten peer is all the app gets to see, so the chain is tested as deployed."""
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    behind_a_proxy = ProxyHeadersMiddleware(create_app(), trusted_hosts="10.0.0.0/8")
+    with TestClient(behind_a_proxy, client=("10.42.0.7", 50000)) as client:
+        answer = client.delete("/models/anything", headers={"X-Forwarded-For": "127.0.0.1"})
+
+    assert answer.status_code == 403, answer.text
+
+
+@pytest.mark.parametrize("header", ["X-Forwarded-For", "Forwarded", "X-Real-IP"])
+def test_a_request_relayed_by_a_proxy_on_this_machine_is_not_local(keyless, header):
+    """A reverse proxy on this machine connects from loopback, whoever it relays: the
+    header it adds says the caller is someone else, and keyless mode serves only this
+    machine. A key is the way to put a proxy in front."""
+    with TestClient(create_app(), client=("127.0.0.1", 50000)) as client:
+        answer = client.get("/models", headers={header: "for=203.0.113.7" if header == "Forwarded" else "203.0.113.7"})
+
+    assert answer.status_code == 403

@@ -36,6 +36,9 @@ data:
   APIV3_WARMUP_METADATA: {{ .Values.config.limits.warmupMetadata | quote }}
   APIV3_RATE_LIMIT_ENABLED: {{ .Values.config.limits.rateLimitEnabled | quote }}
   {{- if .Values.config.limits.forwardedAllowIps }}
+  {{- if eq (trim (toString .Values.config.limits.forwardedAllowIps)) "*" }}
+  {{- fail "config.limits.forwardedAllowIps is \"*\": any client could then name its own address in X-Forwarded-For -- its own rate-limit bucket, or someone else's to exhaust. Name the ingress controller's addresses instead." }}
+  {{- end }}
 
   # ---- Who may claim a client IP on this pod's behalf ----
   # uvicorn runs with --proxy-headers, but it honours X-Forwarded-For only when the TCP
