@@ -345,3 +345,27 @@ def test_evaluation_reads_the_dataset_with_the_models_cleaning(tmp_path):
     old = load_dataset(tmp_path / "set.csv", ["title"], "labels", separator=";", text_cleaning=1)
 
     assert old.texts == ["Für alle x b, dann ist die Differenz positiv."]
+
+
+
+# --- R15: a duration is not a difference of wall-clock readings ---------------------------------
+
+
+def test_a_training_time_survives_the_wall_clock_being_set_back(tmp_path, monkeypatch):
+    """R15 (audit 2026-09-30): the run took `time.time()` at its start and end, so a clock set
+    back during it -- NTP after a suspend, a VM migration -- recorded a negative training time."""
+    import itertools
+    import time
+
+    from app import training as training_mod
+
+    now, steps = time.time(), itertools.count()
+    # Every reading 10 s earlier than the one before: whichever two the run takes, the later
+    # is the smaller. (Realistic values -- the ZIP writer stamps members with them.)
+    monkeypatch.setattr(training_mod.time, "time", lambda: now - 10 * next(steps))
+    rows = [f"{text} Teil {i};{uri}" for uri, text in SUBJECTS.items() for i in range(20)]
+    settings = _dataset(tmp_path, rows)
+
+    result = _train(settings)
+
+    assert result["training_time_seconds"] >= 0

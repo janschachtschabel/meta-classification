@@ -188,7 +188,9 @@ def run_training(
             f"Model '{req['model_name']}' already exists — it was created while this training "
             "was queued. Delete it or train under another name."
         )
-    start = time.time()
+    # Monotonic: a difference of wall-clock readings went negative when the clock was set back
+    # during the run (audit 2026-09-30, R15). Timestamps stay wall-clock (datetime.now).
+    start = time.monotonic()
     # Most specific wins: request > profile > config. The profile carries the mode that
     # suits its size class, but an explicit request value still overrides it.
     req_cv = req.get("cv_folds")
@@ -228,7 +230,7 @@ def run_training(
             per_label_f1=dict(fitted.metrics.get("per_label_f1", {})),
             text_cleaning=CLEANING_VERSION,
         )
-        elapsed = time.time() - start
+        elapsed = time.monotonic() - start
         metadata = _build_metadata(
             req, settings, profile, prep, fitted, elapsed, cv_folds=cv_folds,
             resources={

@@ -178,7 +178,7 @@ def run_evaluation(
     training metrics — those describe the run that produced the model and stay the
     bundle's own account of itself.
     """
-    started = time.time()
+    started = time.monotonic()  # a duration, not a timestamp (R15)
     name = req["model_name"]
     weights = _weights_for(registry, name, req)
     on_progress(phase="loading", progress=5, message=f"Reading {req['dataset_name']} …")
@@ -222,7 +222,7 @@ def run_evaluation(
         # another run that assembled its text the same way.
         "text_column_weights": weights,
         "evaluated_at": datetime.now(UTC).isoformat(),
-        "duration_seconds": round(time.time() - started, 1),
+        "duration_seconds": round(time.monotonic() - started, 1),
         **result,
         **({"ai_marked_rows_skipped": skipped} if skipped else {}),
     }

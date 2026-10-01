@@ -356,6 +356,10 @@ brackets are its finding numbers.
   `APIV3_SHUTDOWN_WAIT_SECONDS` (50; chart: `terminationGracePeriod` − 10) to stop at its
   next checkpoint, and is recorded as `interrupted` if it is still running then. Compose
   stops with a 60 s grace instead of Docker's 10 s. (R03)
+- **Training and evaluation times survive the clock being set back.** Both were the difference
+  of two wall-clock readings, so a clock set back during a run (NTP after a suspend, a VM
+  migration) recorded a negative duration. They are measured on the monotonic clock now;
+  timestamps stay wall-clock. (R15)
 
 ## [4.0.1] — 2026-09-27
 
