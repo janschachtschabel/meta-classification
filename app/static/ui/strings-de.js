@@ -130,6 +130,7 @@ const STRINGS_DE = {
   "query.table.title": "Titel",
   "query.text.label": "Zu klassifizierender Text",
   "query.text.placeholder": "z. B. Der Satz des Pythagoras im rechtwinkligen Dreieck",
+  "query.threshold.label": "Schwellenwert <span class=\"muted\">(leer = die abgestimmten des Modells · 0–1 = ein Wert für alle Labels, höher = strenger; nur bei Multilabel-Modellen)</span>",
   "query.topk.label": "Top-k <span class=\"muted\">(leer = das Modell entscheidet über seine abgestimmten Schwellenwerte · N = die N wahrscheinlichsten anzeigen, Einträge unter ihrem Schwellenwert erscheinen abgeblendet)</span>",
 
   "explain.allLabels": {"one": "Das einzige Label", "other": "Alle {count} Labels, stärkste zuerst"},

@@ -74,6 +74,10 @@ function querySettings() {
   };
   const topk = $("#query-topk").value;
   if (topk !== "") body.top_k = Number(topk);
+  // One cut for every label instead of the tuned ones -- the lever for stricter or looser
+  // suggestions, which only the API offered (audit 2026-09-30, improvement 11).
+  const threshold = $("#query-threshold").value;
+  if (threshold !== "") body.threshold = Number(threshold);
   return body;
 }
 
@@ -417,6 +421,8 @@ async function runCsvFile(model, out) {
   form.append("separator", $("#query-separator").value || ";");
   const topk = $("#query-topk").value;
   if (topk !== "") form.append("top_k", topk);
+  const threshold = $("#query-threshold").value;
+  if (threshold !== "") form.append("threshold", threshold);
 
   const name = input.files[0].name.replace(/\.csv$/i, "") + "-predictions.csv";
   $("#query-status").textContent = t("query.csv.progress");

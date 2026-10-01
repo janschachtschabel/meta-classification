@@ -571,6 +571,16 @@ brackets are its finding numbers.
   times; the chart README named `/health` for all three probes, where readiness asks
   `/ready`. The UI guide's queue and CI's "13 pins" were corrected with U05 and B05. (W08)
 
+### Added
+
+Improvements the audit of 2026-09-30 proposed, taken where they are small and close a gap
+it found.
+
+- **A threshold in the query form.** `/predict` takes one confidence cut for every label in
+  place of the tuned ones, and the form offered no way to set it — stricter or looser
+  suggestions were a lever of the API only. Blank keeps the model's own; the CSV mode sends
+  it too. Multilabel models only, as the hint says. (Improvement 11)
+
 ## [4.0.1] — 2026-09-27
 
 The findings of the audit of the same day (`docs/audits/2026-09-27-audit.md`): two security

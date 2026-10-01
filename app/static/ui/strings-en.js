@@ -129,6 +129,7 @@ const STRINGS_EN = {
   "query.table.title": "Title",
   "query.text.label": "Text to classify",
   "query.text.placeholder": "e.g. Der Satz des Pythagoras im rechtwinkligen Dreieck",
+  "query.threshold.label": "Threshold <span class=\"muted\">(blank = the model's tuned ones · 0–1 = one cut for every label, higher = stricter; multilabel models only)</span>",
   "query.topk.label": "Top-k <span class=\"muted\">(blank = model decides via its tuned thresholds · N = show the N most probable, entries below their threshold appear dimmed)</span>",
 
   "explain.allLabels": {"one": "The only label", "other": "All {count} labels, strongest first"},

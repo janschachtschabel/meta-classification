@@ -1036,3 +1036,46 @@ def test_the_queue_line_is_written_only_when_it_changes(tmp_path):
     assert result["writes"] == 1, f"the queue line was written {result['writes']} times"
     assert "fach_b" in result["text"]
     assert result["errors"] == []
+
+
+
+# --- Improvement 11: the query form can set the threshold ------------------------------------
+
+
+@needs_node
+def test_the_query_form_sends_a_threshold_when_one_is_set(tmp_path):
+    """Improvement 11 (audit 2026-09-30): /predict takes one confidence cut for every label,
+    and the query form offered no way to set it -- stricter or looser suggestions were a lever
+    of the API only. Blank keeps the model's tuned thresholds."""
+    result = _run(tmp_path, modules=("query.js",), body="""
+        el("#query-topk").value = "";
+        el("#query-threshold").value = "0.3";
+        const set = querySettings();
+        el("#query-threshold").value = "";
+        const unset = querySettings();
+        report({ set, unset });
+    """)
+
+    assert result["set"]["threshold"] == 0.3
+    assert "threshold" not in result["unset"]
+
+
+@needs_node
+def test_a_csv_run_sends_the_threshold_too(tmp_path):
+    """The CSV mode posts a form to /predict/csv, which takes the same field."""
+    result = _run(tmp_path, modules=("query.js",), body="""
+        el("#query-file").files = [new File(["title\\nBruch"], "in.csv")];
+        el("#query-separator").value = ";";
+        el("#query-topk").value = "";
+        el("#query-threshold").value = "0.3";
+        let sent = [];
+        Api.downloadForm = async (path, form) => {
+          sent = [...form.entries()].filter(([, v]) => typeof v === "string");
+          return { blob: new Blob(["row,text,uri,label,confidence\\n"]), headers: new Headers() };
+        };
+        globalThis.fmtFixed = (v, d) => Number(v).toFixed(d);
+        await runCsvFile("m", { innerHTML: "" });
+        report({ sent });
+    """)
+
+    assert ["threshold", "0.3"] in result["sent"], result["sent"]
