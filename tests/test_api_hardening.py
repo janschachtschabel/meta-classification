@@ -158,6 +158,37 @@ def test_an_upper_case_suffix_is_a_dataset_suffix_on_import_and_in_the_listing(m
     assert listed == {"EXPORT.CSV": 1, "Neu.CSV": 1, "KOPIERT.CSV.GZ": 2}
 
 
+def test_a_422_does_not_mirror_the_input(monkeypatch, tmp_path):
+    """V05 (audit 2026-09-30): every error carried the invalid value back as `input`, so a
+    text over the cap came back whole -- 10.4 MB in, 10.4 MB out, to a readonly key. The
+    field, the rule and the message say what to fix; the caller has the value."""
+    client = _fresh_client(monkeypatch, tmp_path)
+
+    response = client.post("/predict", headers=RO, json={"texts": ["x" * 200_000]})
+
+    assert response.status_code == 422, response.text[:200]
+    assert len(response.content) < 2_000, f"{len(response.content):,} bytes"
+    assert response.json()["errors"][0]["loc"] == ["body", "texts", 0]
+    assert all("input" not in error for error in response.json()["errors"])
+
+
+@pytest.mark.parametrize("body", [
+    '{"texts": ["Bruchrechnung \\udc00 lösen"]}',  # a lone surrogate: not text in any encoding
+    '{"texts": ["Bruchrechnung"], "threshold": NaN}',  # Python's json reads NaN; JSON has none
+])
+def test_an_input_json_cannot_render_is_a_422_not_a_500(monkeypatch, tmp_path, body):
+    """V05: pydantic refuses both values -- and the 422 that echoed them could not be
+    rendered (a surrogate has no UTF-8 form, and the response refuses NaN), so the answer
+    was a 500 instead, for /predict, /predict/explain and /metadata alike."""
+    client = _fresh_client(monkeypatch, tmp_path)
+
+    response = client.post("/predict", headers={**RO, "Content-Type": "application/json"},
+                           content=body.encode("utf-8"))
+
+    assert response.status_code == 422, response.text
+    assert "Validation error at body." in response.json()["detail"]
+
+
 def test_unknown_profile_detail_has_no_stray_quotes(monkeypatch, tmp_path):
     """str(KeyError) reprs its message -> the 400 detail arrived wrapped in
     literal quotes. The detail must start with the message itself."""

@@ -189,6 +189,12 @@ brackets are its finding numbers.
   ending in `.CSV` no longer gets `.csv` appended. (V04)
 - **`FAECHER.ZIP` can be imported as a model.** The model import compared `.zip`
   case-sensitively as well and refused the bundle as not being a ZIP. (Found beside V04.)
+- **A 422 no longer mirrors the input, and no longer turns into a 500.** Each entry of
+  `errors` carried the refused value as `input`: a text over the cap came back whole (10.4 MB
+  in, 10.4 MB out), and a value no response can carry — a lone surrogate such as `\udc00`,
+  which has no UTF-8 form, or a JSON `NaN` — made the 422 itself fail, so `/predict`,
+  `/predict/explain` and `/metadata` answered 500. `input` is left out; `loc`, `msg`, `type`
+  and `ctx` remain. (V05)
 
 ## [4.0.1] — 2026-09-27
 

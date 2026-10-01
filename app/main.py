@@ -92,8 +92,13 @@ async def _validation_error_handler(
     client code written against any other 4xx — ``body["detail"].startswith(...)`` — raises
     on exactly the status a client hits most while integrating (audit API-7). The per-field
     information is what a form needs, so it is kept under ``errors`` rather than dropped.
+
+    Without the ``input`` each error carries: echoed, a text over the cap came back whole
+    (10.4 MB in, 10.4 MB out), and a value pydantic refuses because no response can carry
+    it -- a lone surrogate has no UTF-8 form, and the JSON encoder refuses NaN -- turned
+    the 422 into a 500 (audit 2026-09-30, V05). Field, rule and message say what to fix.
     """
-    errors = exc.errors()
+    errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
     where = ".".join(str(part) for part in errors[0].get("loc", ())) if errors else "request"
     first = errors[0].get("msg", "invalid") if errors else "invalid"
     detail = f"Validation error at {where}: {first}"
@@ -101,8 +106,8 @@ async def _validation_error_handler(
         detail += f" (and {len(errors) - 1} more)"
     return JSONResponse(
         status_code=422,
-        # jsonable_encoder: an error's `input`/`ctx` can hold whatever the caller sent,
-        # including values json.dumps refuses (bytes, a ValueError from a validator).
+        # jsonable_encoder: an error's `ctx` can hold values json.dumps refuses (the
+        # ValueError a validator raised).
         content={"detail": detail, "errors": jsonable_encoder(errors)},
     )
 
