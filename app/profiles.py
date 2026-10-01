@@ -149,13 +149,32 @@ class TrainingConfig:
     # only to columns that request actually trains on.
     text_column_weights: dict[str, int] = field(default_factory=dict)
 
+    def default_min_samples(self) -> int:
+        """What a /train request that omits `min_samples_per_label` gets: this config's
+        value, else the declared 20. The request's own default used to win whenever the
+        field was left out, while /train/profiles announced this value (audit 2026-09-30,
+        T11). An explicit null is a different request -- auto-scaling -- not an omission.
+        """
+        if self.min_samples_per_label is not None:
+            return self.min_samples_per_label
+        return DEFAULT_MIN_SAMPLES_PER_LABEL
+
     def get(self, name: str) -> Profile:
         if name not in self.profiles:
             raise KeyError(f"Unknown profile {name!r}. Available: {sorted(self.profiles)}")
         return self.profiles[name]
 
 
-# Mirrors config.yaml — see there for the measurements behind each value.
+# A label needs this many tagged rows unless the request or config.yaml says otherwise:
+# declared rather than auto-scaled, because dropping labels is a decision worth seeing.
+DEFAULT_MIN_SAMPLES_PER_LABEL = 20
+
+# The shipped config.yaml's `preprocessing.text_column_weights`, for a deployment without the
+# file: missing it, the weights the WLO exports were measured with silently went (T11).
+_DEFAULT_TEXT_COLUMN_WEIGHTS = {"properties.cclom:title": 2, "properties.cclom:general_keyword": 2}
+
+# Mirrors config.yaml — see there for the measurements behind each value. Field for field:
+# `tests/test_training.py` compares every one, after `stratified_splits` drifted (T11).
 # Three rungs, strictly ordered by cost: fast < auto < best. The C range is fixed at
 # 2 ... 32 for all of them (measured: quality DROPS above 32), so the rungs differ in the
 # two levers that were measured to pay — character n-grams and the fold count. `fast`
@@ -168,10 +187,10 @@ _DEFAULTS: dict[str, Profile] = {
                     use_char=False, max_word_features=200_000, cv_folds=0),
     "auto": Profile("auto", "Word+char TF-IDF, 3-fold CV, 3 C values. The recommended default.",
                     tune_threshold=True, threshold_per_label=True,
-                    c_grid=[2.0, 8.0, 32.0], cv_folds=3),
+                    c_grid=[2.0, 8.0, 32.0], cv_folds=3, stratified_splits=True),
     "best": Profile("best", "Word+char TF-IDF, 5-fold CV. Most accurate evaluation; ~1.9x auto.",
                     tune_threshold=True, threshold_per_label=True,
-                    c_grid=[2.0, 8.0, 32.0], cv_folds=5),
+                    c_grid=[2.0, 8.0, 32.0], cv_folds=5, stratified_splits=True),
 }
 
 
@@ -193,7 +212,8 @@ def load_training_config(path: str | Path) -> TrainingConfig:
         mtime = path.stat().st_mtime
     except OSError:
         # Missing (or unreadable): the code defaults, and no cache entry to go stale.
-        return TrainingConfig(profiles=dict(_DEFAULTS))
+        return TrainingConfig(profiles=dict(_DEFAULTS),
+                              text_column_weights=dict(_DEFAULT_TEXT_COLUMN_WEIGHTS))
     return _parse_training_config(path, mtime)
 
 

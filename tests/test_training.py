@@ -1083,17 +1083,31 @@ def test_shipped_config_and_code_defaults_describe_the_same_profiles():
     """`profiles._DEFAULTS` is the fallback when config.yaml is missing, so the two are
     duplicated by design — and silently drift apart, which would make behaviour depend on
     whether the file happens to exist. Pin them together."""
+    from dataclasses import asdict
+
     from app.profiles import _DEFAULTS, load_training_config
 
     shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
     assert set(shipped.profiles) == set(_DEFAULTS), "profile names differ"
     for name, profile in shipped.profiles.items():
-        fallback = _DEFAULTS[name]
-        assert profile.c_grid == fallback.c_grid, f"{name}: C grid differs"
-        assert profile.use_char == fallback.use_char, f"{name}: use_char differs"
-        assert profile.max_word_features == fallback.max_word_features, f"{name}: word cap differs"
-        assert profile.threshold_per_label == fallback.threshold_per_label, f"{name}: thresholds differ"
-        assert profile.cv_folds == fallback.cv_folds, f"{name}: evaluation mode differs"
+        # Every field but the prose: comparing five of them let `stratified_splits` drift --
+        # without config.yaml, `auto` and `best` split unstratified (audit 2026-09-30, T11).
+        shipped_fields = {k: v for k, v in asdict(profile).items() if k != "description"}
+        fallback_fields = {k: v for k, v in asdict(_DEFAULTS[name]).items() if k != "description"}
+        assert shipped_fields == fallback_fields, f"{name}: the code default differs from config.yaml"
+
+
+def test_without_config_yaml_the_training_defaults_are_the_shipped_ones(tmp_path):
+    """The rest of the file falls back too: without it, the column weights the shipped
+    config applies to WLO exports were gone (audit 2026-09-30, T11)."""
+    from app.profiles import load_training_config
+
+    shipped = load_training_config(FIXTURES.parent.parent / "config.yaml")
+    fallback = load_training_config(tmp_path / "missing.yaml")
+
+    for field in ("text_column_weights", "min_samples_per_label", "min_text_length",
+                  "drop_duplicates", "validation_size", "test_size", "cv_folds", "default_profile"):
+        assert getattr(fallback, field) == getattr(shipped, field), field
 
 
 def test_loading_a_bundle_with_a_container_label_warns(tmp_path, caplog):

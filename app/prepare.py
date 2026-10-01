@@ -185,9 +185,11 @@ def prepare_data(
 
     # --- Labels + task type ---
     on_progress(phase="preparing", progress=20, message=f"{n_texts} texts. Preparing labels...")
-    req_min = req.get("min_samples_per_label")
-    override_min = req_min if req_min is not None else training_cfg.min_samples_per_label
-    min_samples = data_mod.auto_min_samples(n_texts, override_min)
+    # A number, or None to scale with the dataset; a caller that left the key out gets the
+    # config's default (the /train route fills it in for its own requests).
+    requested = (req["min_samples_per_label"] if "min_samples_per_label" in req
+                 else training_cfg.default_min_samples())
+    min_samples = data_mod.auto_min_samples(n_texts, requested)
     y_all, classes, row_keep = data_mod.prepare_targets(loaded.label_lists, min_samples)
     counts = Counter(label for labels in loaded.label_lists for label in set(labels))
     # A label with enough rows that did not survive failed the other half of the rule: too

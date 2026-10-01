@@ -125,6 +125,8 @@ class TrainRequest(BaseModel):
             "rarer labels are dropped. Declared (not auto-scaled) because dropping labels is a "
             "decision worth seeing: 20 suits datasets of a few thousand rows and up, but a small "
             "dataset needs a lower value or training aborts with 'not enough data'. "
+            "Omitted = the server's default (`default_min_samples_per_label` in "
+            "`GET /train/profiles`: config.yaml's value, else 20). "
             "null = auto (scales with dataset size: 2 / 5 / 20 / 35)."
         ),
     )

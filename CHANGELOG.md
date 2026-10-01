@@ -94,6 +94,12 @@ brackets are its finding numbers.
 - **A label called "NA", "None" or "null" is a label.** pandas read such cells as missing,
   and their rows vanished from training; the label column is now read as written, like the
   provenance marks already were. (T08)
+- **An omitted `min_samples_per_label` is the configured one, as `/train/profiles` says.** The
+  request's own default (20) won whenever the field was left out, so `config.yaml`'s value
+  never applied, while `/train/profiles` announced it as the default. Now: the request's
+  value (or `null` for auto-scaling), else `config.yaml`'s, else 20 — and the run records the
+  number it used. Without `config.yaml`, the built-in profiles also lost `stratified_splits`
+  and the text-column weights; they now match the shipped file field for field. (T11)
 
 ### Fixed
 

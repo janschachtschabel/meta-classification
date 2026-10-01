@@ -66,7 +66,7 @@ async def list_profiles(
         # Exposed so a client (the admin UI does) can pre-fill its form with what
         # would actually happen, instead of hard-coding a guess.
         "default_text_column_weights": cfg.text_column_weights,
-        "default_min_samples_per_label": cfg.min_samples_per_label,
+        "default_min_samples_per_label": cfg.default_min_samples(),
         "profiles": [
             {
                 "name": p.name,
@@ -177,6 +177,10 @@ async def train(
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
 
     req = body.model_dump(exclude=_REQ_EXCLUDED)
+    # Left out, it is the server's default -- config.yaml's, else 20 -- and the run records
+    # the number it used. Sent as null, it is auto-scaling (T11).
+    if "min_samples_per_label" not in body.model_fields_set:
+        req["min_samples_per_label"] = cfg.default_min_samples()
     # exclude_none keeps the bundle from claiming fields the caller left unset.
     req["info"] = body.info.model_dump(exclude_none=True) if body.info else None
     # In a child process by default (settings.training_isolation): a hard stop ends the
