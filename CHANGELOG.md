@@ -181,6 +181,12 @@ brackets are its finding numbers.
   among its most influential words, each variant fed them to the model as words, and they
   took places in the 60-word budget. The words are now those of the text the model reads,
   cleaned with the version the bundle was trained with. (V03)
+- **`EXPORT.CSV` can be imported, and is listed.** The import compared the suffix
+  case-sensitively and refused the upper-case name Windows tools write, although every
+  other route takes a dataset name regardless of case; and the listing globbed `*.csv`,
+  which on Linux misses such a file even where it was copied onto the volume. Both now
+  apply the rule the other routes do, so the name is kept as uploaded, and a `new_name`
+  ending in `.CSV` no longer gets `.csv` appended. (V04)
 
 ## [4.0.1] — 2026-09-27
 

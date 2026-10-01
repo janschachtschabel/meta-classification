@@ -97,7 +97,11 @@ def list_datasets(
     # for large datasets, not an exception.
     # Paged before the row counts are read, not after: each one reads a whole CSV, so
     # narrowing first is the difference between one file and all of them.
-    for csv in page(sorted([*data_dir.glob("*.csv"), *data_dir.glob("*.csv.gz")]), limit, offset):
+    # By `is_dataset_name`, the rule every other route applies, and not by glob: on Linux a
+    # glob is case-sensitive, so `EXPORT.CSV` was servable by name but never listed
+    # (audit 2026-09-30, V04).
+    datasets = sorted(path for path in data_dir.iterdir() if data_mod.is_dataset_name(path.name))
+    for csv in page(datasets, limit, offset):
         stat = csv.stat()
         out.append({"name": csv.name, "size_human": _format_size(stat.st_size),
                     "rows": data_mod.count_rows(csv)})
@@ -201,16 +205,16 @@ async def import_dataset(
 ) -> dict:
     """Upload a CSV (optionally gzipped) into the data directory (no URL fetch -> no SSRF).
 
-    Accepts `.csv` and `.csv.gz`; the compressed form is read natively everywhere and is the
-    practical choice for large exports. `new_name` overrides the file name (`.csv` is
-    appended if it carries neither suffix). Size limit active; existing names are rejected
-    with 409. **Auth:** admin.
+    Accepts `.csv` and `.csv.gz`, in any letter case (`EXPORT.CSV`); the compressed form is
+    read natively everywhere and is the practical choice for large exports. `new_name`
+    overrides the file name (`.csv` is appended if it carries neither suffix). Size limit
+    active; existing names are rejected with 409. **Auth:** admin.
     """
-    accepted = data_mod.DATASET_SUFFIXES
-    if not file.filename or not file.filename.endswith(accepted):
+    # Case-insensitive, as everywhere else: Windows tools write `EXPORT.CSV` (V04).
+    if not file.filename or not data_mod.is_dataset_name(file.filename):
         raise HTTPException(400, "File must be a .csv or .csv.gz file.")
     name = new_name or file.filename
-    if not name.endswith(accepted):
+    if not data_mod.is_dataset_name(name):
         name += ".csv"
     safe_name(name, "dataset name")
     target = settings.data_dir / name

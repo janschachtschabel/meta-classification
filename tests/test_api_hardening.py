@@ -137,6 +137,27 @@ def test_a_line_break_is_refused_as_a_separator_everywhere(monkeypatch, tmp_path
         r.text for r in (train, analyze, validate, evaluate)]
 
 
+def test_an_upper_case_suffix_is_a_dataset_suffix_on_import_and_in_the_listing(monkeypatch, tmp_path):
+    """V04 (audit 2026-09-30): Windows tools name an export `EXPORT.CSV`. The import compared
+    the suffix case-sensitively and refused it, while every other route takes the name as
+    `data.is_dataset_name` does, ignoring case -- and the listing globbed `*.csv`, which on
+    Linux misses such a file even where an operator copied it onto the volume."""
+    import gzip
+
+    client = _fresh_client(monkeypatch, tmp_path)
+    imported = client.post("/datasets/import", headers=ADMIN,
+                           files={"file": ("EXPORT.CSV", b"a;b\n1;2\n", "text/csv")})
+    renamed = client.post("/datasets/import", headers=ADMIN, data={"new_name": "Neu.CSV"},
+                          files={"file": ("x.csv", b"a;b\n1;2\n", "text/csv")})
+    (tmp_path / "data" / "KOPIERT.CSV.GZ").write_bytes(gzip.compress(b"a;b\n1;2\n3;4\n"))
+
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["dataset_name"] == "EXPORT.CSV"
+    assert renamed.json()["dataset_name"] == "Neu.CSV", "no `.csv` appended to a suffix"
+    listed = {d["name"]: d["rows"] for d in client.get("/datasets", headers=RO).json()}
+    assert listed == {"EXPORT.CSV": 1, "Neu.CSV": 1, "KOPIERT.CSV.GZ": 2}
+
+
 def test_unknown_profile_detail_has_no_stray_quotes(monkeypatch, tmp_path):
     """str(KeyError) reprs its message -> the 400 detail arrived wrapped in
     literal quotes. The detail must start with the message itself."""
