@@ -9,8 +9,6 @@
    on demand rather than on open, and once per click. */
 "use strict";
 
-const analyzeState = { columns: [], name: "" };
-
 function columnPickers(columns) {
   const options = (selected) => columns.map((c) =>
     `<option value="${esc(c)}"${selected === c ? " selected" : ""}>${esc(c)}</option>`).join("");
@@ -87,7 +85,7 @@ function analysisHtml(body) {
   </div>`;
 }
 
-async function runAnalysis(frame) {
+async function runAnalysis(frame, name) {
   const textColumns = [...frame.querySelectorAll("#ds-text-cols option")]
     .filter((o) => o.selected).map((o) => o.value);
   const labelColumn = frame.querySelector("#ds-label-col").value;
@@ -102,7 +100,7 @@ async function runAnalysis(frame) {
   button.textContent = t("common.readingEveryRow");
   try {
     const body = await Api.post("/datasets/analyze", {
-      dataset_name: analyzeState.name, text_columns: textColumns, label_column: labelColumn,
+      dataset_name: name, text_columns: textColumns, label_column: labelColumn,
     });
     frame.insertAdjacentHTML("beforeend", analysisHtml(body));
   } catch (err) {
@@ -127,14 +125,19 @@ async function showDatasetDetail(name) {
   try {
     info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
   } catch (err) {
+    if (!frame.isConnected) return;
     frame.innerHTML = `<h2 id="dataset-detail-title">${esc(name)}</h2>
       <p class="error" role="alert">${esc(err.message)}</p>
       <button type="button" class="ghost" data-close>${t("common.close")}</button>`;
     frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
     return;
   }
-  analyzeState.columns = info.columns || [];
-  analyzeState.name = name;
+  // The dialog is rebuilt on every open, so a read still running when another dataset was
+  // opened answers into a panel nobody sees. It used to write the open dataset's name into a
+  // module-wide object on the way, and "Analyse" in the newer panel then analysed the older
+  // dataset (audit 2026-09-30, U08). The name now belongs to the panel that shows it.
+  if (!frame.isConnected) return;
+  const columns = info.columns || [];
 
   const sample = info.sample || [];
   frame.innerHTML = `
@@ -144,17 +147,17 @@ async function showDatasetDetail(name) {
               aria-label="${esc(t("common.closeDetails"))}">${t("common.close")}</button>
     </div>
     <p class="muted">${t("datasetDetail.subtitle", {
-      columns: analyzeState.columns.length, rows: sample.length })}</p>
+      columns: columns.length, rows: sample.length })}</p>
     <div class="table-wrap" tabindex="0"><table>
-      <thead><tr>${analyzeState.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
-      <tbody>${sample.map((row) => `<tr>${analyzeState.columns.map(
+      <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+      <tbody>${sample.map((row) => `<tr>${columns.map(
         (c) => `<td>${esc(String(row[c] ?? "")).slice(0, 120)}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
 
     <h3>${t("datasetDetail.beforeTraining")}</h3>
-    ${columnPickers(analyzeState.columns)}`;
+    ${columnPickers(columns)}`;
   frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
-  frame.querySelector("#ds-analyze").addEventListener("click", () => runAnalysis(frame));
+  frame.querySelector("#ds-analyze").addEventListener("click", () => runAnalysis(frame, name));
   frame.focus();
 }
 

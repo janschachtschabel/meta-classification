@@ -415,6 +415,11 @@ brackets are its finding numbers.
   spaces collapsed: a column `"title "` or a file `two  spaces.csv` came back as `title` and
   `two spaces.csv`, and the server answered 400 or 404 for a name it had listed itself. Every
   option now carries its name as its value. (U07)
+- **"Analyse" in a dataset's panel analyses that dataset.** The panel kept the open dataset's
+  name in a module-wide object that every answer wrote: open A, close it while it is still
+  reading, open B — and A's late answer pointed B's "Analyse" button at A. The name now
+  belongs to the panel that shows it, and an answer for a panel that was replaced is
+  dropped. (U08)
 
 ## [4.0.1] — 2026-09-27
 

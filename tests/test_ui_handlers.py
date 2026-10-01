@@ -450,3 +450,59 @@ def test_a_rate_limit_that_does_not_lift_still_ends_the_batch(tmp_path):
 
     assert result["calls"] == 4, "one attempt and three waits, then the batch gives up"
     assert result["errors"] == ["train.partialFailure"]
+
+
+
+# --- U08: state that outlived its moment ------------------------------------------------------
+
+# The dataset panel: a <dialog> rebuilt on every open. Each open gets a fresh frame, and the
+# frames of earlier opens are disconnected, as the browser leaves them when innerHTML replaces
+# them. The reads of /datasets/{name} answer when a test says so.
+_DATASET_PANEL = """
+    const dialog = el("#dataset-detail");
+    dialog.showModal = () => {};
+    const frames = [];
+    dialog.querySelector = (sel) => {
+      if (sel !== ".detail") return null;
+      frames.forEach((f) => { f.isConnected = false; });
+      const parts = {};
+      const frame = {
+        isConnected: true, innerHTML: "", focus() {},
+        insertAdjacentHTML(where, html) { this.innerHTML += html; },
+        querySelector: (inner) => (parts[inner] ||= { value: "", textContent: "", disabled: false,
+          addEventListener(type, run) { this.run = run; }, remove() {} }),
+        querySelectorAll: (inner) =>
+          (inner === "#ds-text-cols option" ? [{ selected: true, value: "title" }] : []),
+      };
+      frames.push(frame);
+      return frame;
+    };
+    const answers = {};
+    Api.get = (url) => new Promise((resolve) => { answers[url] = resolve; });
+    const analyzed = [];
+    Api.post = async (url, body) => {
+      analyzed.push(body.dataset_name);
+      return { total_samples: 1, unique_labels: 1, label_threshold_analysis: {},
+               recommended_min_samples_per_label: 5, rare_labels_under_10: {} };
+    };
+"""
+
+
+@needs_node
+def test_a_late_answer_for_one_dataset_does_not_retarget_another(tmp_path):
+    """U08 (audit 2026-09-30): the panel kept the open dataset's name in a module-wide
+    object, and every answer wrote it. Open A, close it while it is still reading, open B:
+    A's late answer set the name back to A, and "Analyse" in B's panel analysed A."""
+    result = _run(tmp_path, modules=("dataset-detail.js",), body=_DATASET_PANEL + """
+        const first = showDatasetDetail("a.csv");
+        const second = showDatasetDetail("b.csv");
+        answers["/datasets/b.csv"]({ columns: ["title", "label"], sample: [] });
+        await second;
+        answers["/datasets/a.csv"]({ columns: ["title", "label"], sample: [] });
+        await first;
+        await frames[1].querySelector("#ds-analyze").run();
+        report({ analyzed, errors });
+    """)
+
+    assert result["errors"] == []
+    assert result["analyzed"] == ["b.csv"]
