@@ -13,6 +13,7 @@ nothing and still hold without helm.
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from itertools import chain
@@ -368,3 +369,29 @@ def test_tls_that_covers_the_host_renders(covering):
 
     [ingress] = _of_kind(objects, "Ingress")
     assert ingress["spec"]["tls"][0]["hosts"] == [covering]
+
+
+# --- B11: GitLab's chart job fails when a guard fires on values meant to pass --------------------
+
+
+def _gitlab_chart_commands() -> list[list[str]]:
+    jobs = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+    return [shlex.split(line) for line in jobs["helm lint"]["script"] if line.startswith("helm ")]
+
+
+def test_the_gitlab_chart_job_renders_what_it_lints():
+    """B11 (audit 2026-09-30): `helm lint` runs the templates in lint mode, where `required`
+    and `fail` only log [INFO] -- the job ended 0 with every guard firing. It now also renders,
+    which fails on the first guard; run here exactly as the job runs it, from the repo root."""
+    commands = _gitlab_chart_commands()
+    renders = [c for c in commands if c[1] == "template"]
+    assert renders, "the GitLab chart job renders nothing, so no guard can fail it"
+
+    for command in commands:
+        done = subprocess.run([HELM, *command[1:]], cwd=ROOT, capture_output=True, text=True,  # noqa: S603
+                              timeout=120, check=False)
+        assert done.returncode == 0, f"{' '.join(command)}:\n{done.stdout}{done.stderr}"
+
+    refused = subprocess.run([HELM, *renders[0][1:], "--set", "replicaCount=2"], cwd=ROOT,  # noqa: S603
+                             capture_output=True, text=True, timeout=120, check=False)
+    assert refused.returncode != 0, "a guard firing does not fail the GitLab chart job"

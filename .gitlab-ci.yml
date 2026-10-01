@@ -78,7 +78,13 @@ helm lint:
     name: alpine/helm:3.16.4
     entrypoint: [""]
   script:
-    - helm lint deploy/helm/classification-api
+    # `helm lint` runs the templates in lint mode, where `required` and `fail` only log
+    # [INFO]: it ended 0 with every guard firing (audit 2026-09-30, B11). So it lints, strictly,
+    # values that satisfy every guard, and the same values are rendered -- a guard firing on
+    # them fails the job. That the guards fire where they should is tests/test_helm_chart.py's,
+    # in the pytest job.
+    - helm lint --strict deploy/helm/classification-api -f deploy/helm/classification-api/ci/lint-values.yaml
+    - helm template release deploy/helm/classification-api -f deploy/helm/classification-api/ci/lint-values.yaml
 
 # -----------------------------------------------------------------------------
 # Types (mypy) — same gate as CLAUDE.md ("Types: python -m mypy app ...")
@@ -96,6 +102,9 @@ mypy:
     - pip install -r requirements-dev.txt
   script:
     - python -m mypy app --config-file pyproject.toml
+    # As GitHub does: the two scripts that write inside a bundle earn the same gate (audit T-5);
+    # this job checked app/ only (audit 2026-09-30, B11).
+    - python -m mypy scripts/patch_bundle_labels.py scripts/prune_bundle_labels.py --config-file pyproject.toml
 
 # -----------------------------------------------------------------------------
 # Tests (pytest) — the actual regression safety net. Runs BEFORE the Docker
@@ -150,6 +159,31 @@ pip-audit:
     - pip install pip-audit
   script:
     - python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off
+    # The same tree as a CycloneDX SBOM, kept with the pipeline: GitHub's image carries one from
+    # buildx, and this pipeline -- the one feeding the deployed registry -- had none (audit
+    # 2026-09-30, B11).
+    - python -m pip_audit -r requirements-hashes.lock --require-hashes --disable-pip --progress-spinner off --format cyclonedx-json --output sbom.cdx.json
+  artifacts:
+    reports:
+      cyclonedx: sbom.cdx.json
+
+# -----------------------------------------------------------------------------
+# Licences of the tree the image ships -- GitHub's gate (ci.yml, audit job), verbatim:
+# pip-licenses pinned as in requirements-dev.txt, then the hashed tree, so its pins win;
+# --partial-match because no package calls its licence just "GPL" (audit 2026-09-30, B05).
+# This pipeline had no licence gate at all (B11).
+# -----------------------------------------------------------------------------
+licences:
+  stage: test
+  timeout: 10 minutes
+  interruptible: true
+  image: python:3.11-slim-bookworm
+  before_script:
+    - cd "$CI_PROJECT_DIR"
+    - pip install pip-licenses==5.5.5
+    - pip install --require-hashes -r requirements-hashes.lock
+  script:
+    - python -m piplicenses --fail-on "GPL;AGPL;LGPL" --partial-match --format markdown --order license
 
 # -----------------------------------------------------------------------------
 # Build Docker image + push to (self-hosted) registry — main + develop

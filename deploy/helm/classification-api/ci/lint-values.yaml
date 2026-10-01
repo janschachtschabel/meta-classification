@@ -1,0 +1,14 @@
+# Values that satisfy every guard of the chart, for GitLab's chart job (`helm lint --strict`
+# and `helm template`): a guard firing on them fails the job (audit 2026-09-30, B11).
+# Placeholders only -- never install with these. Kept out of the packaged chart (.helmignore).
+config:
+  auth:
+    adminKey: lint-placeholder-not-a-key
+    readonlyKey: lint-placeholder-not-a-key
+  limits:
+    forwardedAllowIps: 10.42.0.0/16
+ingress:
+  tls:
+    - hosts:
+        - classify.127.0.0.1.nip.io
+      secretName: lint-tls

@@ -5,3 +5,5 @@
 .gitmodules
 .idea/
 .vscode/
+# The GitLab chart job's lint values (placeholders), not part of the chart.
+ci/

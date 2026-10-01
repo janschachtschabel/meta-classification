@@ -519,6 +519,13 @@ brackets are its finding numbers.
   scales down). And the TLS guard only checked that `ingress.tls` was not empty, so an entry
   without hosts, or one for another host, passed while the served host went unencrypted —
   every host in `ingress.hosts` now has to be named by a TLS entry. (B11)
+- **The GitLab pipeline gates what GitHub's gates.** It feeds the deployed registry, and it
+  type-checked `app/` only, had no licence gate and kept no SBOM. It now type-checks the two
+  bundle-writing scripts as GitHub does, runs GitHub's licence gate verbatim, and keeps a
+  CycloneDX SBOM of the hashed tree with each pipeline. Its chart job ran `helm lint`, which
+  only logs a guard that fires and ends 0: it now lints strictly and renders values that
+  satisfy every guard (`ci/lint-values.yaml`, kept out of the packaged chart), so a guard
+  firing on them fails the job. (B11)
 
 ## [4.0.1] — 2026-09-27
 

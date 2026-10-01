@@ -488,3 +488,44 @@ def test_the_image_workflow_claims_no_signature_it_does_not_make():
     signs = "cosign" in workflow or "attest-build-provenance" in workflow
 
     assert signs or "Sigstore" not in workflow
+
+
+# --- B11: the pipeline that feeds the deployed registry gates what GitHub's gates ----------------
+
+
+def _commands(lines: list[str], prefix: str) -> set[str]:
+    return {" ".join(line.split()) for line in lines if line.strip().startswith(prefix)}
+
+
+def test_gitlab_type_checks_what_github_type_checks():
+    """B11 (audit 2026-09-30): GitHub type-checks `app` and the two scripts that write inside
+    a bundle; GitLab, the pipeline that feeds the deployed registry, checked `app` only."""
+    [types] = [s for s in _workflow("ci.yml")["jobs"]["api"]["steps"] if s.get("name") == "Types (mypy)"]
+    github = _commands(" ".join(types["run"].split("\\\n")).splitlines(), "python -m mypy")
+    gitlab = _commands(_gitlab()["mypy"]["script"], "python -m mypy")
+
+    assert github and github == gitlab, (github, gitlab)
+
+
+def test_gitlab_runs_the_licence_gate_github_runs():
+    """B11: GitLab had no licence gate at all -- the B05 command, verbatim, with the same pin
+    and the same tree."""
+    github = _licence_step().splitlines()
+    gitlab = [line for job in _gitlab().values() if isinstance(job, dict)
+              for line in job.get("before_script", []) + job.get("script", [])]
+
+    for prefix in ("python -m piplicenses", "pip install pip-licenses==", "pip install --require-hashes"):
+        assert _commands(github, prefix) and _commands(github, prefix) <= _commands(gitlab, prefix), prefix
+
+
+def test_gitlab_keeps_an_sbom_of_what_it_ships():
+    """B11: GitHub's image carries an SBOM from buildx; GitLab's pipeline produced none. It now
+    keeps a CycloneDX SBOM of the hashed tree with the pipeline."""
+    reports = [job["artifacts"]["reports"] for job in _gitlab().values()
+               if isinstance(job, dict) and "reports" in job.get("artifacts", {})]
+    sbom = [r["cyclonedx"] for r in reports if "cyclonedx" in r]
+    producers = [line for job in _gitlab().values() if isinstance(job, dict)
+                 for line in job.get("script", []) if "--format cyclonedx-json" in line]
+
+    assert sbom and producers, "no CycloneDX SBOM in the GitLab pipeline"
+    assert any("requirements-hashes.lock" in line for line in producers)
