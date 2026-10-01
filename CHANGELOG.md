@@ -360,6 +360,9 @@ brackets are its finding numbers.
   of two wall-clock readings, so a clock set back during a run (NTP after a suspend, a VM
   migration) recorded a negative duration. They are measured on the monotonic clock now;
   timestamps stay wall-clock. (R15)
+- **A hard-stopped run is in the history.** A hard stop resets the status at once and drops
+  the run's own finish, so the run left no record at all; it is now recorded as `stopped`
+  when it is stopped. (R15)
 
 ## [4.0.1] — 2026-09-27
 

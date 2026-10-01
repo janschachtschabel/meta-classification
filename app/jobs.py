@@ -434,8 +434,8 @@ class JobRunner:
             self._stop.set()
             thread = self._thread
         for _target, _args, name, request, kind in dropped:
-            _record_interrupted({"model_name": name, "kind": kind}, request, None,
-                                "The server shut down before the run started; submit it again.")
+            _record_ended({"model_name": name, "kind": kind}, request, None, "interrupted",
+                          "The server shut down before the run started; submit it again.")
         if thread is not None:
             thread.join(timeout)
         with self._lock:
@@ -446,8 +446,8 @@ class JobRunner:
             request = self._last_request
             elapsed = round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
             self._apply({"status": "interrupted", "message": "The server shut down during the run."})
-        _record_interrupted(state, request, elapsed,
-                            "The server shut down during the run; start it again.")
+        _record_ended(state, request, elapsed, "interrupted",
+                      "The server shut down during the run; start it again.")
 
     def stop(self, *, hard: bool = False) -> None:
         """Cancel the running run and everything waiting behind it.
@@ -473,6 +473,9 @@ class JobRunner:
                 # Invalidate the running thread's generation so its eventual
                 # completion cannot overwrite this reset.
                 self._generation += 1
+                ended = dict(self._state)
+                request = self._last_request
+                elapsed = round(time.monotonic() - self._start_ts, 1) if self._start_ts else None
                 # The run's own measurements go with its results: a peak and a thread
                 # count belong to a run, and reported beside "idle" they describe one
                 # the status no longer admits to. rss_mb is not here — it is read live,
@@ -480,15 +483,20 @@ class JobRunner:
                 self._apply(dict(status="idle", phase="", message="Hard stopped.",
                                  progress=0, results=None, peak_rss_mb=None,
                                  head_fit_threads=None, threads_requested=None))
+            # The run no longer owns the status, so its own finish is dropped: its record is
+            # written here or nowhere -- a hard-stopped run left none (audit 2026-09-30, R15).
+            _record_ended(ended, request, elapsed, "stopped", "Hard-stopped by the operator.")
 
 
-def _record_interrupted(state: dict, request: dict | None, duration: float | None, why: str) -> None:
-    """Write the history record of a run the shutdown ended (``JobRunner.shutdown``)."""
+def _record_ended(state: dict, request: dict | None, duration: float | None, status: str,
+                  why: str) -> None:
+    """Write the history record of a run ended from outside its own thread -- by the shutdown
+    (``JobRunner.shutdown``) or a hard stop -- whose own finish is dropped."""
     try:
         job_history.append(job_history.record_for(
-            {**state, "status": "interrupted", "error": why}, request, duration))
+            {**state, "status": status, "error": why}, request, duration))
     except OSError:
-        logger.warning("Could not record the interrupted run %r in the job history.",
+        logger.warning("Could not record the %s run %r in the job history.", status,
                        state.get("model_name"))
 
 

@@ -290,3 +290,21 @@ def test_a_run_that_stops_in_time_keeps_its_own_record():
     job.shutdown(timeout=5)
 
     assert _outcomes("r03_cooperative") == {"r03_cooperative": "stopped"}
+
+
+
+def test_a_hard_stopped_run_is_in_the_history():
+    """R15 (audit 2026-09-30): a hard stop resets the status at once and drops the run's own
+    finish -- correctly, the run no longer owns the status -- so it left no record at all."""
+    job = JobRunner()
+    started, release = threading.Event(), threading.Event()
+    job.submit(_blocking_target(started, release), model_name="r15_hard",
+               request={"dataset_name": "a.csv"})
+    assert started.wait(2)
+    thread = job._thread
+
+    job.stop(hard=True)
+    release.set()
+    thread.join(5)
+
+    assert _outcomes("r15_hard") == {"r15_hard": "stopped"}, "one record, from the stop"
