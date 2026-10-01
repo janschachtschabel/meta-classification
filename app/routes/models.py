@@ -36,7 +36,7 @@ from ..errors import TrainingInputError
 from ..evaluate import run_evaluation
 from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter, train_limit
-from ..registry import UnsafeModelError, get_registry
+from ..registry import BACKUP_SUFFIX, UnsafeModelError, get_registry, is_backup_name
 from ..responses import TrainStartedResponse
 from ..schemas import EvaluateRequest, ExportRequest, ModelInfo
 from ..security import require_role, safe_name, spool_upload_capped
@@ -235,6 +235,9 @@ async def import_model(
         raise HTTPException(400, "File must be a .zip model bundle.")
     name = new_name or Path(file.filename).stem
     safe_name(name, "model name")
+    if is_backup_name(name):
+        raise HTTPException(400, f"A model name must not end in '{BACKUP_SUFFIX}': that marks the "
+                                 "backups the label repair keeps, which no route serves.")
     registry = get_registry()
     with contextlib.ExitStack() as held:
         # Held from before the upload until the bundle is installed, so a training (or a

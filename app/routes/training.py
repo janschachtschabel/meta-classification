@@ -14,7 +14,7 @@ from ..errors import TrainingInputError
 from ..jobs import job_runner
 from ..limiter import limiter, train_limit
 from ..profiles import load_training_config
-from ..registry import get_registry
+from ..registry import BACKUP_SUFFIX, get_registry, is_backup_name
 from ..responses import TrainStartedResponse, TrainStopResponse
 from ..schemas import TrainRequest
 from ..security import require_role, safe_name
@@ -173,6 +173,9 @@ async def train(
                                 separator=body.csv_separator)
     except TrainingInputError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if is_backup_name(body.model_name):
+        raise HTTPException(400, f"A model name must not end in '{BACKUP_SUFFIX}': that marks the "
+                                 "backups the label repair keeps, which no route serves.")
     if get_registry().exists(body.model_name):
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
     # An import uploading under this name would publish first or last -- and the run, after

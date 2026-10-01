@@ -366,6 +366,11 @@ brackets are its finding numbers.
 - **A bundle keeps its newest 50 evaluations, not every one ever made.** Each evaluation was
   appended to `metrics.json` for good — the document every model detail reads and every
   export packs grew without end. (R15)
+- **A repair backup is not a model to any route.** The label repair keeps the untouched bundle
+  as `<name>.prebackup`; the listing hid it, but every other route served it by name —
+  exactly the weights the repair removed — and a model trained or imported under such a name
+  was invisible and live at once. Such names are now no model anywhere (404), and `/train`
+  and the import refuse them (400). (R15)
 
 ## [4.0.1] — 2026-09-27
 

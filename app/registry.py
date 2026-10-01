@@ -48,7 +48,18 @@ MAX_EVALUATIONS = 50
 
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
-_BACKUP_SUFFIX = ".prebackup"
+BACKUP_SUFFIX = ".prebackup"
+
+
+def is_backup_name(name: str) -> bool:
+    """Is ``name`` a repair backup's -- never a model, to any route?
+
+    The label repair keeps the untouched bundle as ``<name>.prebackup``; serving it hands out
+    exactly the weights the repair removed. The listing hid such names, every other route
+    served them, and a model trained or imported under one was invisible and live at once
+    (audit 2026-09-30, R15).
+    """
+    return name.endswith(BACKUP_SUFFIX)
 
 
 # `Registry.list` shadows the builtin inside the class body, so any annotation after
@@ -81,7 +92,7 @@ class Registry:
         return self.dir / name
 
     def exists(self, name: str) -> bool:
-        return (self._path(name) / "config.json").exists()
+        return not is_backup_name(name) and (self._path(name) / "config.json").exists()
 
     def list(self) -> list[str]:
         if not self.dir.exists():
@@ -93,7 +104,7 @@ class Registry:
         return sorted(
             p.name for p in self.dir.iterdir()
             if not p.name.startswith(".")
-            and not p.name.endswith(_BACKUP_SUFFIX)
+            and not is_backup_name(p.name)
             and (p / "config.json").exists()
         )
 

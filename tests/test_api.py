@@ -615,6 +615,29 @@ def test_a_name_an_import_is_installing_is_refused_to_training_and_to_another_im
     assert "in_flight" not in client.get("/models", headers=RO).json()
 
 
+def test_a_repair_backup_is_not_a_model_to_any_route(trained_model):
+    """R15 (audit 2026-09-30): the label repair keeps the untouched bundle as
+    `<name>.prebackup`. The listing hid it -- serving it hands out exactly the weights the
+    repair removed -- but every other route served it by name. And a model trained or
+    imported under such a name was invisible and live at once."""
+    backup = _TMP / "models" / "api_model.prebackup"
+    shutil.copytree(_TMP / "models" / "api_model", backup)
+    try:
+        detail = client.get("/models/api_model.prebackup", headers=RO)
+        predicted = client.post("/predict", headers=RO,
+                                json={"texts": ["Bruchrechnung"], "model_name": "api_model.prebackup"})
+        trained = client.post("/train", headers=ADMIN, json={**TRAIN_BODY, "model_name": "new.prebackup"})
+        bundle = client.post("/models/api_model/export", headers=ADMIN).content
+        imported = client.post("/models/import", headers=ADMIN, data={"new_name": "new.prebackup"},
+                               files={"file": ("b.zip", bundle, "application/zip")})
+    finally:
+        shutil.rmtree(backup, ignore_errors=True)
+
+    assert (detail.status_code, predicted.status_code) == (404, 404)
+    assert (trained.status_code, imported.status_code) == (400, 400), (trained.text, imported.text)
+    assert ".prebackup" in trained.json()["detail"]
+
+
 def test_import_rejected_while_a_same_name_training_is_queued(trained_model):
     """The running check above missed the queue: an import under a name that a
     queued training will save was accepted (reproduced before this change), and
