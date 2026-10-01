@@ -718,8 +718,8 @@ def test_a_message_raised_in_a_dialog_is_shown_inside_it(tmp_path):
     included. "Copied", or why a delete failed, was neither heard nor properly seen while the
     model panel was open. Each dialog now holds a pair of its own, inserted empty BEFORE it
     opens: a live region has to exist before its message does to be announced."""
-    result = _run(tmp_path, helpers=("app.js:pushToast", "app.js:toastRegion", "app.js:toastError",
-                           "app.js:openModal"),
+    result = _run(tmp_path, helpers=("toasts.js:pushToast", "toasts.js:toastRegion",
+                           "toasts.js:toastError", "toasts.js:openModal"),
                   body=_TOASTS + """
         toastError({ message: "before" });
         openModal(dialog);

@@ -58,7 +58,7 @@ def test_the_ordering_helper_exists_once_and_drops_stale_answers():
 def test_the_toast_can_be_dismissed():
     """A 4 s auto-hide with no dismiss and no pause is a timing limit on reading (SC 2.2.1),
     and a long German error does not fit in 4 s."""
-    assert "data-toast-dismiss" in _js("app.js"), "no dismiss control on the toast"
+    assert "data-toast-dismiss" in _js("toasts.js"), "no dismiss control on the toast"
 
 
 def test_a_failure_announces_itself_as_one():
@@ -68,14 +68,14 @@ def test_a_failure_announces_itself_as_one():
     assert re.search(r'id="toast-alert"[^>]*role="alert"', INDEX), (
         "#toast-alert is not role=alert, so a failure is still announced politely"
     )
-    assert "function toastError" in _js("app.js"), "no toastError: errors still use toast()"
+    assert "function toastError" in _js("toasts.js"), "no toastError: errors still use toast()"
 
 
 def test_a_failure_does_not_time_out_on_its_own():
     """A confirmation may disappear; a failure the user has to act on may not."""
-    app = _js("app.js")
-    start = app.index("function toastError")
-    body = app[start:app.index("\nfunction ", start + 1)]
+    toasts = _js("toasts.js")
+    start = toasts.index("function toastError")
+    body = toasts[start:toasts.index("\n}\n", start) + 2]
 
     assert "setTimeout" not in body, (
         "toastError schedules a hide: an error the user must act on can vanish unread"
@@ -84,9 +84,9 @@ def test_a_failure_does_not_time_out_on_its_own():
 
 def test_a_second_message_does_not_silently_replace_the_first():
     """Two failures in a row showed one. The second overwrote the first before it was read."""
-    app = _js("app.js")
+    toasts = _js("toasts.js")
 
-    assert "insertAdjacentHTML" in app or "appendChild" in app, (
+    assert "insertAdjacentHTML" in toasts or "appendChild" in toasts, (
         "the toast still assigns textContent/innerHTML wholesale, so message N+1 erases N"
     )
 
