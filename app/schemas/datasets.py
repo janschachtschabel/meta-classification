@@ -26,7 +26,8 @@ class EvaluateRequest(BaseModel):
         ..., min_length=1, max_length=20,
         description=(
             "Columns merged into the input text — the ones the model was trained on "
-            "(`metadata.text_columns` in `GET /models/{name}`). A column the CSV lacks is skipped."
+            "(`metadata.text_columns` in `GET /models/{name}`). A column the CSV lacks is "
+            "refused (400)."
         ),
     )
     label_column: str = Field(
@@ -62,7 +63,10 @@ class AnalyzeRequest(BaseModel):
     dataset_name: str = Field(..., description=DATASET_NAME)
     text_columns: list[str] = Field(
         ...,
-        description="Columns merged into the input text, for the text statistics. A column the CSV lacks is skipped.",
+        description=(
+            "Columns merged into the input text, for the text statistics. A column the CSV lacks "
+            "is refused (400)."
+        ),
     )
     label_column: str = Field(..., description=LABEL_COLUMN)
     # One character, not a line break: see common.separator_problem.

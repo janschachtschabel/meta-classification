@@ -82,8 +82,8 @@ brackets are its finding numbers.
 - **A text column the dataset lacks is refused, not skipped.** The loader dropped it without a
   word and the bundle recorded it anyway: `/predict/csv` then refused CSVs in the training
   data's own format, and a later export that has the column would feed the model a field it
-  never saw. `/train` now answers 400 naming the column before the run can queue, and the
-  loader refuses it for queued runs and evaluations too. (T03)
+  never saw. `/train` and `/models/{name}/evaluate` now answer 400 naming the column before
+  the job can queue, and the loader refuses it for queued runs too. (T03)
 
 - **The word-frequency table is loaded once, however many first requests arrive together.**
   wordfreq's cache is thread-safe but not single-flight: eight simultaneous first `/metadata`

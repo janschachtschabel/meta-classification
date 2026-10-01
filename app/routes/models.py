@@ -30,6 +30,8 @@ from fastapi import (
 )
 
 from .. import data as data_mod
+from ..dataset_load import require_columns
+from ..errors import TrainingInputError
 from ..evaluate import run_evaluation
 from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter, train_limit
@@ -305,9 +307,16 @@ async def evaluate_model(
     # same way — this route was the one that did not.
     safe_name(body.dataset_name, "dataset name")
     try:
-        data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
+        dataset = data_mod.resolve_dataset(settings.data_dir, body.dataset_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Dataset '{body.dataset_name}' not found.") from exc
+    # The header only, before the job can queue, as /train does: the loader would refuse a
+    # missing column anyway, but as a job error behind whatever runs first.
+    try:
+        await asyncio.to_thread(require_columns, dataset, body.text_columns, body.label_column,
+                                separator=body.csv_separator)
+    except TrainingInputError as exc:
+        raise HTTPException(400, str(exc)) from exc
     registry = get_registry()
     if not registry.exists(model_name):
         raise HTTPException(404, f"Model '{model_name}' not found.")

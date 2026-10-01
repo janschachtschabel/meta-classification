@@ -233,6 +233,23 @@ def test_evaluating_an_unknown_model_or_dataset_is_refused(trained_model):
     assert client.post("/models/api_model/evaluate", json=EVAL_BODY, headers=RO).status_code == 403
 
 
+def test_a_text_column_the_dataset_lacks_is_refused_before_an_evaluation_queues(trained_model):
+    """Since T03 (audit 2026-09-30) the loader refuses a missing text column -- but an
+    evaluation found out only as a job error, after queueing behind whatever ran. Refused at
+    submission now, as `/train` does; `/datasets/analyze` refuses it the same way."""
+    lacking = [*EVAL_BODY["text_columns"], "properties.cclom:description"]
+
+    evaluation = client.post("/models/api_model/evaluate", headers=ADMIN,
+                             json={**EVAL_BODY, "text_columns": lacking})
+    analysis = client.post("/datasets/analyze", headers=ADMIN,
+                           json={**EVAL_BODY, "dataset_name": "tiny.csv", "text_columns": lacking})
+
+    assert evaluation.status_code == 400, evaluation.text
+    assert "properties.cclom:description" in evaluation.json()["detail"]
+    assert analysis.status_code == 400, analysis.text
+    assert "properties.cclom:description" in analysis.json()["detail"]
+
+
 def test_a_second_training_is_queued_instead_of_refused(trained_model):
     """Training five label fields used to need a browser tab kept open: the queue lived
     in the page, and closing it lost every run that had not started. A second POST is
