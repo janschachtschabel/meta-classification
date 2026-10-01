@@ -5,8 +5,16 @@
    would make the datasets view depend on the models view for no reason. */
 "use strict";
 
+/* What is being shared right now. A double click posted twice and created two links -- two
+   bearer capabilities for one intent (audit 2026-09-30, U08). Keyed on the resource rather
+   than on a button, because three places offer the same action. */
+const sharing = new Set();
+
 /* Create an expiring share link for a model or dataset and show it (with copy). */
 async function shareResource(kind, name, boxSel) {
+  const key = `${kind}/${name}`;
+  if (sharing.has(key)) return;
+  sharing.add(key);
   const box = document.querySelector(boxSel);
   try {
     const r = await Api.post(`/${kind}/${encodeURIComponent(name)}/export`,
@@ -29,7 +37,7 @@ async function shareResource(kind, name, boxSel) {
     box.querySelector("[data-close]").addEventListener("click",
                                                        closer(() => { box.innerHTML = ""; }));
     renderShareLinks(kind, `#${kind}-links`);   // the new link joins the overview
-  } catch (err) { toastError(err); }
+  } catch (err) { toastError(err); } finally { sharing.delete(key); }
 }
 
 /* Active share links for one resource kind. A link is a bearer capability valid for

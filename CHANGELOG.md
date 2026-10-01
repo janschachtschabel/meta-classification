@@ -423,6 +423,9 @@ brackets are its finding numbers.
 - **A long sample cell is cut before it is escaped.** The dataset panel's sample table escaped
   a cell and then cut it to 120 characters, so the cut could land inside an entity and show
   half of one (`&a` for `&amp;`). (U08)
+- **A double click creates one share link.** "Share link" posted once per click, so a double
+  click created two links — two bearer capabilities, valid for a day, for one intent. A
+  resource being shared is now not shared again until the first answer is in. (U08)
 
 ## [4.0.1] — 2026-09-27
 

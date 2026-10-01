@@ -525,3 +525,33 @@ def test_a_long_sample_cell_is_cut_before_it_is_escaped(tmp_path):
 
     cells = re.findall(r"<td>(.*?)</td>", result["html"])
     assert cells == ["a" * 118 + "&amp;b"]
+
+
+@needs_node
+def test_a_double_click_creates_one_share_link(tmp_path):
+    """U08 (audit 2026-09-30): "Share link" posted once per click, so a double click created
+    two links -- two bearer capabilities, valid for a day, for one intent. Once the first
+    answer is in, sharing works again."""
+    result = _run(tmp_path, modules=("share.js",), body="""
+        globalThis.location = { origin: "http://localhost" };
+        globalThis.closer = (close) => close;
+        globalThis.toastError = (err) => errors.push(String(err.message || err));
+        const posts = [];
+        const pending = [];
+        Api.post = (url) => {
+          posts.push(url);
+          return new Promise((resolve) => pending.push(resolve));
+        };
+        const first = shareResource("models", "m", "#models-share");
+        const second = shareResource("models", "m", "#models-share");
+        pending.forEach((resolve) => resolve({ share_url: "/share/abc", expires_at: null }));
+        await Promise.all([first, second]);
+        const again = shareResource("models", "m", "#models-share");
+        pending.slice(1).forEach((resolve) => resolve({ share_url: "/share/def", expires_at: null }));
+        await again;
+        report({ posts, errors });
+    """)
+
+    assert result["posts"] == ["/models/m/export", "/models/m/export"], (
+        "a double click must post once, and a later click again")
+    assert result["errors"] == []
