@@ -392,6 +392,20 @@ def test_the_server_waits_for_a_run_and_records_it_when_it_shuts_down(monkeypatc
         "interrupted"]
 
 
+def test_a_raised_model_cache_is_said_at_start_with_the_reason(monkeypatch, tmp_path, caplog):
+    """Never silently: APIV3_MAX_MODELS_IN_MEMORY is a RAM ceiling the operator set, and since
+    audit 2026-09-30 R04 the cache holds at least the five models one /predict/multi call may
+    name -- logged only when warmup models were set, and then credited to them alone."""
+    import logging
+
+    client = _fresh_client(monkeypatch, tmp_path, APIV3_MAX_MODELS_IN_MEMORY="2")
+    with caplog.at_level(logging.INFO, logger="api_v3"), client:
+        pass
+
+    said = [r.getMessage() for r in caplog.records if "Model cache holds" in r.getMessage()]
+    assert said and "/predict/multi" in said[0] and "=2" in said[0], said
+
+
 def test_dotenv_is_read_from_the_app_directory_not_the_cwd():
     """Every other default path is anchored to the api_v3 folder so the app works
     from any working directory. The .env file was the exception — a relative name,

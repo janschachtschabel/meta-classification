@@ -26,7 +26,7 @@ from fastapi import FastAPI
 from .jobs import job_runner
 from .metadata import generate
 from .registry import Registry, get_registry
-from .settings import Settings, get_settings
+from .settings import MAX_MODELS_PER_CALL, Settings, get_settings
 
 logger = logging.getLogger("api_v3")
 
@@ -180,16 +180,18 @@ async def lifespan(app: FastAPI):
     spooled = sweep_upload_staging(settings.data_dir)
     if spooled:
         logger.warning("Swept %d orphaned upload staging file(s) from a previous crash", spooled)
+    resident = settings.effective_max_models_in_memory()
+    if resident > settings.max_models_in_memory:
+        # Never silently: the operator set a RAM ceiling and it was raised -- to the models
+        # one /predict/multi call names (audit 2026-09-30, R04) and to the warmup list --
+        # so the extra memory has to be visible in the log.
+        logger.info(
+            "Model cache holds up to %d models (raised from APIV3_MAX_MODELS_IN_MEMORY=%d to "
+            "fit the %d models one /predict/multi call may name and the %d warmup models)",
+            resident, settings.max_models_in_memory, MAX_MODELS_PER_CALL,
+            len(settings.warmup_models_list),
+        )
     if settings.warmup_models_list:
-        resident = settings.effective_max_models_in_memory()
-        if resident > settings.max_models_in_memory:
-            # Never silently: the operator set a RAM ceiling and the warmup list
-            # raised it, so the extra memory has to be visible in the log.
-            logger.info(
-                "Model cache holds %d models (raised from APIV3_MAX_MODELS_IN_MEMORY=%d "
-                "to fit the %d warmup models)",
-                resident, settings.max_models_in_memory, len(settings.warmup_models_list),
-            )
         _warmup_models(registry, settings.warmup_models_list)
     if settings.warmup_metadata:
         _warmup_metadata()
