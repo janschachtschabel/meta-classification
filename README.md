@@ -61,7 +61,7 @@ spelled out here, the command also works with 4.0.1 and earlier, which would oth
 write inside the container's own filesystem and lose it on the next `docker run`.
 `docker compose` and the Helm chart set them too.
 
-**Tags:** `latest` is the newest release (currently the same image as `4.0.1`, `4.0`
+**Tags:** `latest` is the newest release (currently the same image as `4.1.0`, `4.1`
 and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
 production pin a version or a `sha-` tag rather than a moving one. The published
 images are built for **linux/amd64** only — on arm64 (Apple Silicon) build locally

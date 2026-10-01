@@ -2,10 +2,17 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased]
+## [4.1.0] — 2026-10-01
 
-The findings of the audit of 2026-09-30 (`docs/audits/2026-09-30-audit.md`); the IDs in
-brackets are its finding numbers.
+The findings of the audit of 2026-09-30 (`docs/audits/2026-09-30-audit.md`), all 85 of them;
+the IDs in brackets are its finding numbers. A minor release by owner decision, as 3.1.0 was:
+nothing a client of the API sends has to change, and five of the audit's improvement
+proposals add to it (*Added*). Operators do have to read before upgrading: the API refuses to
+start with a placeholder or non-ASCII key (S10), a key rotation needs a `kubectl rollout
+restart` (S12), and the Helm chart refuses values it used to render -- a rate-limited ingress
+without `config.limits.forwardedAllowIps` (S04; all three under *Security*), keyless mode
+behind an ingress, more than one replica, and TLS entries that leave out an ingress host
+(B09, B11, under *Fixed*).
 
 ### Security
 
