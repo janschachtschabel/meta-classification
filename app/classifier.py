@@ -1,8 +1,12 @@
 """Classifier head and the runtime model object used for prediction.
 
 The head is a plain scikit-learn ``OneVsRestClassifier(LogisticRegression)``.
-LogisticRegression yields calibrated probabilities natively, so no extra
-probability calibration step is needed (unlike SVMs).
+LogisticRegression yields probabilities natively (``predict_proba``), so no calibration
+wrapper is needed to get any (unlike an SVM). They are NOT calibrated frequencies, though:
+``class_weight="balanced"`` lifts every rare label's probabilities -- measured up to 3.9x
+its real frequency (audit 2026-09-30, T13). Decisions are unaffected, because the thresholds
+are tuned on these same scores; a displayed "confidence" is a score to compare with the
+label's threshold, not a chance of being right.
 """
 
 from __future__ import annotations
@@ -17,6 +21,9 @@ from sklearn.multiclass import OneVsRestClassifier
 from .data import clean_text
 from .metrics import is_single_label
 from .vectorizers import TfidfBackend
+
+# The sample order of the stochastic solvers; any fixed value makes a run repeatable.
+HEAD_RANDOM_STATE = 0
 
 
 def make_head(
@@ -37,9 +44,14 @@ def make_head(
     else, and it is OMITTED rather than passed through as a default so there is
     exactly one place that decides what a shipped model is fit at. Loosening it
     is a search-time trade — see ``Profile.selection_tol``.
+
+    ``random_state`` is fixed: 'saga' (and 'sag', 'liblinear') visit samples in a
+    random order, and drawn from the global generator, two trainings on the same data
+    were two different models (audit 2026-09-30, T12). The deterministic solvers ignore it.
     """
     return OneVsRestClassifier(
         LogisticRegression(C=c, class_weight="balanced", max_iter=max_iter, solver=solver,
+                           random_state=HEAD_RANDOM_STATE,
                            **({} if tol is None else {"tol": tol})),
         n_jobs=n_jobs,
     )

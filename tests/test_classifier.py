@@ -142,3 +142,23 @@ def test_predict_cleans_text_matching_training():
     raw = "<p>Hallo <b>Welt</b></p>"
     _model(spy).predict_proba([raw])
     assert spy.seen == [data.clean_text(raw)] == ["Hallo Welt"]
+
+
+
+def test_the_same_data_fits_the_same_head_whatever_the_solver():
+    """T12 (audit 2026-09-30): `saga` visits samples in a random order, and with no
+    random_state each run drew it from the global generator -- two trainings on the same
+    data were two different models (max coefficient difference 0.0022 here)."""
+    import numpy as np
+    from scipy.sparse import random as sparse_random
+
+    from app.classifier import make_head
+
+    x = sparse_random(300, 200, density=0.05, format="csr", dtype=np.float32, random_state=1)
+    y = (np.random.default_rng(0).random((300, 3)) < 0.3).astype(np.int8)
+
+    first = make_head(1.0, n_jobs=1, solver="saga").fit(x, y)
+    second = make_head(1.0, n_jobs=1, solver="saga").fit(x, y)
+
+    for a, b in zip(first.estimators_, second.estimators_, strict=True):
+        assert np.array_equal(a.coef_, b.coef_)

@@ -100,6 +100,14 @@ brackets are its finding numbers.
   value (or `null` for auto-scaling), else `config.yaml`'s, else 20 — and the run records the
   number it used. Without `config.yaml`, the built-in profiles also lost `stratified_splits`
   and the text-column weights; they now match the shipped file field for field. (T11)
+- **Training with the `saga` solver is repeatable.** It visits samples in a random order and
+  drew it from the global generator, so two runs on the same data gave two models; the
+  head's `random_state` is fixed now. (`newton-cg`, the default, was never affected.) (T12)
+- **"confidence" is no longer described as calibrated.** Balanced class weights lift rare
+  labels' probabilities (up to 3.9× their real frequency); the code, the README and the
+  model comparison said they were natively calibrated. Decisions are unaffected — the
+  thresholds are tuned on the same scores — but a displayed percentage is a score to compare
+  with the label's threshold. Calibration itself is listed as a later improvement. (T13)
 
 ### Fixed
 
