@@ -545,6 +545,12 @@ brackets are its finding numbers.
   counts happened to line up every kept subject got its neighbour's name. Each field's URIs
   are now paired with that field's own names (`pair_names`), and a row carries names for
   exactly its kept URIs, or none. (W06)
+- **The README installs the tree the suite was run against.** It installed
+  `requirements.txt -c requirements.lock`, which pins the direct dependencies and resolves
+  the rest fresh: a new venv got an anyio whose deprecation warning `filterwarnings = error`
+  turns into collection errors in ten test modules, while CI — on the hashed tree — stayed
+  green. Both install instructions now use `requirements-hashes.lock`; a fresh venv set up
+  that way on Windows (Python 3.12) passes the whole suite. (W01)
 
 ## [4.0.1] — 2026-09-27
 

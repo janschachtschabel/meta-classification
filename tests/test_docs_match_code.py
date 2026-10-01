@@ -160,3 +160,20 @@ def test_the_readme_interop_snippet_loads_a_bundle_while_trusting_nothing(tmp_pa
 
     assert namespace["char_vec"] is not None, "both halves of the vectorizer were exercised"
     assert namespace["proba"].shape == (1, len(namespace["cfg"]["classes"]))
+
+
+# --- W01: the documented install is the tested tree -------------------------------------------
+
+
+def test_the_readme_installs_the_tree_the_suite_was_run_against():
+    """W01 (audit 2026-09-30): the README installed `requirements.txt -c requirements.lock`,
+    which pins the 17 direct dependencies and resolves the rest fresh. A fresh venv got an
+    anyio whose deprecation warning `filterwarnings = error` turns into collection errors in
+    ten test modules, while CI -- installing the hashed tree -- stayed green. The README now
+    installs what CI and the image install."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    installs = [line.strip() for line in readme.splitlines() if line.strip().startswith("pip install")]
+
+    assert not [line for line in installs if "-c requirements.lock" in line], installs
+    assert sum("--require-hashes -r requirements-hashes.lock" in line for line in installs) >= 2, installs
+

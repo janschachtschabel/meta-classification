@@ -72,10 +72,15 @@ with `docker compose up -d` or run under emulation.
 ```bash
 python -m venv .venv && . .venv/Scripts/activate   # Windows
 # source .venv/bin/activate                         # Linux/Mac
-pip install -r requirements.txt -c requirements.lock   # lock = the tested versions
+pip install --require-hashes -r requirements-hashes.lock   # the tree CI and the image run
 ```
 
 Datasets then live in `./data`, models in `./models`. Both are created on first use.
+
+The hashed lock is the whole tested tree. `requirements.txt -c requirements.lock` pins only
+the direct dependencies and resolves the rest fresh, which is how a new venv once got an
+anyio whose deprecation warning the suite turns into errors. The same command brings a venv
+that has drifted back to the tested versions.
 
 ## Start
 
@@ -879,8 +884,8 @@ above is the right form for everything at once.
 ## Tests
 
 ```bash
-pip install -r requirements.txt -c requirements.lock
-pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy
+pip install --require-hashes -r requirements-hashes.lock
+pip install -r requirements-dev.txt                # pinned pytest/httpx/ruff/mypy/pip-licenses
 python -m pytest tests -q                          # the whole suite
 python -m ruff check app tests scripts             # lint
 python -m mypy app --config-file pyproject.toml    # types
