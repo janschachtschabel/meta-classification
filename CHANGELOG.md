@@ -437,6 +437,11 @@ brackets are its finding numbers.
   the profile — while the column pickers still offered the old dataset's columns. A choice now
   survives the rebuild while it still exists (an empty model choice too: metadata alone needs
   no model), and a dataset deleted meanwhile clears its columns. (U08)
+- **A training run's transitions are heard from every tab.** The element announcing them sat
+  inside the Training panel, which is hidden whenever another tab is shown — and a hidden
+  live region is not in the accessibility tree at all. A run that finished while its owner
+  classified texts was never announced, though the chip beside the tabs showed it. The
+  announcer now sits in the top bar beside that chip. (U09)
 
 ## [4.0.1] — 2026-09-27
 

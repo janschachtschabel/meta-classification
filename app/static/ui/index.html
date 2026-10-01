@@ -56,6 +56,10 @@
         <button class="tab" data-tab="datasets" id="tab-btn-datasets" role="tab" aria-controls="tab-datasets" aria-selected="false" tabindex="-1" data-i18n="shell.tab.datasets"></button>
       </nav>
       <button id="train-chip" class="chip" hidden data-i18n-title="shell.trainChip"></button>
+      <!-- The chip's spoken counterpart: a run's transitions, heard from every tab. Inside the
+           Training panel it was hidden, and so not in the accessibility tree, whenever another
+           tab was shown (audit 2026-09-30, U09). -->
+      <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
       <span id="auth-off-badge" class="muted" hidden data-i18n="shell.authDisabled"></span>
       <label class="lang-switch">
         <span class="visually-hidden" data-i18n="shell.language"></span>
@@ -148,11 +152,10 @@
              data-i18n="trainStatus.connectionLost"></p>
           <!-- The card re-renders every poll tick (elapsed/ETA count up), so it must
                NOT be a live region — SRs would re-announce it continuously. Phase
-               transitions are announced via the dedicated SR-only element below. -->
+               transitions are announced by #train-announce in the top bar. -->
           <div id="train-status" class="train-status">
             <p class="muted" data-i18n="train.status.loading"></p>
           </div>
-          <p id="train-announce" class="visually-hidden" aria-live="polite"></p>
           <p id="train-queue" class="muted" aria-live="polite" hidden></p>
         </div>
         <form id="train-form" class="card" novalidate>
