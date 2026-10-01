@@ -17,6 +17,7 @@ import csv
 import io
 import json
 import logging
+import os
 import threading
 from datetime import UTC, datetime
 
@@ -57,6 +58,24 @@ def _feedback_path():
     return get_settings().feedback_file
 
 
+def _ends_mid_line(path) -> bool:
+    """Was the last write cut short? A non-empty file whose last byte is not a newline.
+
+    A full volume or a kill mid-write leaves the last line without its newline, and the next
+    correction appended onto it became part of one line the reader drops -- the retry the
+    503 recommends included (audit 2026-09-30, R06).
+    """
+    try:
+        with path.open("rb") as handle:
+            end = handle.seek(0, os.SEEK_END)
+            if not end:
+                return False
+            handle.seek(end - 1)
+            return handle.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
+
+
 def append(record: dict) -> int:
     """Record one correction; returns how many have been collected in total.
 
@@ -76,8 +95,11 @@ def append(record: dict) -> int:
             _count = len(read_all())
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            # Ending a torn line first costs that line, which was lost already -- and keeps
+            # this correction a line of its own.
+            torn = "\n" if _ends_mid_line(path) else ""
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                handle.write(torn + json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError as exc:
             # The one write in this app that may NOT degrade to a logged warning. The job
             # history can: by the time it is written the run is finished and saved, so the

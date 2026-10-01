@@ -96,6 +96,22 @@ def test_a_damaged_line_costs_that_line_only(store):
     assert [entry["text"] for entry in feedback.read_all()] == ["good", "after"]
 
 
+def test_a_torn_last_line_does_not_swallow_the_next_correction(store):
+    """R06 (audit 2026-09-30): a write cut short -- a full volume, a kill -- leaves a last line
+    without its newline, and the next correction was appended onto it: one merged line the
+    reader drops, taking the new correction along. That includes the retry the 503 tells
+    the editor to send."""
+    feedback.append(_correction("Der Wiener Kongress", ["uri:hist"]))
+    with store.open("a", encoding="utf-8") as handle:
+        handle.write('{"text": "abgerissen", "model_na')
+
+    collected = feedback.append(_correction("Bruchrechnung", ["uri:math"]))
+
+    texts = [entry["text"] for entry in feedback.read_all()]
+    assert texts == ["Der Wiener Kongress", "Bruchrechnung"]
+    assert collected == 2, "the count is what a reader sees"
+
+
 def test_a_correction_that_cannot_be_saved_fails_instead_of_vanishing(tmp_path, monkeypatch):
     """The one failure this module must not swallow.
 

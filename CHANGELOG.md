@@ -284,6 +284,11 @@ brackets are its finding numbers.
   `APIV3_PARALLEL_BACKEND` took any string, so a typo surfaced as a failed training, minutes in.
   Both now accept only what works — the solvers sklearn offers but `newton-cholesky`, whose
   dense Hessian cannot fit TF-IDF's dimensions, and joblib's own backends. (R14)
+- **A correction written after a torn line is kept.** A write cut short — a full volume, a
+  kill — leaves the corrections file's last line without its newline, and the next
+  correction was appended onto it: one merged line the reader drops, so the correction was
+  lost, including the retry the 503 tells the editor to send. A torn line is now ended
+  before the next correction is written. (R06)
 
 ## [4.0.1] — 2026-09-27
 
