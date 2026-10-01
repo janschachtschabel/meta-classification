@@ -404,6 +404,36 @@ def test_a_model_name_outside_latin_1_can_be_exported_and_shared(trained_model):
     client.delete(f"/models/{name}", headers=ADMIN).raise_for_status()
 
 
+def test_link_changes_the_store_cannot_write_answer_503_and_change_nothing(trained_model):
+    """S05 (audit 2026-09-30): on a full volume a revocation answered 500 and was undone by
+    the next restart; a delete removed the model and left its links behind on disk, for the
+    next model under the name. Nothing is changed now unless the store took it, and the
+    answer names the setting to check -- not where the server keeps its files."""
+    from app.sharing import get_share_store
+
+    bundle = client.post("/models/api_model/export", headers=ADMIN).content
+    client.post("/models/import", headers=ADMIN, data={"new_name": "linked"},
+                files={"file": ("b.zip", bundle, "application/zip")}).raise_for_status()
+    link = client.post("/models/linked/export", headers=ADMIN, json={"generate_share_url": True}).json()
+    store_file = get_share_store().path
+    blocker = store_file.with_name(store_file.name + ".tmp")
+    blocker.mkdir()
+    try:
+        revoked = client.delete(f"/share/{link['share_id']}", headers=ADMIN)
+        deleted = client.delete("/models/linked", headers=ADMIN)
+    finally:
+        blocker.rmdir()
+
+    for answer in (revoked, deleted):
+        assert answer.status_code == 503, answer.text
+        assert "APIV3_SHARE_LINKS_FILE" in answer.json()["detail"]
+        assert str(store_file.parent) not in answer.json()["detail"]
+    assert "linked" in client.get("/models", headers=RO).json(), "a delete that failed deleted nothing"
+    assert client.get(link["share_url"]).status_code == 200, "and the link still works"
+    client.delete("/models/linked", headers=ADMIN).raise_for_status()
+    assert client.get(link["share_url"]).status_code == 404
+
+
 def test_a_bundle_named_in_upper_case_can_be_imported(trained_model):
     """Found beside V04 (audit 2026-09-30): the model import compared `.zip` case-sensitively
     too, so a bundle saved as `FAECHER.ZIP` was refused as not being a ZIP."""

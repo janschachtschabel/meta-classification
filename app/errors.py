@@ -38,3 +38,14 @@ class FeedbackWriteError(UserFacingError, RuntimeError):
     statement about the correction, and a caller that wraps its own file handling in
     ``except OSError`` must not swallow this one by accident.
     """
+
+
+
+class ShareStoreWriteError(UserFacingError, RuntimeError):
+    """The share links could not be written, so the change was NOT made.
+
+    A link change is adopted only once the store holds it (audit 2026-09-30, S05). Not an
+    ``OSError``, for the reason ``FeedbackWriteError`` is not one: the storage failure is now
+    a statement about the change, and a caller's own ``except OSError`` must not swallow it.
+    The API answers it with 503.
+    """

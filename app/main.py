@@ -16,6 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from . import __version__, correlation, middleware
 from .correlation import RequestIdFilter
 from .docs_content import DESCRIPTION, FAVICON_SVG, SWAGGER_HTML, TAGS_METADATA
+from .errors import ShareStoreWriteError
 from .lifecycle import lifespan
 from .limiter import limiter
 from .log_filters import RedactShareTokens
@@ -112,6 +113,13 @@ async def _validation_error_handler(
     )
 
 
+async def _share_store_write_handler(request: Request, exc: ShareStoreWriteError) -> JSONResponse:
+    """503 for a link change the store could not write: the request was valid, nothing was
+    changed, and retrying once the volume has room is the right move -- which a sanitized
+    500 says to nobody (audit 2026-09-30, S05). Five routes change links; one mapping."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI app."""
     settings = get_settings()
@@ -131,6 +139,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(ShareStoreWriteError, _share_store_write_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, _unhandled_exception_handler)
     middleware.install(app, settings)
 

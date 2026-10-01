@@ -7,6 +7,7 @@ download of an existing resource.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -15,6 +16,8 @@ import threading
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
+
+from .errors import ShareStoreWriteError
 
 logger = logging.getLogger("api_v3.sharing")
 
@@ -64,16 +67,38 @@ class ShareStore:
             return {}
         live = {key: value for key, value in links.items() if _is_live(value)}
         if len(live) != len(links):
-            self._links = live
-            self._persist()
+            self._purge(live)
         return live
 
-    def _persist(self) -> None:
-        # Atomic write (tmp + rename) so a crash mid-write cannot corrupt the store,
-        # matching the model-bundle publish discipline.
+    def _persist(self, links: dict[str, dict]) -> None:
+        """Write ``links`` as the store; the caller adopts them only once this returns.
+
+        In that order since audit 2026-09-30, S05: a revocation that dropped the link in
+        memory first answered 500 on a full volume, a second one 404 -- and after the next
+        start the link served again, in time even a new model under the same name.
+
+        Atomic (tmp + rename) so a crash mid-write cannot corrupt the store, matching the
+        model-bundle publish discipline.
+        """
         tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(self._links, indent=2), encoding="utf-8")
-        os.replace(tmp, self.path)
+        try:
+            tmp.write_text(json.dumps(links, indent=2), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            # The path stays in the log; the answer names the setting to fix.
+            logger.error("Could not write the share links to %s: %s", self.path, exc)
+            raise ShareStoreWriteError(
+                "The share links could not be saved, so nothing was changed. Check that "
+                "APIV3_SHARE_LINKS_FILE is on a writable volume with free space, then retry."
+            ) from exc
+
+    def _purge(self, links: dict[str, dict]) -> None:
+        """Drop expired links, written if possible: unlike a revocation, a purge that cannot
+        be written is harmless -- every reader checks the expiry, and the next start purges
+        again. `_persist` has logged the failure."""
+        with contextlib.suppress(ShareStoreWriteError):
+            self._persist(links)
+        self._links = links
 
     def create(self, kind: str, name: str, expires_hours: int) -> tuple[str, str]:
         """Create a link; returns (share_id, expires_at_iso)."""
@@ -81,13 +106,15 @@ class ShareStore:
         share_id = secrets.token_urlsafe(12)
         expires_at = (_now() + timedelta(hours=expires_hours)).isoformat()
         with self._lock:
-            self._links[share_id] = {
+            links = {**self._links, share_id: {
                 "kind": kind, "name": name, "expires_at": expires_at,
                 # Free at creation and the one thing an overview cannot derive:
                 # how long ago somebody handed this capability out.
                 "created_at": _now().isoformat(),
-            }
-            self._persist()
+            }}
+            # Not handed out unless stored: it would work until the next start, then vanish.
+            self._persist(links)
+            self._links = links
         return share_id, expires_at
 
     def list(self) -> list[dict]:
@@ -119,9 +146,11 @@ class ShareStore:
         used again — until now the only way was editing the JSON on the volume.
         """
         with self._lock:
-            if self._links.pop(share_id, None) is None:
+            if share_id not in self._links:
                 return False
-            self._persist()
+            links = {key: info for key, info in self._links.items() if key != share_id}
+            self._persist(links)
+            self._links = links
             return True
 
     def revoke_for(self, kind: str, name: str) -> int:
@@ -136,14 +165,14 @@ class ShareStore:
         """
         key = name.casefold()
         with self._lock:
-            doomed = [
+            doomed = {
                 share_id for share_id, info in self._links.items()
                 if info.get("kind") == kind and str(info.get("name", "")).casefold() == key
-            ]
-            for share_id in doomed:
-                del self._links[share_id]
+            }
             if doomed:
-                self._persist()
+                links = {share_id: info for share_id, info in self._links.items() if share_id not in doomed}
+                self._persist(links)
+                self._links = links
             return len(doomed)
 
     def resolve(self, share_id: str) -> dict | None:
@@ -153,8 +182,7 @@ class ShareStore:
             if info is None:
                 return None
             if not _is_live(info):
-                del self._links[share_id]
-                self._persist()
+                self._purge({key: value for key, value in self._links.items() if key != share_id})
                 return None
             return dict(info)
 

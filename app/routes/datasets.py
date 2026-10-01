@@ -294,7 +294,7 @@ async def export_dataset(
 ) -> Response | dict:
     """Export a dataset as a CSV download or as an expiring share link
     (`generate_share_url=true`, `expires_hours` 1–168, retrievable via `GET /share/{id}`).
-    **Auth:** admin."""
+    If the link store cannot be written, 503 and nothing changes. **Auth:** admin."""
     path = _dataset_path(dataset_name, settings)
     body = body or ExportRequest()
     if body.generate_share_url:
@@ -313,12 +313,14 @@ async def delete_dataset(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Delete a CSV file from the data directory (irreversible), and revoke its share
-    links. **Auth:** admin · rate limit active."""
+    links first. If the link store cannot be written, 503 and nothing changes.
+    **Auth:** admin · rate limit active."""
+    path = _dataset_path(dataset_name, settings)
+    # Same reason and order as model delete: the next import under this name must not be
+    # reachable through a link that was handed out for this file, so the links go first.
+    get_share_store().revoke_for("dataset", dataset_name)
     # missing_ok: _dataset_path already answered 404 for a name that is not there, so
     # reaching here with the file gone means it went in between — a double click, not
     # a server fault.
-    _dataset_path(dataset_name, settings).unlink(missing_ok=True)
-    # Same reason as model delete: the next import under this name must not be
-    # reachable through a link that was handed out for this file.
-    get_share_store().revoke_for("dataset", dataset_name)
+    path.unlink(missing_ok=True)
     return {"status": "deleted", "dataset_name": dataset_name}

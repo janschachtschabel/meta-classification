@@ -54,8 +54,8 @@ async def revoke_share_link(
     """Withdraw a share link before it expires.
 
     What was already downloaded cannot be recalled, but the link stops working — the
-    point of an expiring capability you can end early. **Auth:** admin · rate limit
-    active.
+    point of an expiring capability you can end early. If the link store cannot be
+    written, 503 and nothing changes. **Auth:** admin · rate limit active.
     """
     if not get_share_store().revoke(share_id):
         raise HTTPException(404, "Share link not found or already expired.")

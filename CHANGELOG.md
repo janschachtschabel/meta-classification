@@ -65,6 +65,14 @@ brackets are its finding numbers.
   onto the models directory as stored, so an altered store entry such as `../elsewhere/m`
   exported a bundle from outside it to anyone holding the link. It now answers 404, like an
   unknown link. (S11)
+- **A revoked share link stays revoked.** A revocation removed the link in memory before the
+  store was written, so on a full volume it answered 500, a second attempt 404 ("already
+  expired") — and after the next start the link served again, in time even a new model
+  under the same name. Deleting a model or dataset had the same pattern, and also deleted
+  the resource before revoking its links. Every link change is now adopted only once the
+  store holds it; otherwise the answer is 503 naming `APIV3_SHARE_LINKS_FILE`, and nothing
+  changed. A delete revokes the links first, so a revocation that cannot be written leaves
+  the resource in place rather than its links. (S05)
 
 ### Fixed
 

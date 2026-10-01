@@ -113,3 +113,64 @@ def test_deleting_a_resource_revokes_every_link_to_it_and_only_those(tmp_path):
     assert all(store.resolve(sid) is not None for sid in kept)
     # Persisted: a restart does not bring them back.
     assert all(ShareStore(tmp_path / "links.json").resolve(sid) is None for sid in doomed)
+
+
+
+# --- S05: a change the store cannot write is not made -----------------------------------------
+
+
+def _block_writes(path):
+    """Make the store's next write fail: its temporary file's name is taken by a directory."""
+    blocker = path.with_name(path.name + ".tmp")
+    blocker.mkdir()
+    return blocker
+
+
+def test_a_revocation_that_cannot_be_stored_changes_nothing(tmp_path):
+    """S05 (audit 2026-09-30): the link left memory before the store was written, so on a
+    full volume the revocation answered 500, a second one 404 ("already expired") -- and
+    after a restart the link served again, later even a new model under the same name."""
+    import pytest
+
+    path = tmp_path / "links.json"
+    store = ShareStore(path)
+    share_id, _ = store.create("model", "m1", expires_hours=24)
+    blocker = _block_writes(path)
+
+    with pytest.raises(Exception, match="APIV3_SHARE_LINKS_FILE"):
+        store.revoke(share_id)
+
+    assert store.resolve(share_id) is not None, "dropped in memory, kept on disk"
+    assert ShareStore(path).resolve(share_id) is not None
+    blocker.rmdir()
+    assert store.revoke(share_id) is True
+    assert ShareStore(path).resolve(share_id) is None, "a revocation that was stored holds"
+
+
+def test_revoking_a_resources_links_that_cannot_be_stored_changes_nothing(tmp_path):
+    import pytest
+
+    path = tmp_path / "links.json"
+    store = ShareStore(path)
+    share_id, _ = store.create("dataset", "d.csv", expires_hours=24)
+    _block_writes(path)
+
+    with pytest.raises(Exception, match="APIV3_SHARE_LINKS_FILE"):
+        store.revoke_for("dataset", "d.csv")
+
+    assert store.resolve(share_id) is not None
+    assert ShareStore(path).resolve(share_id) is not None
+
+
+def test_a_link_that_cannot_be_stored_is_not_handed_out(tmp_path):
+    """Created in memory only, it would work until the next restart and then vanish."""
+    import pytest
+
+    path = tmp_path / "links.json"
+    store = ShareStore(path)
+    _block_writes(path)
+
+    with pytest.raises(Exception, match="APIV3_SHARE_LINKS_FILE"):
+        store.create("model", "m1", expires_hours=24)
+
+    assert store.list() == []

@@ -160,16 +160,21 @@ async def set_model_info(
 @limiter.limit(default_limit)
 async def delete_model(request: Request, model_name: ModelName, _: str = Depends(require_role("admin"))) -> dict:
     """Remove a model from the in-memory cache and from disk (irreversible), and revoke
-    its share links. **Auth:** admin · rate limit active."""
+    its share links first. If the link store cannot be written, 503 and nothing changes.
+    **Auth:** admin · rate limit active."""
     safe_name(model_name, "model name")
+    registry = get_registry()
+    if not registry.exists(model_name):
+        raise HTTPException(404, f"Model '{model_name}' not found.")
+    # A link names the model, not this bundle: left alive, it would hand out whatever is
+    # trained or imported under the name next. Revoked BEFORE the bundle goes, so a
+    # revocation the store cannot write (503) leaves the model, not its links (S05).
+    get_share_store().revoke_for("model", model_name)
     try:
         # rmtree of a large bundle is blocking disk work — off the event loop.
-        await asyncio.to_thread(get_registry().delete, model_name)
+        await asyncio.to_thread(registry.delete, model_name)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"Model '{model_name}' not found.") from exc
-    # A link names the model, not this bundle: left alive, it would hand out
-    # whatever is trained or imported under the name next.
-    get_share_store().revoke_for("model", model_name)
     return {"status": "deleted", "model_name": model_name}
 
 
@@ -186,7 +191,8 @@ async def export_model(
 
     Without a body / `generate_share_url=false`: a direct ZIP download. With
     `generate_share_url=true`: an expiring share link (`expires_hours`, 1–168),
-    retrievable via `GET /share/{id}`. **Auth:** admin · rate limit active.
+    retrievable via `GET /share/{id}`; if the link store cannot be written, 503 and nothing
+    changes. **Auth:** admin · rate limit active.
     """
     safe_name(model_name, "model name")
     registry = get_registry()
