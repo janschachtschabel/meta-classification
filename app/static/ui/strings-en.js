@@ -232,6 +232,7 @@ const STRINGS_EN = {
   "train.textColumns.add": "Add text column",
   "train.textColumns.help": "Type to filter the columns and pick a suggestion — Enter adds it as a pill, Backspace removes the last one.",
   "train.textColumns.legend": "Text columns",
+  "train.waitingForLimit": "The server's rate limit is reached: run {run} of {total} is sent in {wait}. Keep this page open until then.",
   "train.weights.help": "<strong>Field weight</strong> — how often a field is repeated in the training text. A title or a keyword list carries far more signal per word than a long description, but the description supplies more words and drowns it out; repeating a field gives it that weight back. <strong>1 = unchanged</strong> (the default). Repetition is damped logarithmically, so 2 is worth about 1.7×, not 2×.<br><strong>Note:</strong> a model trained this way expects input built the same way — assemble the text you later send to <code>/predict</code> with the same repetitions, otherwise its tuned thresholds sit on a different distribution.",
 
   "trainStatus.announce.completed": "Training {name} completed.",

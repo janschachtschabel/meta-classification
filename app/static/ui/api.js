@@ -74,7 +74,12 @@ const Api = (() => {
       try { detail = (await res.json()).detail; } catch { /* non-JSON error body */ }
       if (res.status === 403) detail = detail || t("errors.adminRequired");
       if (res.status === 429) detail = detail || t("errors.rateLimited");
-      throw new ApiError(res.status, detail);
+      const err = new ApiError(res.status, detail);
+      // In seconds, as the server sends it with 429 and 503: a caller that waits needs the
+      // number rather than a guess (training.js, U05).
+      const wait = Number.parseInt(res.headers.get("Retry-After") ?? "", 10);
+      if (Number.isInteger(wait)) err.retryAfter = wait;
+      throw err;
     }
     const type = res.headers.get("content-type") || "";
     return type.includes("json") ? res.json() : res;

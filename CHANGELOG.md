@@ -402,6 +402,14 @@ brackets are its finding numbers.
   the column selection changes, and the rebuild kept only the values above 1: a deliberate 1
   on `title` (configured default 2) jumped back to 2 as soon as another column was picked,
   and the run trained with 2. Every typed value now survives the rebuild. (U04)
+- **A batch of label fields outlasts the rate limit.** One model per label field means one
+  `POST /train` each, against a limit of 5 a minute: seven fields gave five accepted runs and a
+  429 that ended the batch, a retry hit the limit again, and later answered "already exists"
+  for the runs already queued. The page now waits the window the server names in
+  `Retry-After` (which the transport now hands on) and sends the same run again, says so in a
+  message, and gives up after three waits — another client on the same address can keep the
+  window full. The UI guide no longer claims both that the tab may close and that the queue
+  lives in it. (U05, W08)
 
 ## [4.0.1] — 2026-09-27
 

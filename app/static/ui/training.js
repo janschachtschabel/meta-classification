@@ -135,6 +135,26 @@ function renderNamePreview() {
                      { count: plan.length, names: plan.map((p) => p.name).join(", ") });
 }
 
+/* /train is rate-limited (5 a minute by default) below the number of label fields a batch may
+   hold: seven fields ended in a 429 at the sixth, a retry hit the limit again, and later
+   "already exists" for the runs the first attempt had queued (audit 2026-09-30, U05). A 429
+   now waits the window the server names and sends the same run again -- a bounded number of
+   times, because another client on the same address can keep the window full. */
+const TRAIN_LIMIT_WAITS = 3;
+
+async function submitRun(body, run, total) {
+  for (let waits = 0; ; waits += 1) {
+    try {
+      return await Api.post("/train", body);
+    } catch (err) {
+      if (err.status !== 429 || waits === TRAIN_LIMIT_WAITS) throw err;
+      const seconds = err.retryAfter ?? 60;
+      toast(t("train.waitingForLimit", { run, total, wait: t("common.seconds", { count: seconds }) }));
+      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    }
+  }
+}
+
 async function onTrainStart(ev) {
   ev.preventDefault();
   const errEl = $("#train-error"), btn = $("#train-btn");
@@ -184,9 +204,8 @@ async function onTrainStart(ev) {
     // closed tab lost them; sending them now is what makes the tab disposable.
     // Sequentially, because a position is only meaningful against a known queue.
     const accepted = [];
-    for (const body of bodies) {
-      const answer = await Api.post("/train", body);
-      accepted.push(answer);
+    for (const [at, body] of bodies.entries()) {
+      accepted.push(await submitRun(body, at + 1, bodies.length));
     }
     const queued = accepted.filter((a) => a.status === "queued").length;
     toast(queued

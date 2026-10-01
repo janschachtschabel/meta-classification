@@ -233,6 +233,7 @@ const STRINGS_DE = {
   "train.textColumns.add": "Textspalte hinzufügen",
   "train.textColumns.help": "Tippen filtert die Spalten; einen Vorschlag auswählen — Enter fügt ihn als Chip hinzu, Rücktaste entfernt den letzten.",
   "train.textColumns.legend": "Textspalten",
+  "train.waitingForLimit": "Ratenbegrenzung des Servers erreicht: Lauf {run} von {total} wird in {wait} gesendet. Diese Seite bitte so lange offen lassen.",
   "train.weights.help": "<strong>Feldgewicht</strong> — wie oft ein Feld im Trainingstext wiederholt wird. Ein Titel oder eine Schlagwortliste trägt pro Wort weit mehr Signal als eine lange Beschreibung, aber die Beschreibung liefert mehr Wörter und übertönt sie; ein Feld zu wiederholen gibt ihm dieses Gewicht zurück. <strong>1 = unverändert</strong> (die Vorgabe). Die Wiederholung wird logarithmisch gedämpft, 2 ist also etwa 1,7× wert, nicht 2×.<br><strong>Hinweis:</strong> ein so trainiertes Modell erwartet ebenso aufgebaute Eingaben — stellen Sie den Text, den Sie später an <code>/predict</code> schicken, mit denselben Wiederholungen zusammen, sonst liegen seine abgestimmten Schwellenwerte auf einer anderen Verteilung.",
 
   "trainStatus.announce.completed": "Training {name} abgeschlossen.",

@@ -40,8 +40,9 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
    Antworten** wählen.
    - Wählst du **mehrere** Label-Felder, entsteht **pro Feld ein eigenes
      Modell**; die Namen werden automatisch abgeleitet (`meinname_taxonid`, …)
-     und die Trainings laufen nacheinander — **Tab offen lassen**, bis alle
-     gestartet sind.
+     und der Server trainiert sie nacheinander. Mehr als fünf Starts pro Minute
+     nimmt er standardmäßig nicht an; dann wartet die Seite und sendet den Rest
+     — **Tab offen lassen**, bis alle Läufe gesendet sind.
 3. **Profile:** Drei Stufen, aufsteigend nach Rechenzeit — `auto` ist die
    Empfehlung. `fast` nur zum schnellen Ausprobieren (nicht für ein Modell, das
    in Betrieb geht), `best` für die genaueste Bewertung (~1,9× so lange wie
@@ -183,9 +184,12 @@ F1 macro und micro.
 ## Mehrere Läufe hintereinander (Training-Tab)
 
 Werden mehrere Label-Felder ausgewählt, entsteht pro Feld ein Modell. Alle Läufe gehen
-**sofort an den Server**, der sie der Reihe nach abarbeitet — der Tab darf zugehen, das
-Notebook zuklappen. Was noch wartet, steht unter dem Status („Queued on the server: …“)
-und kommt aus der Serverantwort, nicht aus dem Browser.
+an den Server, der sie der Reihe nach abarbeitet. Mehr als fünf Starts pro Minute nimmt er
+standardmäßig nicht an (`APIV3_RATE_LIMIT_TRAIN`); dann wartet die Seite das Zeitfenster ab,
+das der Server nennt, und sendet den Rest — eine Meldung sagt, welcher Lauf in wie vielen
+Sekunden folgt. Sind alle gesendet, darf der Tab zugehen und das Notebook zuklappen. Was noch
+wartet, steht unter dem Status („Queued on the server: …“) und kommt aus der Serverantwort,
+nicht aus dem Browser.
 
 **Stop** beendet den laufenden Lauf *und* leert die Warteschlange: „Stop“ heißt „das soll
 enden“, nicht „spring zum nächsten“. Es wirkt am nächsten Prüfpunkt — zwischen zwei
@@ -364,9 +368,9 @@ das Modell selbst prüfen und die Qualität schönrechnen). Auch Zeilen ohne Lab
 oder mit fast leerem Text fallen raus.
 
 **Kann ich den Tab während des Trainings schließen?**
-Das *laufende* Training läuft auf dem Server weiter. Nur wenn du **mehrere**
-Label-Felder gewählt hast, muss der Tab offen bleiben, bis alle Trainings
-gestartet wurden (die Warteschlange lebt im Tab).
+Ja: Training und Warteschlange laufen auf dem Server weiter. Nur wenn du mehr
+**Label-Felder** gewählt hast, als der Server pro Minute annimmt (standardmäßig
+fünf), muss der Tab offen bleiben, bis die Seite alle Läufe gesendet hat.
 
 **Was passiert bei einem Tippfehler im Spaltennamen?**
 Nichts Schlimmes — die Oberfläche bietet ohnehin nur existierende Spalten an,
