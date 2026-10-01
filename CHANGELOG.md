@@ -280,6 +280,10 @@ brackets are its finding numbers.
 - **A model deleted while its export starts is a 404.** The export and the public share link
   check that the model exists and then pack it; a delete in between answered 500. It is now
   the same 404 as a missing model — on the share link without the model's name. (R09)
+- **A mistyped solver or joblib backend stops the start.** `APIV3_SOLVER` and
+  `APIV3_PARALLEL_BACKEND` took any string, so a typo surfaced as a failed training, minutes in.
+  Both now accept only what works — the solvers sklearn offers but `newton-cholesky`, whose
+  dense Hessian cannot fit TF-IDF's dimensions, and joblib's own backends. (R14)
 
 ## [4.0.1] — 2026-09-27
 

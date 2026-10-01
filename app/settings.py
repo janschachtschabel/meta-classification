@@ -182,8 +182,11 @@ class Settings(BaseSettings):
     # converges fast; 'saga' is slow on high-dim TF-IDF. 'lbfgs'/'liblinear'
     # upcast to float64 (2x matrix RAM) — ok on small data; pair the GIL-bound
     # 'liblinear' with the 'loky' backend.
-    solver: str = "newton-cg"
-    parallel_backend: str = "threading"
+    # Literals, so a typo stops the start instead of failing a training minutes in (audit
+    # 2026-09-30, R14): sklearn's solvers bar 'newton-cholesky', whose dense Hessian is
+    # n_features^2 (51 GB for 80,000 word features), and joblib's built-in backends.
+    solver: Literal["newton-cg", "saga", "lbfgs", "liblinear", "sag"] = "newton-cg"
+    parallel_backend: Literal["threading", "loky", "multiprocessing", "sequential"] = "threading"
 
     # --- Logging ---
     # A Literal, like training_isolation: logging.basicConfig runs at import and raises a

@@ -154,6 +154,27 @@ def test_a_negative_train_memory_budget_is_refused():
         Settings(train_memory_mb="lots")
 
 
+@pytest.mark.parametrize("field, value", [
+    ("solver", "newton_cg"), ("solver", "sgd"), ("solver", "newton-cholesky"),
+    ("parallel_backend", "thread"), ("parallel_backend", "dask"),
+])
+def test_a_solver_or_backend_the_training_cannot_use_is_refused_at_start(monkeypatch, field, value):
+    """R14 (audit 2026-09-30): both were free strings, so a typo surfaced as a failed training
+    -- minutes in, after the data was read -- instead of at start. `newton-cholesky` is a
+    real solver, and refused all the same: it builds a dense n_features x n_features Hessian,
+    51 GB for the 80,000 word features alone."""
+    monkeypatch.setenv(f"APIV3_{field.upper()}", value)
+
+    with pytest.raises(ValidationError, match=field):
+        Settings()
+
+
+@pytest.mark.parametrize("solver", ["newton-cg", "saga", "lbfgs", "liblinear", "sag"])
+@pytest.mark.parametrize("backend", ["threading", "loky", "multiprocessing", "sequential"])
+def test_every_solver_and_backend_that_works_is_accepted(solver, backend):
+    assert (Settings(solver=solver, parallel_backend=backend).solver, backend) == (solver, backend)
+
+
 def test_both_training_budgets_default_to_auto_and_say_so():
     """`auto` is the default and a value an operator can write down, so a .env reads as
     what it does instead of carrying a sentinel only the code understands."""
