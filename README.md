@@ -246,6 +246,11 @@ curl localhost:8000/models/subjects -H "X-API-Key: $RO_KEY"
 curl -X POST localhost:8000/predict -H "X-API-Key: $RO_KEY" -H "Content-Type: application/json" \
   -d '{"texts": ["Bruchrechnung", "Photosynthese im Blatt"], "model_name": "subjects"}'
 
+# The fields instead of a finished text: the server assembles them as training did
+curl -X POST localhost:8000/predict -H "X-API-Key: $RO_KEY" -H "Content-Type: application/json" \
+  -d '{"records": [{"properties.cclom:title": "Bruchrechnung",
+                    "properties.cclom:general_keyword": "Brüche"}], "model_name": "subjects"}'
+
 # Stop a running training (admin) — the bundle is only published on success,
 # so stopping never leaves a half-written model behind
 curl -X POST localhost:8000/train/stop -H "X-API-Key: $ADMIN_KEY"
@@ -286,13 +291,12 @@ column names. Send your own mapping to override it, or `{}` to train unweighted;
 
 - Values are `1…10`; keys must be among `text_columns` (a typo is a `422`, not a silent no-op).
 - `sublinear_tf` damps repetition logarithmically, so `2` is worth ~1.7×, not 2×.
-- **Training-time only, and that has a consequence:** `/predict` takes one opaque
-  string, so the API cannot re-apply the weights for you. A model trained with
-  weights expects input built the same way — **assemble the text you send to
-  `/predict` with the same repetitions**, otherwise its tuned thresholds sit on a
-  slightly different feature distribution than they were tuned on. The weights are
-  recorded in the bundle (`text_column_weights` in `GET /models/{name}`), so a
-  client can always look up what a given model expects.
+- **A model trained with weights expects its input built the same way**, otherwise its
+  tuned thresholds sit on a slightly different feature distribution than they were tuned
+  on. Send `records` — each item as its fields — and the server assembles the text from
+  the weights recorded in the bundle, as `/predict/csv` does for a file. With `texts`, one
+  finished string per item, that is the client's job: the same fields, the same
+  repetitions (`text_column_weights` in `GET /models/{name}`).
 
 🟢 **Measured** on `data_30k_ai.csv` (48 subjects, identical rows/split/C grid per
 variant — only the text assembly differs; `scripts/benchmark_field_weights.py`):

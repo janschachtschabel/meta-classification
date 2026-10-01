@@ -1763,3 +1763,65 @@ def test_an_empty_label_separator_is_refused_not_crashed_on(path, body):
     response = client.post(path, json=body, headers=ADMIN)
 
     assert response.status_code == 422, response.text
+
+
+
+# --- Improvement 1: records -- the fields, assembled by the server as training did -------------
+
+RECORD = {"properties.cclom:title": "Bruchrechnung üben",
+          "properties.cclom:general_keyword": "Brüche, Mathematik"}
+
+
+def _as_training_built_it(record: dict, model: str) -> str:
+    """The text the way training assembled it: the bundle's columns, each repeated by its
+    weight, joined by a space (dataset_load.combine_text_columns)."""
+    metadata = client.get(f"/models/{model}", headers=RO).json()["metadata"]
+    weights = metadata.get("text_column_weights") or {}
+    return " ".join(record.get(column, "") for column in metadata["text_columns"]
+                    for _ in range(max(1, int(weights.get(column, 1)))))
+
+
+def test_a_record_is_classified_as_its_text_built_like_training(trained_model):
+    """Improvement 1 (audit 2026-09-30): a client had to rebuild the training text itself --
+    the same fields, each repeated by its weight -- or classify a different text than the
+    model was fit on. `records` hands over the fields, and the server assembles them from the
+    bundle as `/predict/csv` already did."""
+    by_record = client.post("/predict", json={"records": [RECORD], "model_name": "api_model",
+                                              "top_k": 3}, headers=RO)
+    by_text = client.post("/predict", json={"texts": [_as_training_built_it(RECORD, "api_model")],
+                                            "model_name": "api_model", "top_k": 3}, headers=RO)
+
+    assert by_record.status_code == 200, by_record.text
+    assert by_record.json()["results"][0]["predictions"] == by_text.json()["results"][0]["predictions"]
+
+
+def test_records_work_for_several_models_at_once(trained_model):
+    """Each model gets its own assembly -- its own columns and weights."""
+    multi = client.post("/predict/multi", json={"records": [RECORD], "model_names": ["api_model"],
+                                                "top_k": 3}, headers=RO)
+    single = client.post("/predict", json={"records": [RECORD], "model_name": "api_model",
+                                           "top_k": 3}, headers=RO)
+
+    assert multi.status_code == 200, multi.text
+    assert (multi.json()["results"][0]["predictions_by_model"]["api_model"]
+            == single.json()["results"][0]["predictions"])
+
+
+@pytest.mark.parametrize("body", [
+    {"texts": ["Bruchrechnung"], "records": [RECORD]},
+    {},
+])
+def test_a_request_sends_texts_or_records(trained_model, body):
+    response = client.post("/predict", json={**body, "model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 422, response.text
+    assert "records" in response.json()["detail"]
+
+
+def test_a_record_without_any_of_the_models_fields_is_refused(trained_model):
+    """An empty text gets the model's base-rate answer, which reads like a classification."""
+    response = client.post("/predict", json={"records": [{"title": "Bruchrechnung"}],
+                                              "model_name": "api_model"}, headers=RO)
+
+    assert response.status_code == 400, response.text
+    assert "properties.cclom:title" in response.json()["detail"]

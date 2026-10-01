@@ -580,6 +580,14 @@ it found.
   place of the tuned ones, and the form offered no way to set it — stricter or looser
   suggestions were a lever of the API only. Blank keeps the model's own; the CSV mode sends
   it too. Multilabel models only, as the hint says. (Improvement 11)
+- **`records` for `/predict` and `/predict/multi`: the fields, assembled by the server.** A
+  model trained with column weights expects its input built the same way, and with one
+  opaque string per item every client had to rebuild that itself — or classified a
+  different text than the model was fit on. `records` takes each item as its fields; the
+  server assembles the text from the bundle's text columns and weights, as `/predict/csv`
+  does, per model for `/predict/multi`. A record with none of the model's fields is refused
+  (400): an empty text gets the base-rate answer, which reads like a classification.
+  `texts` works as before; a request sends exactly one of the two. (Improvement 1)
 
 ## [4.0.1] — 2026-09-27
 

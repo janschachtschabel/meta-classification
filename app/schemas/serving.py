@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..settings import MAX_MODELS_PER_CALL
 from .common import SERVING_MODEL, OptionalFilter
@@ -14,6 +14,11 @@ from .common import SERVING_MODEL, OptionalFilter
 # V01 -- the form took `top_k=-1` and `threshold=nan`). NaN fails both bounds.
 TopK = Annotated[int, Field(ge=0, le=1000)]
 Threshold = Annotated[float, Field(ge=0.0, le=1.0)]
+# One item as its fields, bounded like a text: up to 32 fields of at most 100,000 characters.
+Record = Annotated[
+    dict[Annotated[str, Field(max_length=200)], Annotated[str, Field(max_length=100_000)]],
+    Field(max_length=32),
+]
 
 
 class _PredictOptions(BaseModel):
@@ -22,12 +27,24 @@ class _PredictOptions(BaseModel):
     # Bounded at the trust boundary: cap the batch size and per-text length so a
     # single request cannot exhaust the single worker's RAM/CPU (predict builds
     # n_texts x n_labels objects). Empty list -> 422.
-    texts: list[Annotated[str, Field(max_length=100_000)]] = Field(
-        ..., min_length=1, max_length=1000,
+    texts: list[Annotated[str, Field(max_length=100_000)]] | None = Field(
+        None, min_length=1, max_length=1000,
         description=(
             "The texts to classify: 1-1000 per request, each at most 100,000 characters. Build "
             "each the way the model's training text was built — the same fields, repeated by its "
-            "`text_column_weights` (`GET /models/{name}`); markup is cleaned as in training."
+            "`text_column_weights` (`GET /models/{name}`); markup is cleaned as in training. "
+            "Or send `records` and let the server do that."
+        ),
+    )
+    records: list[Record] | None = Field(
+        None, min_length=1, max_length=1000,
+        description=(
+            "Instead of `texts`: each item as its fields, e.g. `{\"properties.cclom:title\": "
+            "\"...\", \"properties.cclom:general_keyword\": \"...\"}`. The server assembles "
+            "the text the way the model's training text was assembled — its text columns, each "
+            "repeated by its weight — as `/predict/csv` does; a field the model was not trained "
+            "on is ignored, one it was trained on and missing counts as empty. A record with "
+            "none of the model's fields is refused (400)."
         ),
     )
     top_k: TopK | None = Field(
@@ -76,6 +93,12 @@ class _PredictOptions(BaseModel):
             "bundle trained before per-label F1 was recorded."
         ),
     )
+
+    @model_validator(mode="after")
+    def _texts_or_records(self) -> _PredictOptions:
+        if (self.texts is None) == (self.records is None):
+            raise ValueError("send `texts` or `records` -- exactly one of the two")
+        return self
 
 
 class PredictRequest(_PredictOptions):
