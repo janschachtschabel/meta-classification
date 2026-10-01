@@ -529,3 +529,21 @@ def test_gitlab_keeps_an_sbom_of_what_it_ships():
 
     assert sbom and producers, "no CycloneDX SBOM in the GitLab pipeline"
     assert any("requirements-hashes.lock" in line for line in producers)
+
+
+# --- Improvement 10: CI starts the image it builds, once ------------------------------------
+
+
+def test_ci_starts_the_built_image_once():
+    """Improvement 10 (audit 2026-09-30): the image is what ships, and nothing ever ran it --
+    a COPY that misses a module, a path the read-only code cannot write, a CMD that does not
+    start would each have passed every gate. One job builds the Dockerfile, starts the image
+    and waits for /health, on every push, pull request and tag."""
+    jobs = _workflow("ci.yml")["jobs"]
+    smoke = [job for job in jobs.values()
+             if "docker build" in (script := " ".join(s.get("run", "") for s in job.get("steps", [])))
+             and "docker run" in script and "/health" in script]
+
+    assert smoke, "no CI job builds the image and asks it for /health"
+    script = " ".join(s.get("run", "") for s in smoke[0]["steps"])
+    assert "exit 1" in script, "a container that never answers must fail the job"

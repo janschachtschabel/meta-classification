@@ -598,6 +598,11 @@ it found.
   never read it, so two models on one dataset could only be compared by opening each. The
   tab now lists the last 20 runs, trainings and evaluations alike, and reloads the list when
   a run ends. An interrupted run (R03) reads as such. (Improvement 8)
+- **CI starts the image it builds.** The image is what ships, and nothing ever ran it: a
+  `COPY` that misses a module, a path the read-only code cannot write, a `CMD` that does not
+  start would each have passed every gate. A job in `ci.yml` builds the Dockerfile, starts
+  the image with throwaway keys and waits for `/health` — on every push, pull request and
+  tag. (Improvement 10)
 
 ## [4.0.1] — 2026-09-27
 

@@ -163,3 +163,28 @@ jobs:
           pip install pip-licenses==5.5.5
           pip install --require-hashes -r requirements-hashes.lock
           python -m piplicenses --fail-on "GPL;AGPL;LGPL" --partial-match --format markdown --order license
+
+  image:
+    name: Image — builds, starts and answers /health
+    runs-on: ubuntu-latest
+    # A cold build installs the whole hashed tree (~2-3 min); start-up takes seconds.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image and start it once
+        # The image is what ships, and nothing ran it: a COPY that misses a module, a path the
+        # read-only code cannot write, a CMD that does not start would each have passed every
+        # gate (audit 2026-09-30, improvement 10). Throwaway keys, never printed.
+        run: |
+          docker build -t metaclassify:ci .
+          docker run -d --name smoke -p 127.0.0.1:8000:8000 \
+            -e APIV3_API_KEY_ADMIN="$(openssl rand -hex 24)" \
+            -e APIV3_API_KEY_READONLY="$(openssl rand -hex 24)" \
+            metaclassify:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs smoke
+          exit 1
