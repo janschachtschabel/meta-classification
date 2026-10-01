@@ -135,9 +135,10 @@ Antwort getragen haben: pro Label die einflussreichsten Wörter als Chips.
   einzelnes Wort viel. Deshalb sind die Balken **pro Label** skaliert: entscheidend ist
   die Reihenfolge, nicht der Betrag.
 - Die Werte sind untereinander vergleichbar, **addieren sich aber nicht zur Konfidenz**:
-  verglichen wird die Wortliste des Textes mit und ohne ein Wort, während die Konfidenz
-  oben den Text beschreibt, wie er eingegeben wurde (mit Satzzeichen, und ab 60 Wörtern
-  gekürzt).
+  verglichen wird die Wortliste des Textes mit und ohne ein Wort — der Text so, wie das
+  Modell ihn liest (ohne HTML- und Markdown-Auszeichnung), aber ohne Satzzeichen und nach
+  60 Wörtern gekürzt —, während die Konfidenz oben den Text beschreibt, wie er eingegeben
+  wurde. HTML-Tags erscheinen deshalb nie als „Wörter“.
 - **Füllwörter wie „und“ ganz oben sind kein Zeichen schlechter Datenaufbereitung.**
   Das Modell liest auch Zeichenketten über Wortgrenzen hinweg („Säuren **und** Basen“).
   Nimmt man das Wort weg, zerreißt man die ganze Wortfolge — der Einbruch wird dem

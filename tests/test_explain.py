@@ -25,6 +25,7 @@ class ScriptedModel:
     uri_to_label = {"uri:chem": "Chemie"}
     per_label_f1 = {"uri:chem": 0.9}
     task_type = "multilabel"
+    text_cleaning = 2  # what a fresh bundle records (data.CLEANING_VERSION)
 
     def score(self, text: str) -> float:
         lowered = text.lower()
@@ -76,3 +77,18 @@ def test_a_single_word_text_gets_no_attribution():
     """Removing the only word leaves nothing to compare against."""
     result = explain_prediction(ScriptedModel(), "Säuren", top_n_words=5)
     assert result["word_importance"] == {}
+
+
+
+def test_markup_is_not_a_word_of_the_text():
+    """V03 (audit 2026-09-30): the words were taken from the raw text, while the model
+    reads it cleaned -- for HTML input `div`, `class` and `p` were listed among the most
+    influential words, fed to the model as words in every variant, and took places in the
+    60-word budget. The words are the ones of the text the model reads."""
+    html = '<div class="lesson"><p>Wir mischen <b>Säuren</b> und Basen &amp; Salze.</p></div>'
+
+    result = explain_prediction(ScriptedModel(), html, top_n_words=10)
+
+    assert set(_impacts(result)) == {"Wir", "mischen", "Säuren", "und", "Basen", "Salze"}
+    assert _impacts(result)["Säuren"] == 0.5, "still measured word list against word list"
+    assert result["text"] == html, "the answer names the text as it was given"

@@ -176,6 +176,11 @@ brackets are its finding numbers.
   `/validate` did too, an evaluation ended as a job error without a reason, and `\r` read
   every row as a single column. All six separator inputs share one rule now — the query and
   form parameters answer 400, the request bodies 422. (V02)
+- **The explanation's influential words are words.** `/predict/explain` took them from the raw
+  text while the model reads it cleaned, so an HTML input listed `div`, `class`, `p` or `href`
+  among its most influential words, each variant fed them to the model as words, and they
+  took places in the 60-word budget. The words are now those of the text the model reads,
+  cleaned with the version the bundle was trained with. (V03)
 
 ## [4.0.1] — 2026-09-27
 

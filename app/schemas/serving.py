@@ -96,7 +96,7 @@ class ExplainRequest(BaseModel):
         ..., min_length=1, max_length=100_000,
         description=(
             "The one text to classify and explain, built like a `/predict` text. Word importance "
-            "reads its first 60 words."
+            "reads its first 60 words once markup is cleaned out, as the model reads it."
         ),
     )
     model_name: str = Field("default", description=SERVING_MODEL)

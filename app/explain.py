@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from .classifier import ClassifierModel
+from .data import clean_text
 
 # Cap the number of leave-one-out variants: cost is one predict_proba row per
 # word, so unbounded input would turn one request into thousands of predictions.
@@ -23,6 +24,11 @@ def explain_prediction(model: ClassifierModel, text: str, top_n_words: int) -> d
     Returns the predictions, per-label confidence for ALL labels (each with its
     ``baseline_diff`` and ``label_f1``), and — for the top predicted labels — the
     words whose removal drops the confidence most (leave-one-out).
+
+    The words are those of the text the model reads -- cleaned with the version it was
+    trained with -- so markup is not a word: taken from the raw text, `div`, `class` and
+    `p` were listed among the most influential words of an HTML input, and every variant
+    fed them to the model as words (audit 2026-09-30, V03).
 
     The drop is measured between the word list with and without that word, not against
     the original text: the variants carry no punctuation and at most ``_MAX_WORDS``
@@ -48,7 +54,7 @@ def explain_prediction(model: ClassifierModel, text: str, top_n_words: int) -> d
     }
     predicted = model.predict([text], include_baseline_diff=True, include_label_f1=True)[0]
 
-    words = _WORD_RE.findall(text)[:_MAX_WORDS]
+    words = _WORD_RE.findall(clean_text(text, model.text_cleaning))[:_MAX_WORDS]
     importance: dict[str, dict] = {}
     if len(words) > 1 and predicted:
         # The first variant is the FULL word list, and it is what the others are measured
