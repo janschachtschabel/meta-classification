@@ -268,7 +268,7 @@ button.chip {
   display: flex; flex-direction: column; gap: var(--s-2);
   max-width: min(90vw, 44rem); z-index: 10; pointer-events: none;
 }
-/* A class rather than the id: every dialog holds a pair of its own (openModal in app.js). */
+/* A class rather than the id: every dialog holds a pair of its own (openModal, toasts.js). */
 .toast-alert { bottom: calc(var(--s-5) + 3.5rem); }
 .toast-item {
   display: flex; align-items: flex-start; gap: var(--s-3);

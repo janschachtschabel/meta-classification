@@ -282,8 +282,10 @@ def test_a_correction_records_the_text_that_was_classified(tmp_path):
     """U03 (audit 2026-09-30): the correction read the text field when it was SAVED. The
     audit classified "Pythagoras ...", changed the field to "Photosynthese ..." and corrected
     to Biologie -- and the feedback file got "Photosynthese" with the Mathematik prediction:
-    a row the next training reads as a true pair. Here the field holds the classified text
-    when the form is used; the next test is about one that changed."""
+    a row the next training reads as a true pair. This one checks the wiring -- the classified
+    text travels from the answer through the form into the request -- and passes against the
+    old code by construction: while the field still holds the classified text, reading it at
+    save time sends the same. The next test is the U03 regression guard."""
     result = _run(tmp_path, modules=_ONE_TEXT_MODULES, helpers=("app.js:busy",),
                   body=_ONE_TEXT + """
         await runSingle(["m"], { classify: true, metadata: false }, out);

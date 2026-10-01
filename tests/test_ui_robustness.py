@@ -322,3 +322,28 @@ def test_no_module_disables_a_button_by_hand():
     )
 
     assert not by_hand, by_hand
+
+
+
+# --- review of U09/U10: wiring the handler tests cannot see ------------------------------------
+
+
+def test_the_stop_button_is_bound_where_the_page_starts():
+    """U10 moved the Stop button into the markup and its listener into `boot()`; the handler
+    tests stub the button, so deleting that one line would leave Stop dead with every test
+    green (review of U10, 2026-10-01)."""
+    app = _js("app.js")
+    boot = app[app.index("async function boot()"):app.index("\n}\n", app.index("async function boot()"))]
+
+    assert re.search(r'\$\("#train-stop"\)\.addEventListener\("click", stopTraining\)', boot), (
+        "boot() no longer binds the Stop button")
+
+
+def test_every_dialog_opens_through_open_modal():
+    """A dialog opened with `showModal()` directly has no message stacks of its own, and
+    everything a message says while it is open lands under its backdrop again (U09). The
+    handler tests stub `openModal`, so a module going back to `showModal()` would pass them."""
+    direct = [name for name, source in MODULES.items()
+              if name != "toasts.js" and ".showModal(" in source]
+
+    assert not direct, f"opens a dialog without its message stacks: {direct}"
