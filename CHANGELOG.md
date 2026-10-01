@@ -377,6 +377,14 @@ brackets are its finding numbers.
   bundle removed by hand kept answering the same way. A cached model is now checked against
   its `config.json` (modification time and size) on every request and reloaded when it
   changed; a removed one answers 404. (R15)
+- **An upload cut off at the cap no longer leaks its temp file — Starlette 1.3.1 → 1.6.0.**
+  The body guard (S01) stops an oversized upload by raising 413 from the request stream, and
+  Starlette 1.3.1's multipart parser closed its spooled temp files only on its own errors:
+  each cut-off upload left one open until garbage collection, and the suite failed on
+  Linux with Python 3.11 — which is what the image and CI run. 1.6.0 closes them on any
+  error. Found by running the whole suite on Linux against the hashed lock: the local
+  environment had drifted to 1.6.0, so it never showed. `pip-audit`: no known
+  vulnerabilities.
 
 ## [4.0.1] — 2026-09-27
 
