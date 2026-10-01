@@ -93,7 +93,10 @@ class ConfigResponse(BaseModel):
     )
     effective_max_models_in_memory: int = Field(
         ...,
-        description="Models the cache actually holds: `max_models_in_memory`, raised to fit every warmup model.",
+        description=(
+            "Models the cache actually holds: `max_models_in_memory`, raised to fit every warmup "
+            "model and the 5 models one `/predict/multi` call may name."
+        ),
     )
     warmup_models: list[str] = Field(
         ...,

@@ -255,6 +255,14 @@ class Registry:
         # weights. Nesting _lock inside _disk_lock is the documented legal order
         # (save() does the same); the reverse never happens.
         with self._disk_lock:
+            # Again, now that the disk lock is ours: loads take turns on it, and a request
+            # that waited behind the one loading this model finds it here instead of reading
+            # it once more -- eight waiting requests loaded one model eight times (audit
+            # 2026-09-30, R04).
+            with self._lock:
+                if name in self._cache:
+                    self._cache.move_to_end(name)
+                    return self._cache[name]
             if not self.exists(name):
                 raise FileNotFoundError(name)
             model, _ = _read_bundle(self._path(name))

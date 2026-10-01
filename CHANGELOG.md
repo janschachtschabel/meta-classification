@@ -331,6 +331,15 @@ brackets are its finding numbers.
   deleted and uploaded anew under the same name, the waiting run trained — or evaluated —
   on the new file without a word. `DELETE /datasets/{name}` now answers 409 while a running
   or queued run names the dataset. (R12)
+- **A cold model is loaded once, a multi-model call finds its models cached, and awaited work
+  has threads.** Requests waiting for a model nobody had loaded yet each loaded it again once
+  the one before them finished (eight requests, eight loads); the cache is now checked again
+  under the disk lock. `/predict/multi` may name five models while the cache held two, so
+  each call evicted what the next needed — five calls with the same three models made
+  fifteen loads and no hit; the cache now holds at least five (it only ever holds models
+  that were asked for). And every `asyncio.to_thread` ran on the event loop's default
+  executor, min(32, CPUs + 4) threads — eight on four cores — where an export and eight
+  model reads kept a prediction waiting 4.3 s; it now has 40, as Starlette's own pool. (R04)
 
 ## [4.0.1] — 2026-09-27
 

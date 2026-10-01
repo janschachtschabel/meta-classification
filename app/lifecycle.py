@@ -14,8 +14,10 @@ first request.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -153,12 +155,21 @@ def _warn_about_several_workers() -> None:
             "ignores it (--workers 1); started any other way, run one worker.", workers)
 
 
+# Threads behind every `asyncio.to_thread`, i.e. behind nearly every route: the event loop's
+# default executor has min(32, CPUs + 4) -- 8 on four cores -- where an export and eight model
+# reads kept a prediction on a loaded model waiting 4.3 s (audit 2026-09-30, R04). As many as
+# anyio gives Starlette's own threadpool, which the slot limits in `concurrency` are sized for.
+WORKER_THREADS = 40
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create storage dirs on startup, sweep model staging dirs orphaned by a
     crashed/killed save (a hidden ``.name.tmp`` whose atomic rename never ran),
     and preload any configured warmup models."""
     settings = get_settings()
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=WORKER_THREADS, thread_name_prefix="apiv3"))
     _check_auth_configuration(settings)
     _warn_about_several_workers()
     settings.ensure_dirs()

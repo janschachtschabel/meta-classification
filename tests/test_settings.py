@@ -31,14 +31,19 @@ def test_warmup_models_are_all_kept_resident():
     four models evicted two of them before the first request — the documented advice
     was to keep the list short rather than to hold what was asked for. The cache is
     therefore sized to fit at least the warmed models."""
-    four = Settings(max_models_in_memory=2, warmup_models="subjects, level, type, curriculum")
-    assert four.effective_max_models_in_memory() == 4
+    seven = Settings(max_models_in_memory=2, warmup_models="subjects, level, type, curriculum, "
+                                                         "language, licence, audience")
+    assert seven.effective_max_models_in_memory() == 7
 
-    # The configured cap still governs everything else: it is a RAM ceiling, and a
-    # short warmup list must not shrink it.
-    assert Settings(max_models_in_memory=5, warmup_models="subjects").effective_max_models_in_memory() == 5
-    assert Settings(max_models_in_memory=2, warmup_models="").effective_max_models_in_memory() == 2
-    assert Settings(max_models_in_memory=0, warmup_models="").effective_max_models_in_memory() == 1
+    # The configured cap still governs everything above the floors: it is a RAM ceiling,
+    # and a short warmup list must not shrink it. The lowest floor is what one
+    # /predict/multi call may name (audit 2026-09-30, R04; tests/test_cold_load.py) -- the
+    # rule changed there, from "2 stays 2", and these lines say what it is now.
+    from app.settings import MAX_MODELS_PER_CALL
+
+    assert Settings(max_models_in_memory=8, warmup_models="subjects").effective_max_models_in_memory() == 8
+    assert Settings(max_models_in_memory=2, warmup_models="").effective_max_models_in_memory() == MAX_MODELS_PER_CALL
+    assert Settings(max_models_in_memory=0, warmup_models="").effective_max_models_in_memory() == MAX_MODELS_PER_CALL
 
 
 def test_effective_n_jobs_uses_container_budget_not_host(monkeypatch):

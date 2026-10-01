@@ -16,6 +16,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .memory import MiB, memory_limit_bytes
 
+# The most models one /predict/multi call may name -- and so the least the model cache holds
+# (Settings.effective_max_models_in_memory).
+MAX_MODELS_PER_CALL = 5
+
 # Anchor default paths to the api_v3 folder so the app works from any CWD.
 _BASE = Path(__file__).resolve().parent.parent
 
@@ -112,6 +116,7 @@ class Settings(BaseSettings):
     config_file: Path = _BASE / "config.yaml"
 
     # --- RAM control: how many models stay resident (LRU eviction beyond this) ---
+    # Lifted to MAX_MODELS_PER_CALL and to the warmup list: see effective_max_models_in_memory.
     max_models_in_memory: int = 2
 
     # --- Warmup: model names to preload into the LRU cache on startup and run one
@@ -207,8 +212,9 @@ class Settings(BaseSettings):
     # --- Rate limiting ---
     # How many /predict/csv streams may run at once. Each holds one anyio threadpool
     # worker for the whole classification (a sync generator inside a StreamingResponse), and
-    # that pool — 40 workers by default — is shared with every `def` route and every
-    # asyncio.to_thread call. 4 leaves the rest of the API responsive while still letting a
+    # that pool — 40 workers by default — is shared with every `def` route; every
+    # asyncio.to_thread call has a second pool of the same size (lifecycle.WORKER_THREADS).
+    # 4 leaves the rest of the API responsive while still letting a
     # small editorial team run bulk jobs side by side; over it, the answer is 503 with
     # Retry-After rather than a queued connection holding an uploaded temp file (audit PERF-2).
     max_concurrent_csv: int = 4
@@ -234,15 +240,18 @@ class Settings(BaseSettings):
 
     def effective_max_models_in_memory(self) -> int:
         """Size of the model cache: the configured cap, but never smaller than the
-        warmup list.
+        warmup list, nor than the models one ``/predict/multi`` call may name.
 
         Listing a model in ``warmup_models`` states that it should answer without a
         cold skops load. Sizing the LRU independently broke that promise silently —
         four warmed models on the default cap of 2 left two of them evicted before
-        the first request. The cap keeps its meaning as the RAM ceiling for
-        everything else; it is only lifted to hold what was explicitly asked for.
+        the first request. A ``/predict/multi`` call asks for its models together, and
+        on a smaller cache each call evicted what the next needed: five calls with the
+        same three models made fifteen cold loads and not one hit (audit 2026-09-30,
+        R04). Beyond those, the cap keeps its meaning as the RAM ceiling — and the
+        cache only fills with models that are actually asked for.
         """
-        return max(1, self.max_models_in_memory, len(self.warmup_models_list))
+        return max(MAX_MODELS_PER_CALL, self.max_models_in_memory, len(self.warmup_models_list))
 
     def effective_n_jobs(self) -> int:
         """Thread count for the label-wise head fits: the requested ``n_jobs``

@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from ..settings import MAX_MODELS_PER_CALL
 from .common import SERVING_MODEL, OptionalFilter
 
 # The bounds of the two decision levers, shared with the form fields of `/predict/csv`:
@@ -83,10 +84,11 @@ class PredictRequest(_PredictOptions):
 
 class MultiPredictRequest(_PredictOptions):
     model_names: list[str] = Field(
-        ..., min_length=1, max_length=5,
+        ..., min_length=1, max_length=MAX_MODELS_PER_CALL,
         description=(
             "Models (= target fields) to classify with in one call, e.g. subjects + resource type. "
-            "Capped at 5: each model may need a cold load into the LRU cache."
+            "At most 5; the model cache holds at least that many, so a repeated call finds them "
+            "loaded."
         ),
     )
 

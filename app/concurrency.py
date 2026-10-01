@@ -2,8 +2,9 @@
 
 `POST /predict/csv` returns a `StreamingResponse` wrapping a **sync** generator, so Starlette
 iterates it through `iterate_in_threadpool` — one anyio worker held for the whole
-classification, which is minutes for a 200 MB CSV. That is the same pool every `def` route and
-every `asyncio.to_thread` call uses, nothing bounded how many could be in flight, and the rate
+classification, which is minutes for a 200 MB CSV. That is the pool every `def` route uses
+(`asyncio.to_thread` has its own, ``lifecycle.WORKER_THREADS``), nothing bounded how many could
+be in flight, and the rate
 limit is per client address with a readonly key. Enough concurrent uploads and every other
 endpoint waits behind them for a threadpool slot.
 

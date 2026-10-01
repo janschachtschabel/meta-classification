@@ -175,7 +175,8 @@ config:
     ## @param config.limits.maxFeedbackMb Size in MB at which the corrections file stops growing (further corrections: 503, nothing dropped)
     maxFeedbackMb: 1024
     ## @param config.limits.maxModelsInMemory Trained models kept resident (LRU eviction beyond this).
-    ## Raised automatically to fit config.limits.warmupModels, so a warmed model is never evicted at startup.
+    ## Raised automatically to at least 5 (the models one /predict/multi call may name) and to fit
+    ## config.limits.warmupModels, so a warmed model is never evicted at startup.
     maxModelsInMemory: 2
     ## @param config.limits.warmupModels Comma-separated model names preloaded on startup and kept in memory,
     ## so their first /predict pays no cold skops load (e.g. "faecher_300k_auto,bildungsstufe"). Empty = off.
