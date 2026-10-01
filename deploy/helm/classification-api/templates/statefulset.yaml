@@ -13,9 +13,15 @@ spec:
   template:
     metadata:
       labels: {{ include "classification-api.labels" . | nindent 8 }}
+      {{- /*
+        No checksum of the key Secret here (audit 2026-09-30, S12): a pod annotation is
+        readable by anyone allowed to read pods, the rest of that manifest is public, and a
+        weak key could be confirmed offline against its hash. New keys reach the pod with a
+        restart: `kubectl rollout restart statefulset/<release>`, or a changed podAnnotations
+        value in the same upgrade.
+      */}}
       annotations:
         checksum/configmap-env: {{ include (print .Template.BasePath "/configmap-env.yaml") . | sha256sum | trunc 63 }}
-        checksum/secret-env: {{ include (print .Template.BasePath "/secret-env.yaml") . | sha256sum | trunc 63 }}
         {{- if not .Values.global.metrics.servicemonitor.enabled }}
         prometheus.io/scrape: "false"
         {{- end }}

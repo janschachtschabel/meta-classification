@@ -35,7 +35,11 @@ Without it, `config.auth.adminKey` and `config.auth.readonlyKey` are **required*
 `config.auth.enabled=true` — rendering fails without them — and are stored in the
 chart-managed `Secret`. That path is fine for a throwaway cluster and poor beyond one: a
 key passed with `--set` ends up in shell history, in the log of whatever CI ran the
-command, and in any values file used to install. Either way the keys map to the app's
+command, and in any values file used to install. Changing them is a restart on this path
+too: the pod carries no hash of the keys (anyone allowed to read pods could test guesses
+against it), so an upgrade that only changes keys rolls nothing — follow it with
+`kubectl rollout restart statefulset/<release>`, or change a `podAnnotations` value in the
+same upgrade. Either way the keys map to the app's
 `X-API-Key` roles (admin = train/manage, readonly = predict/status). Swagger UI:
 `https://<host>/docs`.
 

@@ -89,6 +89,12 @@ brackets are its finding numbers.
   sent, and to uvicorn's h11 parser any token is a method: 200 invented ones made 600 series
   in a process that never restarts. A method HTTP does not define now counts as `OTHER`, as
   an unmatched path counts as `<unmatched>`. (S13)
+- **The chart no longer publishes a hash of the API keys.** The pod's `checksum/secret-env`
+  annotation was a SHA-256 of the rendered key Secret, readable by anyone allowed to read
+  pods; with the rest of that manifest public, a weak key could be confirmed offline. The
+  annotation is gone, so a `helm upgrade` that only changes the chart-managed keys no longer
+  restarts the pod by itself: follow it with `kubectl rollout restart`, or change a
+  `podAnnotations` value in the same upgrade (chart README). (S12)
 
 ### Fixed
 

@@ -91,6 +91,17 @@ def test_an_external_secret_replaces_the_charts_own_and_the_pod_reads_it():
     assert _mounted_secret(objects) == "classify-api-keys"
 
 
+def test_nothing_on_the_pod_is_derived_from_the_keys():
+    """S12 (audit 2026-09-30): a `checksum/secret-env` pod annotation carried a SHA-256 of the
+    rendered Secret, readable by anyone allowed to read pods -- and with the rest of that
+    manifest public, a weak key could be confirmed offline against it. Two releases that
+    differ only in their keys render the same StatefulSet."""
+    first = _render("config.auth.adminKey=render-test-a", "config.auth.readonlyKey=render-test-b", INSECURE)
+    second = _render("config.auth.adminKey=render-test-c", "config.auth.readonlyKey=render-test-d", INSECURE)
+
+    assert _of_kind(first, "StatefulSet") == _of_kind(second, "StatefulSet")
+
+
 def test_without_an_external_secret_the_chart_renders_and_mounts_its_own():
     objects = _render(*KEYS, INSECURE)
 
