@@ -385,6 +385,11 @@ brackets are its finding numbers.
   error. Found by running the whole suite on Linux against the hashed lock: the local
   environment had drifted to 1.6.0, so it never showed. `pip-audit`: no known
   vulnerabilities.
+- **A single-text answer is about one text.** The classification was asked for the text in
+  the field, and the metadata and the "Why?" button read the field again once the answer was
+  back: a user who went on typing got the metadata of one text beside the classification of
+  another, and "Why?" explained an answer for a text the model never saw. The text is now
+  read once per query. (U06)
 
 ## [4.0.1] — 2026-09-27
 

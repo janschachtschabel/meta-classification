@@ -215,3 +215,46 @@ def test_signing_out_hands_the_next_person_a_fresh_page(tmp_path):
     """)
 
     assert result["calls"] == ["clearKey", "reset query-form", "reset train-form", "reload"]
+
+
+
+# --- U06/U03: a single-text answer stays about the text that was classified ------------------
+
+# The page as the Query tab needs it for one text: the answer of /predict, the near-miss and
+# the metadata calls, each recorded with the texts it was sent -- and the user typing on while
+# every one of them is on its way, which is what the audit did in the browser.
+_ONE_TEXT = """
+    el("#query-text").value = "Pythagoras im rechtwinkligen Dreieck";
+    el("#query-topk").value = "";
+    const sent = [];
+    Api.post = async (url, body) => {
+      sent.push({ url, texts: body.texts || [body.text] });
+      el("#query-text").value = "Photosynthese in der Pflanze";
+      if (url === "/metadata") return { results: [{ title: "", description: "", keywords: [] }] };
+      return { results: [{ predictions: [{ uri: "u:m", label: "Mathematik", confidence: 0.9 }] }] };
+    };
+    globalThis.fmtFixed = (v, d) => Number(v).toFixed(d);
+    globalThis.applyBarWidths = () => {};
+    const bound = {};
+    globalThis.bindExplainButtons = (root, text) => { bound.explain = text; };
+    globalThis.bindCorrectionButtons = (root, byModel, text) => { bound.correct = text; };
+    const out = { innerHTML: "", querySelectorAll: () => [] };
+"""
+
+
+@needs_node
+def test_a_single_answer_and_its_extras_describe_the_same_text(tmp_path):
+    """U06 (audit 2026-09-30): the classification was asked for the text in the field, and the
+    metadata and the "Why?" button read the field again once the answer was back -- so a user
+    who went on typing got the classification of one text beside the metadata of another, and
+    "Why?" explained an answer to a text the model never saw."""
+    result = _run(tmp_path, modules=("query.js",), body=_ONE_TEXT + """
+        await runSingle(["m"], { classify: true, metadata: true }, out);
+        report({ sent, bound, errors });
+    """)
+
+    classified = ["Pythagoras im rechtwinkligen Dreieck"]
+    assert result["errors"] == []
+    assert result["sent"] == [{"url": "/predict", "texts": classified},
+                              {"url": "/metadata", "texts": classified}]
+    assert result["bound"]["explain"] == classified[0]

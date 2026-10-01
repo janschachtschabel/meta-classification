@@ -210,7 +210,11 @@ async function predictOneText(models, body) {
 
 async function runSingle(models, plan, out) {
   const settings = querySettings();
-  const body = { ...settings, texts: [$("#query-text").value] };
+  // Read ONCE: every part of the answer is about this text. Reading the field again after
+  // the awaits gave a user who typed on the metadata of one text beside the classification
+  // of another, and a "Why?" for a text the model never saw (audit 2026-09-30, U06).
+  const text = $("#query-text").value;
+  const body = { ...settings, texts: [text] };
   // Nothing asked to classify: the metadata is the whole answer, and /predict/multi
   // with an empty list would be a request for nothing.
   const byModel = plan.classify ? await predictOneText(models, body) : {};
@@ -226,7 +230,6 @@ async function runSingle(models, plan, out) {
     // look like "the model had nothing close".
     catch (err) { nearest = {}; console.warn("near-miss follow-up failed", err); }
   }
-  const text = $("#query-text").value;
   // Requested before the answer is written so a failure here is a failure of the whole
   // submit: the user ticked a box, and silently leaving the card out would look like the
   // text simply yielded nothing.
