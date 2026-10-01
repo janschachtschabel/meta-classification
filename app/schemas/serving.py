@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field
 
 from .common import SERVING_MODEL, OptionalFilter
 
+# The bounds of the two decision levers, shared with the form fields of `/predict/csv`:
+# one contract on two transports, so they cannot drift apart again (audit 2026-09-30,
+# V01 -- the form took `top_k=-1` and `threshold=nan`). NaN fails both bounds.
+TopK = Annotated[int, Field(ge=0, le=1000)]
+Threshold = Annotated[float, Field(ge=0.0, le=1.0)]
+
 
 class _PredictOptions(BaseModel):
     """Options shared by single- and multi-model prediction requests."""
@@ -23,8 +29,8 @@ class _PredictOptions(BaseModel):
             "`text_column_weights` (`GET /models/{name}`); markup is cleaned as in training."
         ),
     )
-    top_k: int | None = Field(
-        None, ge=0, le=1000,
+    top_k: TopK | None = Field(
+        None,
         description=(
             "null (default) = the model DECIDES: multilabel returns every label above its "
             "tuned per-label threshold, multiclass/binary the single best label. "
@@ -33,8 +39,8 @@ class _PredictOptions(BaseModel):
             "distinguishable). 0 = ranking of the training set's typical label count."
         ),
     )
-    threshold: float | None = Field(
-        None, ge=0.0, le=1.0,
+    threshold: Threshold | None = Field(
+        None,
         description=(
             "One confidence cut (0-1) for every label, replacing the model's tuned per-label "
             "thresholds for this request; null (default) = the tuned ones. Multilabel only: "

@@ -26,6 +26,7 @@ from ..concurrency import csv_slots
 from ..errors import TrainingInputError
 from ..limiter import limiter, predict_limit
 from ..registry import get_registry
+from ..schemas.serving import Threshold, TopK
 from ..security import require_role, spool_upload_capped
 from ..settings import Settings, get_settings
 from ._bundles import load_model
@@ -76,14 +77,14 @@ async def predict_csv(
         ),
     ),
     separator: str = Form(";", description="The CSV's field delimiter: exactly one character (else 400)."),
-    threshold: float | None = Form(
+    threshold: Threshold | None = Form(
         None,
         description=(
             "One confidence cut for every label, replacing the model's tuned per-label thresholds. "
             "Multilabel only: binary/multiclass decide by argmax. Omitted = the tuned ones."
         ),
     ),
-    top_k: int | None = Form(
+    top_k: TopK | None = Form(
         None,
         description=(
             "Ranking mode: exactly the N most probable labels per row, regardless of thresholds "

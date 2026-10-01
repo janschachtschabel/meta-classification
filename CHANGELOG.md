@@ -166,6 +166,10 @@ brackets are its finding numbers.
   where a tag starts with `<` and a letter, `/`, `!` or `?`. A bundle records its version as
   `text_cleaning`, and serving and evaluation clean with the version the model was trained
   with: existing models (version 1) behave exactly as before. (T09)
+- **`/predict/csv` bounds `top_k` and `threshold` as `/predict` does.** The form fields took
+  any number: `top_k=-1` sliced the ranking from its far end, `threshold=5` or `nan` passed
+  no label, and each answered 200. Both transports now share one definition of the bounds
+  (`top_k` 0–1000, `threshold` 0–1); outside them is a 422 before the upload is spooled. (V01)
 
 ## [4.0.1] — 2026-09-27
 

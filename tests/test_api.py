@@ -1470,6 +1470,22 @@ def test_classifying_a_csv_refuses_a_multi_character_separator(trained_model):
     assert "single character" in refused.text
 
 
+@pytest.mark.parametrize("field, value", [
+    ("top_k", "-1"), ("top_k", "1001"),
+    ("threshold", "5"), ("threshold", "-0.1"), ("threshold", "nan"),
+])
+def test_classifying_a_csv_bounds_its_options_as_predict_does(trained_model, field, value):
+    """V01 (audit 2026-09-30): `/predict` answers these with 422; `/predict/csv` took them
+    and answered with a 200 -- `threshold=nan` passes no label, `top_k=-1` slices the
+    ranking from its far end. One request contract, one set of bounds."""
+    files = {"file": ("items.csv", CSV_BODY, "text/csv")}
+    response = client.post("/predict/csv", files=files, headers=RO,
+                           data={"model_name": "api_model", field: value})
+
+    assert response.status_code == 422, response.text
+    assert not list((_TMP / "data").glob(".predict-*")), "a refused request spools nothing"
+
+
 def test_evaluating_refuses_a_dataset_name_that_escapes_the_data_directory(trained_model):
     """`/train` runs safe_name on the dataset name; this route did not, so the name went
     straight into a path join. An admin key could make the server read any parseable file
