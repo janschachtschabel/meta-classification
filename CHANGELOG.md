@@ -398,6 +398,10 @@ brackets are its finding numbers.
   request to classify again, both when opening the form and when saving one opened before the
   edit: the labels on screen belong to the old text, the user may mean the new one, and
   neither guess belongs in the training data. (U03)
+- **A column weight set to 1 stays 1.** The training form rebuilds its weight fields whenever
+  the column selection changes, and the rebuild kept only the values above 1: a deliberate 1
+  on `title` (configured default 2) jumped back to 2 as soon as another column was picked,
+  and the run trained with 2. Every typed value now survives the rebuild. (U04)
 
 ## [4.0.1] — 2026-09-27
 

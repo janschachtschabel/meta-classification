@@ -29,25 +29,35 @@ async function loadTrainingTab() {
    agree on what happens. */
 let defaultColWeights = {};
 
-function textColumnWeights() {
+/* Every weight on the form, the 1s included: a 1 is a choice too. The rebuild used to read
+   only the values above 1 and filled the gap with the server's default, so a deliberate 1 on
+   "title" (default 2) jumped back to 2 the moment another column was picked, and the run
+   trained with 2 (audit 2026-09-30, U04). */
+function typedColumnWeights() {
   const out = {};
   document.querySelectorAll("#textcol-weights-fields [data-weight]").forEach((el) => {
     const n = Number(el.value);
-    if (Number.isFinite(n) && n > 1) out[el.dataset.weight] = n;  // 1 = default, omit
+    if (Number.isFinite(n) && n >= 1) out[el.dataset.weight] = n;
   });
   return out;
+}
+
+/* What a request sends. A dict sent at all is taken as it is, so a column left out of it
+   weighs 1 -- which is how a 1 is said. */
+function textColumnWeights() {
+  return Object.fromEntries(Object.entries(typedColumnWeights()).filter(([, n]) => n > 1));
 }
 
 function renderTextColWeights(cols) {
   const box = $("#textcol-weights");
   const fields = $("#textcol-weights-fields");
-  const previous = textColumnWeights();
+  const previous = typedColumnWeights();
   box.hidden = !cols.length;
   fields.innerHTML = cols.map((c, i) => `
     <label for="weight-${i}">
       <span class="col-name">${esc(c)}</span>
       <input id="weight-${i}" type="number" min="1" max="10" step="1"
-             value="${previous[c] || defaultColWeights[c] || 1}" data-weight="${esc(c)}"
+             value="${previous[c] ?? defaultColWeights[c] ?? 1}" data-weight="${esc(c)}"
              aria-describedby="textcol-weights-help">
     </label>`).join("");
 }

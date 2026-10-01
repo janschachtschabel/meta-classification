@@ -321,3 +321,38 @@ def test_a_correction_is_refused_once_the_text_has_changed(tmp_path):
         "a correction was saved for a text that was not classified")
     assert result["message"] == "feedback.textChanged"
     assert result["errors"] == []
+
+
+
+# --- U04: a weight the user set survives a change of the column selection ---------------------
+
+
+@needs_node
+def test_a_weight_set_to_one_survives_picking_another_column(tmp_path):
+    """U04 (audit 2026-09-30): the rebuild kept only weights above 1, so a deliberate 1 on
+    "title" -- whose configured default is 2 -- jumped back to 2 the moment another column
+    was picked, and the run trained with 2. The inputs are read back out of the markup the
+    rebuild writes, as the browser would hold them."""
+    result = _run(tmp_path, modules=("training.js",), body="""
+        defaultColWeights = { title: 2, keywords: 2 };
+        let inputs = [];
+        const parse = () => {
+          inputs = [...el("#textcol-weights-fields").innerHTML
+            .matchAll(/value="([^"]*)" data-weight="([^"]*)"/g)]
+            .map(([, value, weight]) => ({ value, dataset: { weight } }));
+        };
+        document.querySelectorAll = (sel) =>
+          (sel === "#textcol-weights-fields [data-weight]" ? inputs : []);
+        renderTextColWeights(["title"]);
+        parse();
+        inputs[0].value = "1";
+        renderTextColWeights(["title", "description"]);
+        parse();
+        report({ shown: Object.fromEntries(inputs.map((i) => [i.dataset.weight, i.value])),
+                 sent: textColumnWeights(), errors });
+    """)
+
+    assert result["errors"] == []
+    assert result["shown"] == {"title": "1", "description": "1"}
+    # A dict sent at all is taken as it is (prepare.py), so a 1 is said by leaving it out.
+    assert result["sent"] == {}
