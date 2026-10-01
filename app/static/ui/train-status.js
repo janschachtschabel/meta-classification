@@ -153,16 +153,18 @@ function statusNotes(s) {
 }
 
 /* Stopping ends the running run AND empties the queue, so one click could throw away a
-   whole batch; it asks first, and says how many runs go with it (audit 2026-09-30, U10).
-   Bound once in boot(): the button is part of the page, not of a render. */
+   whole batch; it asks first, and says how many runs go with it (audit 2026-09-30, U10) --
+   those waiting on the server and those this page has not sent yet (training.js), which it
+   cancels. Bound once in boot(): the button is part of the page, not of a render. */
 async function stopTraining() {
   const s = lastStatus || {};
   const name = s.model_name || "";
-  const queued = (s.queued || []).length;
-  const question = queued
-    ? t("trainStatus.stopConfirmQueue", { name, count: queued })
+  const dropped = (s.queued || []).length + unsentRuns();
+  const question = dropped
+    ? t("trainStatus.stopConfirmQueue", { name, count: dropped })
     : t("trainStatus.stopConfirm", { name });
   if (!confirm(question)) return;
+  cancelUnsentRuns();
   // The server clears the queue as part of stopping; the next poll shows it gone.
   try { await Api.post("/train/stop"); toast(t("trainStatus.stopRequested")); }
   catch (err) { toastError(err); }

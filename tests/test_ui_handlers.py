@@ -865,7 +865,8 @@ def test_a_poll_tick_updates_the_training_card_in_place(tmp_path):
 def test_stopping_asks_first_and_names_the_queue_it_empties(tmp_path):
     """U10: "Stop training" posted at once -- and stopping also empties the whole queue, so
     one click could throw away a batch of runs. It asks first, and says how many go with it."""
-    result = _run(tmp_path, modules=("train-status.js",), helpers=("app.js:applyBarWidths",),
+    result = _run(tmp_path, modules=("train-status.js", "training.js"),
+                  helpers=("app.js:applyBarWidths",),
                   prelude=_STATUS_PRELUDE, body=_STATUS_CARD + """
         const asked = [];
         let answer = false;
@@ -886,4 +887,56 @@ def test_stopping_asks_first_and_names_the_queue_it_empties(tmp_path):
     assert result["posted"] == ["/train/stop"]
     assert result["asked"][0].startswith("trainStatus.stopConfirmQueue")
     assert '"count":1' in result["asked"][0] and '"name":"fach"' in result["asked"][0]
+    assert result["errors"] == []
+
+
+
+@needs_node
+def test_stopping_also_cancels_the_runs_this_page_has_not_sent(tmp_path):
+    """Review of U05/U10 (2026-10-01): a batch waiting out the rate limit went on after Stop.
+    Seven fields, five accepted, the sixth refused with 429 and the page waiting 60 s; Stop
+    asked about the four runs on the server, the server stopped and cleared its queue -- and
+    the page then sent the sixth and seventh as if nothing had happened. Stop now counts the
+    runs the page still holds, and ends the wait instead of sitting it out. The timers here
+    never fire on their own: the stop has to come while the page is waiting."""
+    result = _run(tmp_path, modules=("train-status.js", "training.js"), helpers=("app.js:busy",),
+                  prelude=_STATUS_PRELUDE, body="""
+        const timers = [];
+        globalThis.setTimeout = (run, ms) => { timers.push({ run, ms }); return timers.length; };
+        const toasts = [];
+        globalThis.toast = (message) => toasts.push(message);
+        globalThis.toastError = (err) => errors.push(String(err.message || err));
+        el("#train-dataset").value = "data.csv";
+        el("#train-name").value = "fach";
+        pickers[0].values = () => ["title"];
+        pickers[1].values = () => ["f1", "f2", "f3", "f4", "f5", "f6", "f7"];
+        const posted = [];
+        Api.post = async (url, body) => {
+          posted.push(body && body.model_name ? body.model_name : url);
+          if (posted.length === 6) {
+            throw Object.assign(new Error("Rate limit exceeded"), { status: 429, retryAfter: 60 });
+          }
+          return { status: "queued" };
+        };
+        const batch = onTrainStart({ preventDefault() {} });
+        for (let i = 0; i < 100 && !timers.length; i += 1) await Promise.resolve();
+        const waiting = { label: el("#train-btn").textContent, timers: timers.map((t) => t.ms) };
+        lastStatus = { status: "running", model_name: "fach_f1",
+                       queued: ["fach_f2", "fach_f3", "fach_f4", "fach_f5"] };
+        const asked = [];
+        globalThis.confirm = (question) => { asked.push(question); return true; };
+        await stopTraining();
+        timers.forEach((t) => t.run());   // the 60 s pass either way
+        await batch;
+        report({ posted, asked, waiting, toasts, errors, idle: !el("#train-btn").disabled });
+    """)
+
+    assert result["waiting"]["timers"] == [60_000]
+    assert result["waiting"]["label"].startswith("train.waitingButton"), "the wait shows nowhere lasting"
+    assert '"count":6' in result["asked"][0], "the question left out the runs the page still holds"
+    assert result["posted"] == ["fach_f1", "fach_f2", "fach_f3", "fach_f4", "fach_f5", "fach_f6",
+                                "/train/stop"], "runs were sent after the stop"
+    assert result["toasts"][-1].startswith("train.batchCancelled")
+    assert '"count":2' in result["toasts"][-1]
+    assert result["idle"] is True
     assert result["errors"] == []

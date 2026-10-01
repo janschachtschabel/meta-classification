@@ -169,6 +169,7 @@ const STRINGS_EN = {
   "share.table.model": "Model",
   "share.urlLabel": "Share URL",
 
+  "train.batchCancelled": {"one": "Training stopped — {count} run was not sent.", "other": "Training stopped — {count} runs were not sent."},
   "train.caps.help": "How many word / character n-grams the TF-IDF vocabulary may keep. Leave blank for the profile's value. A model whose <code>n_features</code> equals the sum of its caps had its vocabulary <strong>truncated</strong> — raising the caps can recover signal, at a proportional cost in RAM, bundle size and cold-load time. Character n-grams are ignored by word-only profiles.",
   "train.caps.placeholder": "profile default",
   "train.caps.summary": "Vocabulary caps <span class=\"muted\">(advanced — RAM vs. quality)</span>",
@@ -233,6 +234,7 @@ const STRINGS_EN = {
   "train.textColumns.add": "Add text column",
   "train.textColumns.help": "Type to filter the columns and pick a suggestion — Enter adds it as a pill, Backspace removes the last one.",
   "train.textColumns.legend": "Text columns",
+  "train.waitingButton": "Waiting for the rate limit … (run {run} of {total})",
   "train.waitingForLimit": "The server's rate limit is reached: run {run} of {total} is sent in {wait}. Keep this page open until then.",
   "train.weights.help": "<strong>Field weight</strong> — how often a field is repeated in the training text. A title or a keyword list carries far more signal per word than a long description, but the description supplies more words and drowns it out; repeating a field gives it that weight back. <strong>1 = unchanged</strong> (the default). Repetition is damped logarithmically, so 2 is worth about 1.7×, not 2×.<br><strong>Note:</strong> a model trained this way expects input built the same way — assemble the text you later send to <code>/predict</code> with the same repetitions, otherwise its tuned thresholds sit on a different distribution.",
 

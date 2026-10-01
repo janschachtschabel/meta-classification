@@ -148,6 +148,19 @@ function renderNamePreview() {
    times, because another client on the same address can keep the window full. */
 const TRAIN_LIMIT_WAITS = 3;
 
+/* The runs of a batch this page has not sent yet. Stopping a training ends the batch too: the
+   server clears its queue, and a page still waiting out the limit sent the rest after the
+   stop as if nothing had happened (review of U05/U10). `stopTraining` (train-status.js)
+   counts them in its question and cancels them, which also cuts the current wait short. */
+const sending = { unsent: 0, cancelled: false, wake: null };
+const unsentRuns = () => sending.unsent;
+
+function cancelUnsentRuns() {
+  sending.cancelled = true;
+  if (sending.wake) sending.wake();
+}
+
+/* The answer to the run, or null when the batch was cancelled while waiting. */
 async function submitRun(body, run, total) {
   for (let waits = 0; ; waits += 1) {
     try {
@@ -156,7 +169,13 @@ async function submitRun(body, run, total) {
       if (err.status !== 429 || waits === TRAIN_LIMIT_WAITS) throw err;
       const seconds = err.retryAfter ?? 60;
       toast(t("train.waitingForLimit", { run, total, wait: t("common.seconds", { count: seconds }) }));
-      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+      // On the button too: the message fades, the wait does not.
+      const button = $("#train-btn");
+      button.textContent = t("train.waitingButton", { run, total });
+      await new Promise((resolve) => { sending.wake = resolve; setTimeout(resolve, seconds * 1000); });
+      sending.wake = null;
+      button.textContent = t(button.dataset.i18n);
+      if (sending.cancelled) return null;
     }
   }
 }
@@ -210,8 +229,15 @@ async function onTrainStart(ev) {
     // closed tab lost them; sending them now is what makes the tab disposable.
     // Sequentially, because a position is only meaningful against a known queue.
     const accepted = [];
+    sending.cancelled = false;
     for (const [at, body] of bodies.entries()) {
-      accepted.push(await submitRun(body, at + 1, bodies.length));
+      sending.unsent = bodies.length - at;
+      const answer = await submitRun(body, at + 1, bodies.length);
+      if (answer === null) {
+        toast(t("train.batchCancelled", { count: bodies.length - at }));
+        return;
+      }
+      accepted.push(answer);
     }
     const queued = accepted.filter((a) => a.status === "queued").length;
     toast(queued
@@ -220,5 +246,8 @@ async function onTrainStart(ev) {
   } catch (err) {
     // Some may already be queued: say so rather than implying nothing happened.
     showError(errEl, { message: t("train.partialFailure", { message: err.message }) });
-  } finally { idle(); }
+  } finally {
+    sending.unsent = 0;
+    idle();
+  }
 }

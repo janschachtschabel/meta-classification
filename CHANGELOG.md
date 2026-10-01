@@ -455,7 +455,9 @@ brackets are its finding numbers.
   it to the form's Close button. (U09)
 - **Stopping a training asks first, and the status card keeps the focus.** "Stop training"
   ended the run at once — and stopping also empties the queue, so one click could throw away
-  a whole batch. It now asks, naming the runs that would go with it. The card it sits on was
+  a whole batch. It now asks, saying how many runs would go with it — those queued on the
+  server and those the page has not sent yet while it waits out the rate limit (U05), which a
+  confirmed stop now cancels instead of sending them after it. The card it sits on was
   rebuilt from scratch every 2.5 s while a run was going, so the focus fell off "Stop" between
   Tab and Enter and a phase or model name being selected lost its selection; it is now updated
   in place, and only the rows whose text changed are written. (U10)
