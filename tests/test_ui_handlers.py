@@ -1065,7 +1065,9 @@ def test_the_query_form_sends_a_threshold_when_one_is_set(tmp_path):
 def test_a_csv_run_sends_the_threshold_too(tmp_path):
     """The CSV mode posts a form to /predict/csv, which takes the same field."""
     result = _run(tmp_path, modules=("query.js",), body="""
-        el("#query-file").files = [new File(["title\\nBruch"], "in.csv")];
+        // A named Blob, not `new File`: File is a global only from Node 20 on, and the rest
+        // of this harness runs on Node 18.
+        el("#query-file").files = [Object.assign(new Blob(["title\\nBruch"]), { name: "in.csv" })];
         el("#query-separator").value = ";";
         el("#query-topk").value = "";
         el("#query-threshold").value = "0.3";
