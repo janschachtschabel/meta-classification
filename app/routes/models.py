@@ -221,7 +221,8 @@ async def import_model(
     loaded safely via skops — files with unknown/unsafe types are rejected.
     `new_name` overrides the model name. Size limit active. **Auth:** admin.
     """
-    if not file.filename or not file.filename.endswith(".zip"):
+    # In any letter case, like a dataset's suffix: `FAECHER.ZIP` is a ZIP too.
+    if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "File must be a .zip model bundle.")
     name = new_name or Path(file.filename).stem
     safe_name(name, "model name")

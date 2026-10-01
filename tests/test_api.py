@@ -360,6 +360,18 @@ def test_export_import_roundtrip_via_api(trained_model):
     assert "api_copy" in client.get("/models", headers=RO).json()
 
 
+def test_a_bundle_named_in_upper_case_can_be_imported(trained_model):
+    """Found beside V04 (audit 2026-09-30): the model import compared `.zip` case-sensitively
+    too, so a bundle saved as `FAECHER.ZIP` was refused as not being a ZIP."""
+    export = client.post("/models/api_model/export", headers=ADMIN)
+    files = {"file": ("API_UPPER.ZIP", export.content, "application/zip")}
+
+    imported = client.post("/models/import", files=files, headers=ADMIN)
+
+    assert imported.status_code == 200, imported.text
+    assert "API_UPPER" in client.get("/models", headers=RO).json(), "named after the file, as before"
+
+
 def test_label_diagnostics_list_the_weakest_labels_first(trained_model):
     """"How good is this model" is one number; "where is it weak" is the question that
     decides whether to trust an answer. Per label: its F1, how many rows carry it, and

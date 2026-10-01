@@ -187,6 +187,8 @@ brackets are its finding numbers.
   which on Linux misses such a file even where it was copied onto the volume. Both now
   apply the rule the other routes do, so the name is kept as uploaded, and a `new_name`
   ending in `.CSV` no longer gets `.csv` appended. (V04)
+- **`FAECHER.ZIP` can be imported as a model.** The model import compared `.zip`
+  case-sensitively as well and refused the bundle as not being a ZIP. (Found beside V04.)
 
 ## [4.0.1] — 2026-09-27
 
