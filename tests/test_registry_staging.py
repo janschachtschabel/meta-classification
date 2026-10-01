@@ -168,3 +168,24 @@ def test_an_import_reserves_its_name_until_it_is_done(tmp_path):
     with pytest.raises(RuntimeError), registry.importing("m"):
         raise RuntimeError("the upload broke off")
     assert not registry.is_importing("m")
+
+
+
+def test_a_bundle_keeps_its_newest_evaluations_not_every_one_ever(tmp_path):
+    """R15 (audit 2026-09-30): every evaluation appended to `metrics.json` for good -- the
+    document every model detail reads and every export packs grew without end. The newest
+    MAX_EVALUATIONS stay: enough to compare a model across datasets, which is their point."""
+    import json
+
+    from app.registry import MAX_EVALUATIONS
+
+    model, metadata = _trained_model(tmp_path)
+    registry = Registry(tmp_path / "models", 2)
+    registry.save("m", model, metadata)
+
+    for run in range(MAX_EVALUATIONS + 10):
+        registry.append_evaluation("m", {"dataset": f"run-{run}.csv"})
+
+    stored = json.loads((registry.dir / "m" / "metrics.json").read_text(encoding="utf-8"))
+    kept = [entry["dataset"] for entry in stored["evaluations"]]
+    assert kept == [f"run-{run}.csv" for run in range(10, MAX_EVALUATIONS + 10)]

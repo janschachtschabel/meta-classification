@@ -363,6 +363,9 @@ brackets are its finding numbers.
 - **A hard-stopped run is in the history.** A hard stop resets the status at once and drops
   the run's own finish, so the run left no record at all; it is now recorded as `stopped`
   when it is stopped. (R15)
+- **A bundle keeps its newest 50 evaluations, not every one ever made.** Each evaluation was
+  appended to `metrics.json` for good — the document every model detail reads and every
+  export packs grew without end. (R15)
 
 ## [4.0.1] — 2026-09-27
 

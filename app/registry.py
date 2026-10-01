@@ -41,6 +41,11 @@ from .staged_archives import StagedArchives
 
 logger = logging.getLogger("api_v3.registry")
 
+# How many evaluation records a bundle keeps, newest last: enough to compare a model across
+# datasets, which is their point -- appended for good, they grew the document every model
+# detail reads and every export packs without end (audit 2026-09-30, R15).
+MAX_EVALUATIONS = 50
+
 # Suffix for the untouched copy scripts/prune_bundle_labels.py keeps before it
 # repairs a bundle; that script imports this constant, so the two cannot drift.
 _BACKUP_SUFFIX = ".prebackup"
@@ -357,7 +362,10 @@ class Registry:
         the newest would throw away exactly the comparison this exists for.
         """
         def edit(metadata: dict) -> None:
-            metadata.setdefault("evaluations", []).append(record)
+            evaluations = metadata.setdefault("evaluations", [])
+            evaluations.append(record)
+            # The newest MAX_EVALUATIONS (R15): every one ever made grew the bundle without end.
+            del evaluations[:-MAX_EVALUATIONS]
 
         self._edit_metadata(name, edit)
 
