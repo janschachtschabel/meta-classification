@@ -380,7 +380,7 @@ it knows, and that is exactly what a recipient of a shared model needs:
 
 | Field | For |
 |---|---|
-| `display_name` | how people see it beside its technical name; no other model may use it as name or display name, in any letter case (409) |
+| `display_name` | how people see it beside its technical name; no other model may use it as name or display name, in any letter case (409). Leading and trailing spaces are dropped. A training or an import must not take a name another model answers to either (409); a display name an imported archive brings that another model already answers to is dropped, and the import's answer says so (`display_name_dropped`) |
 | `author` | who trained it, and how to reach them |
 | `description` | what it is for — and what it is **not** for |
 | `data_source` | where the data came from (`dataset` is only a file name, meaningless elsewhere) |

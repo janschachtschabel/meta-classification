@@ -16,6 +16,7 @@ from .errors import UnsafeModelError
 class _Models(Protocol):
     def list(self) -> list[str]: ...
     def info(self, name: str) -> dict: ...
+    def update_info(self, name: str, info: dict) -> dict: ...
 
 
 def display_name(models: _Models, name: str) -> str | None:
@@ -29,7 +30,8 @@ def display_name(models: _Models, name: str) -> str | None:
     except (OSError, ValueError, KeyError, UnsafeModelError):
         return None
     value = info.get("display_name") if isinstance(info, dict) else None
-    return value if isinstance(value, str) and value else None
+    # Trimmed as the request model trims it: a bundle's documentation is foreign data.
+    return (value.strip() or None) if isinstance(value, str) else None
 
 
 def taken_by(models: _Models, candidate: str, *, other_than: str) -> str | None:
@@ -43,3 +45,23 @@ def taken_by(models: _Models, candidate: str, *, other_than: str) -> str | None:
         if name.casefold() == key or (display_name(models, name) or "").casefold() == key:
             return name
     return None
+
+
+def release_taken_display_name(models: _Models, name: str) -> dict | None:
+    """After an import: drop the display name the archive brought if another model already
+    answers to it, keeping the rest of the documentation; returns what was dropped, or ``None``.
+
+    Dropped rather than refused: the model is what the import is for, and the same model
+    arriving on a second server is the common way to meet its own display name there. The
+    caller reports it, so a display name never disappears silently.
+    """
+    shown = display_name(models, name)
+    if shown is None:
+        return None
+    owner = taken_by(models, shown, other_than=name)
+    if owner is None:
+        return None
+    info = dict(models.info(name).get("metadata", {}).get("info") or {})
+    info.pop("display_name", None)
+    models.update_info(name, info)
+    return {"display_name": shown, "taken_by": owner}

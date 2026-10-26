@@ -178,3 +178,16 @@ def test_a_blank_or_padded_display_name_from_a_bundle_is_trimmed(tmp_path):
     """)
 
     assert result == {"blank": "", "padded": "Fächer", "number": ""}
+
+
+@needs_node
+def test_an_import_says_when_it_dropped_a_display_name_in_use(tmp_path):
+    result = _run(tmp_path, prelude=_PRELUDE_HERE, helpers=("models.js:importedMessage",), body="""
+        report({ plain: importedMessage({ status: "imported", name: "x" }),
+                 dropped: importedMessage({ status: "imported", name: "x",
+                   display_name_dropped: { display_name: "Fächer <1>", taken_by: "fach" } }) });
+    """)
+
+    assert result["plain"] == "models.imported"
+    assert result["dropped"] == ('models.importedDisplayNameDropped '
+                                 '{"display_name":"Fächer <1>","owner":"fach"}')

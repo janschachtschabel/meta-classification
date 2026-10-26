@@ -182,3 +182,33 @@ def test_a_display_name_is_trimmed_and_a_blank_one_is_none(setup):
     assert "display_name" not in blank.json()["info"]
     assert padded_twin.status_code == 409, "the same display name, only padded"
     assert padded.json()["info"]["display_name"] == "Fächer"
+
+
+# ------------------------------------------------- the other ways a name comes into being ---
+
+
+def _train(client, tmp_path, model_name, info=None):
+    (tmp_path / "data" / "d.csv").write_text("title;labels\nA;a\nB;b\n", encoding="utf-8")
+    body = {"dataset_name": "d.csv", "text_columns": ["title"], "label_column": "labels",
+            "model_name": model_name, **({"info": info} if info else {})}
+    return client.post("/train", headers=ADMIN, json=body)
+
+
+def test_a_run_may_not_take_a_name_another_model_answers_to(setup, tmp_path):
+    client, _ = setup
+
+    as_display_name = _train(client, tmp_path, "bildungsstufe")
+    as_case_twin = _train(client, tmp_path, "STUFE")
+
+    assert as_display_name.status_code == 409, as_display_name.text
+    assert "stufe" in as_display_name.json()["detail"]
+    assert as_case_twin.status_code == 409, as_case_twin.text
+
+
+def test_a_run_may_not_bring_a_display_name_in_use(setup, tmp_path):
+    client, _ = setup
+
+    answer = _train(client, tmp_path, "neu", info={"display_name": "Fach_Tpyo"})
+
+    assert answer.status_code == 409, answer.text
+    assert "fach_tpyo" in answer.json()["detail"]

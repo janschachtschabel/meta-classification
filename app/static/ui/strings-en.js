@@ -357,6 +357,7 @@ const STRINGS_EN = {
   "models.import.noFile": "Choose a model ZIP first.",
   "models.import.submit": "Import",
   "models.imported": "Model imported.",
+  "models.importedDisplayNameDropped": "Model imported. Its display name “{display_name}” already belongs to the model “{owner}”, so it was not kept – “Info” sets another one.",
   "models.info.author": "Author / contact",
   "models.info.author.hint": "e.g. Redaktion WLO <redaktion@example.org>",
   "models.info.dataSource": "Where the data came from",

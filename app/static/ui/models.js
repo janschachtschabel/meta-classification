@@ -189,6 +189,16 @@ async function loadModels() {
   finally { renderShareLinks("models", "#models-links"); }
 }
 
+/* The toast after an import. A display name the archive brought that another model already
+   answers to was dropped by the server; said here, so it never disappears unnoticed. The
+   toast escapes its text, so the parameters go in raw. */
+function importedMessage(result) {
+  const dropped = result && result.display_name_dropped;
+  return dropped
+    ? t("models.importedDisplayNameDropped", { display_name: dropped.display_name, owner: dropped.taken_by })
+    : t("models.imported");
+}
+
 async function onImportModel(ev) {
   ev.preventDefault();
   const errEl = $("#import-error"), btn = $("#import-btn"), fileInput = $("#import-file");
@@ -200,8 +210,7 @@ async function onImportModel(ev) {
   if (newName) form.append("new_name", newName);
   const idle = busy(btn);
   try {
-    await Api.postForm("/models/import", form);
-    toast(t("models.imported"));
+    toast(importedMessage(await Api.postForm("/models/import", form)));
     fileInput.value = "";
     $("#import-name").value = "";
     loadModels();

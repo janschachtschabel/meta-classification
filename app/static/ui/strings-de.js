@@ -358,6 +358,7 @@ const STRINGS_DE = {
   "models.import.noFile": "Bitte zuerst ein Modell-ZIP auswählen.",
   "models.import.submit": "Importieren",
   "models.imported": "Modell importiert.",
+  "models.importedDisplayNameDropped": "Modell importiert. Seinen Anzeigenamen „{display_name}“ trägt schon das Modell „{owner}“, deshalb wurde er nicht übernommen – über „Info“ lässt sich ein anderer vergeben.",
   "models.info.author": "Autor / Kontakt",
   "models.info.author.hint": "z. B. Redaktion WLO <redaktion@example.org>",
   "models.info.dataSource": "Woher die Daten stammen",

@@ -1,7 +1,7 @@
 """Renaming a model: correct a typo in its name, or name an import after what it is.
 
 A route module of its own -- routes/models.py serves the bundles; this changes what one is
-called. The rules for what a name may be live in ``app.model_names``; the move in
+called. The rules for what a name may be live in ``app.model_names`` (answered by ``_names``); the move in
 ``Registry.rename``.
 """
 
@@ -13,13 +13,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import Path as PathParam
 
-from .. import model_names
 from ..limiter import default_limit, limiter
 from ..registry import BACKUP_SUFFIX, get_registry, is_backup_name
 from ..schemas.training import RenameRequest
 from ..security import require_role, safe_name
 from ..sharing import get_share_store
 from ._jobs import refuse_while_a_run_holds
+from ._names import refuse_a_taken_name
 
 router = APIRouter(tags=["Models"])
 
@@ -56,8 +56,7 @@ async def rename_model(
     registry = get_registry()
     if not registry.exists(model_name):
         raise HTTPException(404, f"Model '{model_name}' not found.")
-    if owner := await asyncio.to_thread(model_names.taken_by, registry, new, other_than=model_name):
-        raise HTTPException(409, f"'{new}' is already the name or display name of model '{owner}'.")
+    await refuse_a_taken_name(registry, new, other_than=model_name)
     for name in (model_name, new):
         refuse_while_a_run_holds(name)
     try:
