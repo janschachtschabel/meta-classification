@@ -1,0 +1,16 @@
+# Build the image from this checkout instead of pulling the published one -- for development,
+# and for arm64 (Apple Silicon), which the published linux/amd64 image does not cover:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Everything else (environment, volume, limits) comes from docker-compose.yml.
+
+services:
+  classification-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Not the GHCR name: a local build must not pose as a release, and the next plain
+    # `docker compose pull` would replace it anyway.
+    image: metaclassify:local
+    pull_policy: build

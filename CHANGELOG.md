@@ -2,6 +2,17 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased]
+
+### Fixed
+
+- **An update in a server's Docker panel updates.** `docker-compose.yml` built the image
+  (`build:` + `image: classification-api:local`); the Hostinger Docker Manager's update pulled
+  that name, which no registry has, rebuilt nothing (its project folder holds no source) and
+  recreated the container from the OLD image while reporting success. It now runs the
+  published `ghcr.io/janschachtschabel/meta-classification:${APIV3_IMAGE_TAG:-4}` with
+  `pull_policy: always`; building from source moved to the `docker-compose.build.yml` override.
+
 ## [4.2.0] — 2026-10-26
 
 The editors' feedback round of 2026-10-26: the corrections become usable from the admin UI, a

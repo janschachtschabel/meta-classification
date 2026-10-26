@@ -30,17 +30,34 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"   # a key worth usi
 ### A · With Docker
 
 ```bash
-docker compose up -d                 # builds the image on first run, reads .env itself
+docker compose up -d                 # pulls the published image, reads .env itself
 docker compose logs -f               # follow the startup
+docker compose pull && docker compose up -d   # update to the newest image of the tag
 ```
 
-`docker-compose.yml` binds to `127.0.0.1:8000` on purpose — put nginx/caddy in front for
-TLS — and keeps datasets and models in the named volume `classification-data`, so
-`docker compose down` is safe and only `down -v` deletes your data.
+`docker-compose.yml` runs the image CI publishes,
+`ghcr.io/janschachtschabel/meta-classification` (public, no `docker login`), with the tag
+`APIV3_IMAGE_TAG` from `.env` -- empty means `4`, the newest 4.x release, so an update takes
+every 4.x and no 5.0 unasked; pin `4.2.0` to hold a release. It binds to `127.0.0.1:8000` on
+purpose — put nginx/caddy in front for TLS — and keeps datasets and models in the named
+volume `classification-data`, so `docker compose down` is safe and only `down -v` deletes
+your data.
 
-To run the published image instead of building, pull what the CI publishes —
-`ghcr.io/janschachtschabel/meta-classification` (the name follows the GitHub
-repository; the package is public, so no `docker login` is needed):
+On a **server's Docker panel** (Hostinger's Docker Manager, Portainer …) use this file as
+it is: its update button pulls the tag's newest image and recreates the container. A copy
+that still says `build:` with `image: classification-api:local` cannot be updated there —
+the pull fails, nothing is rebuilt (the project folder holds no source) and the container
+comes back on the old image although the log reports success. Replace those lines with the
+two `image:`/`pull_policy:` lines of the current `docker-compose.yml`; the volume, and with
+it every dataset, model and correction, stays as long as the project keeps its name.
+
+To **build from source** instead (development, or arm64 — see below):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+Without compose, the same image runs with `docker run`:
 
 ```bash
 docker run -d --name metaclassify -p 127.0.0.1:8000:8000 \
@@ -65,7 +82,7 @@ write inside the container's own filesystem and lose it on the next `docker run`
 and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
 production pin a version or a `sha-` tag rather than a moving one. The published
 images are built for **linux/amd64** only — on arm64 (Apple Silicon) build locally
-with `docker compose up -d` or run under emulation.
+with the `docker-compose.build.yml` override above or run under emulation.
 
 ### B · Without Docker
 

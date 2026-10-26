@@ -1,11 +1,16 @@
-# Local test setup. For production, pull the image from GHCR / the registry
-# and put a proper reverse proxy in front (TLS; see README "Security &
-# operations" for the rate-limit note behind proxies).
+# Runs the image CI publishes to GHCR -- the same file for a local start and for a server.
+# Put a proper reverse proxy in front for TLS (see README "Security & operations" for the
+# rate-limit note behind proxies).
 #
 # Quick start:
 #   cp .env.example .env       # set APIV3_API_KEY_ADMIN / APIV3_API_KEY_READONLY
 #   docker compose up -d
 #   open http://localhost:8000/docs
+#
+# Update:  docker compose pull && docker compose up -d   (a server's "update" button does this)
+# Version: APIV3_IMAGE_TAG in .env -- default 4, the newest 4.x; pin 4.2.0 to hold one release.
+# Build from source instead (development, arm64):
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
@@ -14,10 +19,12 @@
 
 services:
   classification-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: classification-api:local
+    # The published image, not a local build: an update has to be able to fetch it. With
+    # `image: classification-api:local` a Docker-Manager update tried to pull a name no
+    # registry has and recreated the container from the old local image. Its default tag is
+    # the major version, so an update takes every 4.x and never a 5.0 unasked.
+    image: ghcr.io/janschachtschabel/meta-classification:${APIV3_IMAGE_TAG:-4}
+    pull_policy: always
     container_name: classification-api
     restart: unless-stopped
     # APIV3_TRAIN_MEMORY_MB=auto below reads this limit; without it

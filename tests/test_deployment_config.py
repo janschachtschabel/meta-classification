@@ -55,6 +55,39 @@ def test_compose_establishes_the_memory_limit_its_comment_promises():
 # --- OPS-6: logs are bounded like the data volume is --------------------------------------
 
 
+def test_compose_runs_the_published_image_so_an_update_pulls_it():
+    """An update in the Hostinger Docker Manager ran `docker compose pull` on
+    `classification-api:local`, which no registry has, and recreated the container from the
+    OLD local image -- the server stayed on its first build while the log said "deployed
+    successfully" (2026-10-27). The project folder holds no source, so nothing could rebuild it
+    there either. The root compose runs what CI publishes; the source build is an override."""
+    service = _service()
+
+    assert "build" not in service, "a build here is what an update cannot redo"
+    assert service["image"].startswith("ghcr.io/janschachtschabel/meta-classification:")
+    assert service.get("pull_policy") == "always", "every deploy fetches the tag's newest image"
+
+
+def test_the_default_image_tag_follows_the_apps_major_version():
+    """`4` takes every 4.x on an update and never a 5.0 unasked: a major release bumps this
+    default along with `app.__version__`, or this fails."""
+    version = next(line.split('"')[1] for line in (ROOT / "app" / "__init__.py").read_text(
+        encoding="utf-8").splitlines() if line.startswith("__version__"))
+
+    assert _service()["image"].endswith(f":${{APIV3_IMAGE_TAG:-{version.split('.')[0]}}}")
+
+
+def test_the_build_override_builds_from_source_and_never_pulls():
+    """`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`: the
+    source build for development and for arm64, which the published image does not cover."""
+    override = yaml.safe_load((ROOT / "docker-compose.build.yml").read_text(encoding="utf-8"))
+    service = override["services"]["classification-api"]
+
+    assert service["build"] == {"context": ".", "dockerfile": "Dockerfile"}
+    assert service["pull_policy"] == "build", "inheriting `always` would pull instead of build"
+    assert not service["image"].startswith("ghcr.io/"), "a local build must not pose as the release"
+
+
 def test_compose_rotates_its_logs():
     """A `restart: unless-stopped` service at INFO writes forever. The data volume is
     carefully bounded; the logs beside it were not."""
