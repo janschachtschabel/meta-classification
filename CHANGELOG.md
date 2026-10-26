@@ -4,6 +4,16 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added
+
+- **The corrections can be seen, backed up, restored and trained on** -- before, the API
+  recorded them and handed out a training CSV, and the admin UI could only record one.
+  `GET /feedback` lists them newest first, per model and paged (a text shows its first 500
+  characters); `GET /feedback/export?format=jsonl` is a backup with every field that
+  `POST /feedback/import` takes back, skipping and counting exact repeats and invalid lines,
+  all or nothing against the cap; `POST /feedback/dataset` saves the training CSV as a new
+  dataset. All admin.
+
 ### Fixed
 
 - **Dependabot proposes the next base-image digest, not the next Python.** The docker entry

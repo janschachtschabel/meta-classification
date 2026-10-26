@@ -102,3 +102,13 @@ class ExportRequest(BaseModel):
         24, ge=1, le=168,
         description="Lifetime of the share link in hours, 1-168 (one week). Read only with `generate_share_url=true`.",
     )
+
+
+class CorrectionsDatasetRequest(BaseModel):
+    dataset_name: str = Field(
+        ..., min_length=1, max_length=200,
+        description=(
+            "The new dataset's file name; `.csv` is appended when it does not end in it. An "
+            "existing name is refused (409) -- the corrections never replace a dataset."
+        ),
+    )
