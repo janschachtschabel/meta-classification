@@ -160,8 +160,8 @@ says so.
 A first run, in the order the tabs are arranged:
 
 1. **Datensätze / Datasets** — upload a CSV (or drop it into `data/`), then open it to see
-   how many rows carry a label and how the labels are distributed. Worth doing before
-   training, not after.
+   how many rows carry a label and how the labels are distributed, and how many an LLM wrote
+   or completed (data-prep's marks). Worth doing before training, not after.
 2. **Training** — pick the dataset, the text columns, the label column and a profile
    (`fast` for a first look, `auto` for a model you deploy, `best` when accuracy matters
    more than the wait). **Vor dem Training prüfen** reads the whole dataset and reports how
@@ -171,8 +171,12 @@ A first run, in the order the tabs are arranged:
    model actually decides; set it to rank a fixed number regardless of thresholds.
    *Baseline-Diff* shows how much of the answer comes from the text rather than the label's
    base rate; *Label-F1* shows how reliable that label was in evaluation.
-4. **Modelle / Models** — metrics per model, export as a ZIP (verifiable via its
-   `manifest.json` checksums), share links, delete.
+4. **Modelle / Models** — metrics per model, documentation (display name, author,
+   license …), rename, export as a ZIP (verifiable via its `manifest.json` checksums), share
+   links (listed, revocable), delete.
+5. **Korrekturen / Corrections** — what editors corrected in the Query tab: listed per
+   model, downloaded as a training CSV or a complete backup, restored from a backup, or saved
+   as a dataset to train on.
 
 The page is a self-contained static file: vanilla JS, no build step, no external assets,
 nothing loaded from a CDN. It speaks **German and English**, switchable in the top bar

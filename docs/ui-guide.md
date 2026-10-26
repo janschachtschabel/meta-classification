@@ -73,6 +73,16 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**. Für die beschreibenden Me
   allein setzen, ohne ein Modell anzuhaken; dann kommt nur die Metadaten-Karte. Mit
   angehakten Modellen kommt beides in einem Durchgang. Alle Wörter stammen aus dem Text —
   erfunden wird nichts, geprüft werden sollten die Vorschläge trotzdem.
+  - **Titel:** eine Überschrift am Textanfang; sonst das Thema eines erklärenden ersten
+    Satzes („Die binäre Suche ist …“ ergibt „Die binäre Suche“); sonst das häufigste
+    aussagekräftige Schlagwort. Allgemeine Wörter wie „Arbeitsblatt“ oder „Schülerinnen“
+    werden dafür nicht genommen.
+  - **Beschreibung:** die ersten vollständigen Sätze, bis 500 Zeichen.
+  - **Keywords:** Nomen und Wortgruppen, gewichtet nach Häufigkeit im Text und Seltenheit
+    im Deutschen.
+  - Kein Sprachmodell, kein Netzzugriff, wenige Millisekunden. Am besten bei deutschen
+    Sachtexten; bei Erzählungen, sehr kurzen oder fremdsprachigen Texten schwächer. Die
+    Karte erklärt das unter **„Wie entstehen diese Vorschläge?“**.
 
 - **Konfidenz (Balken + Zahl 0–1):** Wie sicher das Modell ist, dass das Label
   passt. Die Werte der Labels sind unabhängig voneinander — sie müssen sich
