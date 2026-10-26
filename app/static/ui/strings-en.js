@@ -182,6 +182,7 @@ const STRINGS_EN = {
   "train.cv.profileDefault": "Profile default",
   "train.dataset.choose": "— choose —",
   "train.dataset.label": "Dataset",
+  "train.dataset.loading": "Loading the columns … a large dataset can take a few seconds.",
   "train.error.noDataset": "Choose a dataset first.",
   "train.error.noPlan": "Enter a model name and pick at least one label field.",
   "train.error.preflightInputs": "Pick a dataset, at least one text column and a label field first.",

@@ -108,6 +108,40 @@ def test_picking_a_dataset_fills_the_training_column_pickers(tmp_path):
 
 
 @needs_node
+def test_loading_a_datasets_columns_says_so_until_they_arrive(tmp_path):
+    """Picking a large dataset left the column pickers blank for seconds with no sign of work
+    -- the info call counts every row -- and read as a failure. A status line says the
+    columns are loading, the previous dataset's columns are not offered meanwhile, and the
+    line goes once they arrive, or once the request failed."""
+    result = _run(tmp_path, modules=("training.js",), body="""
+        let release;
+        Api.get = (url) => {
+          apiCalls.push(url);
+          return new Promise((resolve) => { release = () => resolve({ columns: ["title", "label"] }); });
+        };
+        pickers.forEach((p) => p.setOptions(["old"]));
+        el("#train-dataset").value = "big.csv";
+        const loading = loadDatasetColumns();
+        await sleep(20);
+        const status = el("#train-dataset-status");
+        const during = { hidden: status.hidden, text: status.textContent,
+                         options: pickers.map((p) => p.options) };
+        release();
+        await loading;
+        const after = { hidden: status.hidden, options: pickers.map((p) => p.options) };
+
+        Api.get = async () => { throw new Error("boom"); };
+        globalThis.showError = () => {};
+        await loadDatasetColumns();
+        report({ during, after, afterError: status.hidden, errors });
+    """)
+
+    assert result["during"] == {"hidden": False, "text": "train.dataset.loading", "options": [[], []]}
+    assert result["after"] == {"hidden": True, "options": [["title", "label"], ["title", "label"]]}
+    assert result["afterError"] is True
+
+
+@needs_node
 def test_the_wrapped_work_receives_only_its_predicate(tmp_path):
     """The contract every `latestOnly` caller relies on, whatever the listener passes."""
     result = _run(tmp_path, helpers=("app.js:latestOnly",), body="""

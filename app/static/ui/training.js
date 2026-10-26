@@ -95,17 +95,29 @@ const labelPicker = createPillPicker({
    ReferenceError that aborts the whole file — the same trap escape.js explains. */
 async function loadDatasetColumns(isCurrent = () => true) {
   const name = $("#train-dataset").value;
+  const status = $("#train-dataset-status");
+  textColPicker.setOptions([]); labelPicker.setOptions([]);
   if (!name) {
-    textColPicker.setOptions([]); labelPicker.setOptions([]); syncSyntheticChoice([]);
+    status.hidden = true;
+    syncSyntheticChoice([]);
     return;
   }
+  // The info call counts every row, so a large dataset takes seconds -- blank pickers with
+  // no sign of work read as a failure. The previous dataset's columns go at once.
+  status.textContent = t("train.dataset.loading");
+  status.hidden = false;
   try {
     const info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
     if (!isCurrent()) return;
     textColPicker.setOptions(info.columns);
     labelPicker.setOptions(info.columns);
     syncSyntheticChoice(info.columns);
-  } catch (err) { if (isCurrent()) showError($("#train-error"), err); }
+  } catch (err) {
+    if (isCurrent()) showError($("#train-error"), err);
+  } finally {
+    // A newer pick owns the line while it loads.
+    if (isCurrent()) status.hidden = true;
+  }
 }
 
 /* data-prep marks the rows an LLM wrote or touched. Only a dataset carrying such a

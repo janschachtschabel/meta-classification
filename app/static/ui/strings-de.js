@@ -183,6 +183,7 @@ const STRINGS_DE = {
   "train.cv.profileDefault": "Vorgabe des Profils",
   "train.dataset.choose": "— bitte wählen —",
   "train.dataset.label": "Datensatz",
+  "train.dataset.loading": "Spalten werden geladen … bei großen Datensätzen kann das einige Sekunden dauern.",
   "train.error.noDataset": "Bitte zuerst einen Datensatz wählen.",
   "train.error.noPlan": "Bitte einen Modellnamen eingeben und mindestens ein Label-Feld wählen.",
   "train.error.preflightInputs": "Bitte zuerst einen Datensatz, mindestens eine Textspalte und ein Label-Feld wählen.",
