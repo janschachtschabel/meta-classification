@@ -150,3 +150,18 @@ def test_a_model_may_be_displayed_under_its_own_name(setup):
     client, _ = setup
 
     assert client.put("/models/stufe/info", headers=ADMIN, json={"display_name": "STUFE"}).status_code == 200
+
+
+def test_a_broken_bundle_does_not_block_renaming_or_documenting_the_others(setup):
+    # The uniqueness check reads every model's documentation. An unreadable metrics.json is
+    # UnsafeModelError, not a ValueError -- and it made every rename and every documentation
+    # save answer 500, including the ones meant to tidy up.
+    client, models = setup
+    _bundle(models, "kaputt")
+    (models / "kaputt" / "metrics.json").write_text("{nicht json", encoding="utf-8")
+
+    documented = client.put("/models/stufe/info", headers=ADMIN, json={"display_name": "Stufen"})
+    renamed = _rename(client, "fach_tpyo", "fach")
+
+    assert documented.status_code == 200, documented.text
+    assert renamed.status_code == 200, renamed.text

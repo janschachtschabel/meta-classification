@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from .errors import UnsafeModelError
+
 
 class _Models(Protocol):
     def list(self) -> list[str]: ...
@@ -17,10 +19,14 @@ class _Models(Protocol):
 
 
 def display_name(models: _Models, name: str) -> str | None:
-    """The display name ``name`` documents, if any -- read forgivingly, like all bundle data."""
+    """The display name ``name`` documents, if any -- read forgivingly, like all bundle data.
+
+    An unreadable bundle (``UnsafeModelError``) answers to no display name: the check reads
+    every model, and one broken bundle must not block renaming or documenting the others.
+    """
     try:
         info = models.info(name).get("metadata", {}).get("info") or {}
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, UnsafeModelError):
         return None
     value = info.get("display_name") if isinstance(info, dict) else None
     return value if isinstance(value, str) and value else None
