@@ -74,6 +74,20 @@ def _bounded(line: str) -> list[str]:
     return pieces
 
 
+_FIRST_WORD_RE = re.compile(r"[\W_]*(\w+)")
+
+
+def opens_in_lower_case(s: str) -> bool:
+    """True when ``s`` opens with a word written all in lower case: a fragment ("und dann
+    kam ..."), a byline ("von Anna Schmidt"), or a heading typed in lower case. A word with a
+    capital inside ("pH-Wert", "eBook") and a number ("2022 war ...") do not count."""
+    match = _FIRST_WORD_RE.match(s)
+    if not match:
+        return False
+    word = match.group(1)
+    return word[0].isalpha() and word == word.lower()
+
+
 def split_sentences(text: str) -> list[str]:
     """Split into sentences; every line break is a hard boundary (headings, list items)."""
     sentences: list[str] = []
@@ -85,9 +99,13 @@ def split_sentences(text: str) -> list[str]:
                 if not segment:
                     continue
                 # pysbd also ends a sentence at "Ludwig XVI., der …"; no sentence starts with
-                # "," or ";".
+                # "," or ";". Nor, in German, in lower case: pysbd ends one after an
+                # abbreviation it does not know ("im 19. Jh. und prägte ..."), and the
+                # description then began "und prägte".
                 if len(sentences) > start and segment[0] in ",;":
                     sentences[-1] += segment
+                elif len(sentences) > start and opens_in_lower_case(segment):
+                    sentences[-1] += " " + segment
                 else:
                     sentences.append(segment)
     return sentences

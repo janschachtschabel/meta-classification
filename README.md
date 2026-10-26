@@ -594,9 +594,12 @@ curl -X POST http://localhost:8000/metadata -H "X-API-Key: $KEY" \
 
 | Field | How it is derived |
 |---|---|
-| `title` | A real heading if the text opens with one; otherwise the template `Keyword1: Keyword2 und Keyword3` from its three strongest keywords — running text has no heading, and heading extraction alone drops to the level of the first sentence on it. |
-| `description` | The first usable sentences up to `desc_max`, whole sentences only. Headings, list items, task instructions ("Beschreibe …") and page chrome are skipped, so it starts at the first real sentence rather than at the top of the file. |
-| `keywords` | Noun phrases weighted by how often they occur in this text against how rare they are in German (`wordfreq`), best first. |
+| `title` | A real heading if the text opens with one (not a line opening in lower case, such as a byline); otherwise the subject of a definitional first sentence when the text comes back to it ("Die binäre Suche ist …" → "Die binäre Suche"); otherwise the most frequent of its strongest keywords. Measured against the former template `Keyword1: Keyword2 und Keyword3` in `docs/plans/2026-10-26-metadata-titles.md`. |
+| `description` | The first usable sentences up to `desc_max`, whole sentences only. Headings, list items, task instructions ("Beschreibe …"), sentence fragments and page chrome are skipped, so it starts at the first real sentence rather than at the top of the file. |
+| `keywords` | Noun phrases weighted by how often they occur in this text against how rare they are in German (`wordfreq`), best first. A word with a capital inside ("pH-Wert") counts as a noun. |
+
+A title or a description never starts in lower case: one that would is capitalised (every word
+still occurs in the input).
 
 - **Proposals, not finished metadata.** All three are **extractive — every word occurs in
   the input** — so nothing is invented, and an editor checks them. That is the point: the

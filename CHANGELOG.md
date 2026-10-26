@@ -4,6 +4,21 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed
+
+- **A text without a heading gets a title that reads as one.** The template "K1: K2 und K3"
+  joined the three rarest keywords ("Valerie: Katzen und Micki", "Komplexitätsklasse: Element,
+  Standardbibliothek"); the title is now the subject of a definitional opening ("Die binäre
+  Suche ist …" → "Die binäre Suche") if the text comes back to it, else its most frequent strong
+  keyword. Token F1 against editors' titles on 13 texts: 0.18 → 0.38 on running text, 0.57 →
+  0.68 with headings (`docs/plans/2026-10-26-metadata-titles.md`). Same speed (±1 ms).
+- **No title or description starts in lower case.** A lowercase first line or a byline is no
+  heading, a fragment is no description sentence, a sentence pysbd ends after an unknown
+  abbreviation ("im 19. Jh. und prägte …") is joined again, and the last guard capitalises.
+- **Keywords**: a noun with a capital inside ("pH-Wert") and an adjective in "-är" ("binäre
+  Suche") are recognised; "Suche" is no stopword.
+- The admin UI's metadata card explains, folded, how the three proposals come about.
+
 ### Added
 
 - **The corrections can be seen, backed up, restored and trained on** -- before, the API

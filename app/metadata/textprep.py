@@ -29,7 +29,7 @@ from pathlib import Path
 import snowballstemmer
 
 from ..markup import strip_markup_preserving_lines
-from .sentences import split_sentences
+from .sentences import opens_in_lower_case, split_sentences
 from .types import Document
 
 _RESOURCES = Path(__file__).parent / "resources"
@@ -202,9 +202,21 @@ def is_task_instruction(s: str) -> bool:
     return bool(tokens) and (tokens[0].lower() == "aufgabe" or is_task_verb(tokens[0]))
 
 
+def capitalised(s: str) -> str:
+    """``s`` with its first letter upper-cased when it opens in lower case
+    (:func:`opens_in_lower_case`), else unchanged -- "pH-Wert" stays as written."""
+    if not opens_in_lower_case(s):
+        return s
+    at = next(i for i, ch in enumerate(s) if ch.isalpha())
+    return s[:at] + s[at].upper() + s[at + 1:]
+
+
 def is_description_sentence(s: str) -> bool:
     """True for complete, content-bearing sentences that may appear in a description."""
     if not 30 <= len(s) <= 350 or is_boilerplate(s) or not _SENTENCE_END_RE.search(s):
+        return False
+    # A sentence opening in lower case is a fragment: the text started mid-sentence.
+    if opens_in_lower_case(s):
         return False
     if len(tokenize(s)) < 5 or letter_ratio(s) < 0.7 or is_list_item(s):
         return False

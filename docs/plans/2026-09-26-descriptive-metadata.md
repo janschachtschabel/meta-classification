@@ -20,7 +20,7 @@ combination is ported — no method registry, no alternatives, no selectable var
 
 | Field | Method there | Ported |
 |---|---|---|
-| Title | `title.heading_or_keywords` — a real heading at the top of the text, else the template `K1: K2 und K3` from the three best TF-IDF keywords | yes, unchanged |
+| Title | `title.heading_or_keywords` — a real heading at the top of the text, else the template `K1: K2 und K3` from the three best TF-IDF keywords | yes, unchanged (the template replaced on 2026-10-26: `2026-10-26-metadata-titles.md`) |
 | Keywords | `keywords.tfidf` — noun phrases weighted by frequency in the text and rarity in German | yes, unchanged |
 | Description | `description.lead_centroid` — first sentence + the most central sentences (Model2Vec `potion`) | **no — `description.lead` instead**, see below |
 
