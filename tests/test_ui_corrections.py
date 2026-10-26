@@ -31,7 +31,8 @@ const item = (n, extra = {}) => ({ recorded_at: `t${n}`, model_name: "fach", tex
 def test_the_tab_lists_the_corrections_and_offers_more(tmp_path):
     result = _run(tmp_path, modules=_MODULES, prelude=_PRELUDE_HERE, body=_STUBS + """
         answerPages([
-          { total: 3, models: { fach: 2, stufe: 1 }, items: [item(3), item(2, { text: "<b>2</b>", text_truncated: true })] },
+          { total: 3, models: { fach: 2, stufe: 1 },
+            items: [item(3), item(2, { text: "<b>2</b>", text_truncated: true })] },
           { total: 3, models: { fach: 2, stufe: 1 }, items: [item(1, { corrected: [] })] },
         ]);
         await loadCorrections();
