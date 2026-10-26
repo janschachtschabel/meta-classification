@@ -19,6 +19,10 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   the bundle and revokes the old name's share links (a link resolves by name), reporting how
   many; the documentation gains `display_name`. No two models share a name or display name,
   in any letter case, across both (`app/model_names.py`); a change of case alone is a rename.
+  In the admin UI: a **Rename** action (Models table and detail view) whose form says how
+  many share links the rename will revoke before anyone confirms; the display name beside
+  the technical name in the Models table and the Query tab's model picker; and the
+  documentation shown in the model detail view.
 
 ### Fixed
 

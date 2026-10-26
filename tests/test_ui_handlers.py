@@ -697,7 +697,7 @@ def test_coming_back_to_the_query_tab_keeps_the_models_picked(tmp_path):
     """U08: the model list was rebuilt on every visit with the first model checked, so a user
     who had picked another one classified with the first after looking at the Models tab. An
     empty choice is a choice too -- metadata alone needs no model."""
-    result = _run(tmp_path, modules=("query.js",), body="""
+    result = _run(tmp_path, modules=("models.js", "query.js"), body="""
         Api.get = async () => ["m1", "m2", "m3"];
         const box = el("#query-models");
         let boxes = [];
@@ -1006,11 +1006,15 @@ def test_a_choice_made_while_the_tab_reloads_is_kept(tmp_path):
 @needs_node
 def test_a_model_ticked_while_the_list_reloads_stays_ticked(tmp_path):
     """The same on the Query tab: a model ticked during `GET /models` was unticked again."""
-    result = _run(tmp_path, modules=("query.js",), body="""
+    result = _run(tmp_path, modules=("models.js", "query.js"), body="""
         let release;
         const slow = new Promise((resolve) => { release = resolve; });
         let calls = 0;
-        Api.get = async () => { calls += 1; if (calls > 1) await slow; return ["m1", "m2"]; };
+        // The second GET /models is the slow one; the per-model reads (display names) are not.
+        Api.get = async (url) => {
+          if (url !== "/models") return {};
+          calls += 1; if (calls > 1) await slow; return ["m1", "m2"];
+        };
         const box = el("#query-models");
         let boxes = [];
         const read = () => {

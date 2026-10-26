@@ -50,6 +50,10 @@ async function loadQueryTab() {
   const box = $("#query-models");
   try {
     const names = await Api.get("/models");
+    // A display name lives in each model's documentation (models.js, modelDisplayName). Read
+    // per model; one that cannot be read costs its label, not the list.
+    const displays = await Promise.all(names.map((n) =>
+      Api.get(`/models/${encodeURIComponent(n)}`).then(modelDisplayName, () => "")));
     // Rebuilt on every visit to the tab, which put the check back on the first model whenever
     // someone looked at another tab (audit 2026-09-30, U08). A choice made here survives it --
     // an empty one too, since metadata alone needs no model -- read now rather than before the
@@ -60,7 +64,8 @@ async function loadQueryTab() {
     // common case is one model, and an empty picker would make the primary screen look broken.
     box.innerHTML = names.map((n, at) => `
       <label class="check"><input type="checkbox" name="query-model" value="${esc(n)}"${
-        (shownBefore ? picked.has(n) : at === 0) ? " checked" : ""}> <span>${esc(n)}</span></label>`).join("");
+        (shownBefore ? picked.has(n) : at === 0) ? " checked" : ""}> <span>${esc(displays[at] || n)}</span>${
+        displays[at] ? ` <span class="muted">${esc(n)}</span>` : ""}</label>`).join("");
     if (!names.length) $("#query-results").innerHTML = `<p class="muted">${t("query.noModels")}</p>`;
   } catch (err) { $("#query-results").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
 }

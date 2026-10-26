@@ -364,12 +364,42 @@ In der **Detailansicht** eines solchen Modells steht:
     aufgezeichnet wurde. **„argmax“** in der Schwellen-Spalte heißt: das Modell
     nimmt sein bestes Label und liest gar keine Schwelle.
 
+## Modelle benennen und dokumentieren (Reiter „Modelle“)
+
+- **Info** öffnet die Dokumentation eines Modells: **Anzeigename**, Autor,
+  Beschreibung, Datenquelle, Lizenz. Hier lässt sich auch nach einem Import
+  ergänzen, was das Bundle nicht mitbrachte. Leere Felder gelten als „nicht
+  angegeben“. Die Detailansicht (Klick auf den Modellnamen) zeigt die Dokumentation
+  unter **Dokumentation**.
+- Der **Anzeigename** ist der Name für Menschen, z. B. „Fächer (Schule)“. Die
+  Tabelle und die Modellauswahl im Reiter „Abfrage“ zeigen ihn, mit dem
+  technischen Namen grau daneben. Die API spricht das Modell weiter über den
+  technischen Namen an.
+- **Umbenennen** korrigiert den technischen Namen, etwa einen Tippfehler. Das
+  Modell selbst bleibt unverändert. Verlauf und Korrekturen behalten den Namen,
+  unter dem sie entstanden sind.
+- **Achtung, Freigabelinks:** Beim Umbenennen werden alle Freigabelinks des Modells
+  ungültig. Ein Link zeigt auf einen Namen, und unter dem alten Namen könnte
+  später ein anderes Modell liegen. Das Formular sagt vorher, wie viele Links
+  betroffen sind, damit die Entscheidung bewusst fällt. Wer einen Link noch
+  braucht, bekommt danach einen neuen.
+- **Keine Doppelungen:** Kein Name und kein Anzeigename darf bei einem anderen Modell
+  schon als Name oder Anzeigename vorkommen, auch nicht in anderer Groß- und
+  Kleinschreibung. Ein Konflikt wird mit einer Meldung abgelehnt. Nur die
+  Schreibweise des eigenen Namens zu ändern (z. B. `faecher` → `Faecher`) ist erlaubt.
+- Solange ein Training oder Import unter dem alten oder neuen Namen läuft, ist
+  Umbenennen gesperrt.
+
 ## Teilen & Verschieben
 
 - **Freigabelink** (bei Modellen und Datensätzen): erzeugt einen Download-Link, der
   **ohne Schlüssel** funktioniert und nach 24 Stunden erlischt — gut, um jemandem
   etwas zu geben, der keinen Zugang hat. Der Link ist wie ein Schlüssel zu
   behandeln: wer ihn hat, kann herunterladen.
+- **Aktive Freigabelinks:** Gibt es welche, stehen sie in den Reitern „Modelle“ und
+  „Datensätze“ über der Tabelle (nur mit Admin-Schlüssel sichtbar). Dort lässt sich
+  jeder Link kopieren oder vorzeitig **widerrufen**. Danach funktioniert er sofort
+  nicht mehr.
 - **Herunterladen / Importieren:** Ein Modell wandert als ZIP-Datei zwischen
   Servern: auf Server A herunterladen (oder Freigabelink), auf Server B über
   *Modell importieren* hochladen. Ein direkter „Import per Link“ ist **absichtlich** nicht möglich
