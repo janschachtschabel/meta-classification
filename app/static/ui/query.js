@@ -164,6 +164,10 @@ function metadataCard(proposal) {
       ${metadataField("query.metadata.title", proposal.title)}
       ${metadataField("query.metadata.description", proposal.description)}
       <h4>${t("query.metadata.keywords")}</h4>${keywords}
+      <details class="help">
+        <summary>${t("query.metadata.how")}</summary>
+        ${t("query.metadata.howBody")}
+      </details>
     </div>`;
 }
 

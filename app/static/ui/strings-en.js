@@ -98,6 +98,8 @@ const STRINGS_EN = {
   "query.lines.placeholder": "Der Satz des Pythagoras\nPhotosynthese der Pflanzen\nDer Wiener Kongress",
   "query.metadata.description": "Description",
   "query.metadata.heading": "Descriptive metadata",
+  "query.metadata.how": "How are these proposals made?",
+  "query.metadata.howBody": "<ul><li><strong>Title:</strong> a heading at the start of the text; otherwise the subject of an explaining first sentence (“Die binäre Suche ist …” gives “Die binäre Suche”); otherwise the most frequent meaningful keyword.</li><li><strong>Description:</strong> the first complete sentences, up to 500 characters. Headings, lists, tasks and sentence fragments are skipped.</li><li><strong>Keywords:</strong> nouns and phrases such as “Französische Revolution”, weighted by how often they occur in the text and how rare they are in German; word forms such as “Lösung” and “Lösungen” count as one.</li></ul><p>No language model is involved, and the text does not leave the server: fixed rules produce the proposals in a few milliseconds, and every word comes from the text. They work best on German non-fiction; on stories, very short or non-German texts they are weaker.</p>",
   "query.metadata.hint": "A second request, to /metadata. No model is involved: the proposals come out of the text itself, so they hold whichever model did the classifying.",
   "query.metadata.keywords": "Keywords",
   "query.metadata.label": "Also propose descriptive metadata <span class=\"muted\">(title, description, keywords)</span>",

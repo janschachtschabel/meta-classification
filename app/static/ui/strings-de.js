@@ -99,6 +99,8 @@ const STRINGS_DE = {
   "query.lines.placeholder": "Der Satz des Pythagoras\nPhotosynthese der Pflanzen\nDer Wiener Kongress",
   "query.metadata.description": "Beschreibung",
   "query.metadata.heading": "Beschreibende Metadaten",
+  "query.metadata.how": "Wie entstehen diese Vorschläge?",
+  "query.metadata.howBody": "<ul><li><strong>Titel:</strong> eine Überschrift am Textanfang; sonst das Thema eines erklärenden ersten Satzes („Die binäre Suche ist …“ ergibt „Die binäre Suche“); sonst das häufigste aussagekräftige Schlagwort.</li><li><strong>Beschreibung:</strong> die ersten vollständigen Sätze, bis 500 Zeichen. Überschriften, Listen, Arbeitsaufträge und Satzbruchstücke werden übersprungen.</li><li><strong>Keywords:</strong> Nomen und Wortgruppen wie „Französische Revolution“, gewichtet nach ihrer Häufigkeit im Text und ihrer Seltenheit im Deutschen; Wortformen wie „Lösung“ und „Lösungen“ zählen als eines.</li></ul><p>Dabei arbeitet kein Sprachmodell, und der Text verlässt den Server nicht: Feste Regeln erzeugen die Vorschläge in wenigen Millisekunden, und jedes Wort stammt aus dem Text. Am besten gelingen sie bei deutschen Sachtexten; bei Erzählungen, sehr kurzen oder fremdsprachigen Texten fallen sie schwächer aus.</p>",
   "query.metadata.hint": "Zusätzliche Anfrage an /metadata. Kein Modell beteiligt: die Vorschläge entstehen aus dem Text selbst und gelten deshalb unabhängig davon, welches Modell klassifiziert hat.",
   "query.metadata.keywords": "Keywords",
   "query.metadata.label": "Beschreibende Metadaten erzeugen <span class=\"muted\">(Titel, Beschreibung, Keywords)</span>",
