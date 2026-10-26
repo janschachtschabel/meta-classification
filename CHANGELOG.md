@@ -23,6 +23,11 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   many share links the rename will revoke before anyone confirms; the display name beside
   the technical name in the Models table and the Query tab's model picker; and the
   documentation shown in the model detail view.
+- **The AI share of a dataset is shown before a run.** `GET /datasets/{name}` counts the
+  rows data-prep marked (`ai_rows`: generated, example, enriched, and `marked` for any mark),
+  read with the same `provenance.block_marks` a training run uses. The training form states
+  the share beside the train/leave-out choice, and the dataset detail view states it with
+  the note that marked rows never count towards the metrics.
 
 ### Fixed
 

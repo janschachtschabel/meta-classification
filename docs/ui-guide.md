@@ -296,13 +296,19 @@ Antwort im Browser zu sammeln.
 data-prep kann seltene Labels mit KI-erzeugten Zeilen auffüllen und fehlende Felder
 ergänzen. Solche Zeilen tragen eine **Markierung** (`generated_for`, `example_for`,
 `enriched_fields`). Hat ein Datensatz diese Spalten, zeigt das Trainingsformular die
-Auswahl **KI-erzeugte Zeilen**:
+Auswahl **KI-erzeugte Zeilen**. Direkt darunter steht, wie groß der KI-Anteil ist, z. B.
+„13 von 36 Zeilen (36,1 %) tragen eine KI-Markierung: 9 von der KI erzeugt, 4 von ihr
+ergänzt, 1 dem Generator als Beispiel gezeigt“. Eine Zeile kann zwei Markierungen tragen,
+deshalb ist die Gesamtzahl manchmal kleiner als die Summe. Dieselbe Angabe zeigt die
+Detailansicht des Datensatzes (Reiter „Datensätze“).
 
 - **Trainieren, nie validieren (empfohlen):** Das Modell lernt auch aus den KI-Zeilen,
   gemessen wird aber nur auf echten Zeilen — bei der Kreuzvalidierung genauso wie beim
   Test-Split. So misst niemand KI-Text mit KI. Auch Zeilen, die der KI als Beispiel
   gezeigt oder von ihr ergänzt wurden, zählen nicht in die Kennzahlen.
-- **Weglassen:** Die erzeugten Zeilen bleiben beim Einlesen draußen. Ein Vergleich
+- **Weglassen:** Die erzeugten Zeilen bleiben beim Einlesen draußen. Von der KI
+  *ergänzte* Zeilen bleiben im Training, denn ihr Text ist im Kern echt; gemessen wird auf
+  ihnen trotzdem nie. Ein Vergleich
   „mit“ gegen „ohne“ auf demselben Datensatz zeigt, was das Auffüllen gebracht hat.
   Weil dann auch Labels unter die Mindestzahl fallen können, kann das Modell weniger
   Labels haben.

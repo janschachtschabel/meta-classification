@@ -199,7 +199,7 @@ const STRINGS_DE = {
   "train.minSamples.help": "Seltenere Labels fallen weg. Für kleine Datensätze niedriger setzen — erreicht kein Label den Wert, bricht das Training mit „zu wenig Daten“ ab.",
   "train.minSamples.label": "Min. Beispiele je Label",
   "train.synthetic.exclude": "Weglassen",
-  "train.synthetic.help": "Der Datensatz trägt KI-Markierungen aus data-prep. Markierte Zeilen – von der KI erzeugt, ergänzt oder dem Generator als Beispiel gezeigt – werden trainiert, aber nie validiert: Die Kennzahlen kommen nur aus echten Zeilen. „Weglassen“ trainiert ohne die erzeugten Zeilen; ihre Beispiele zählen dann wieder als echt.",
+  "train.synthetic.help": "Der Datensatz trägt KI-Markierungen aus data-prep. Markierte Zeilen – von der KI erzeugt, ergänzt oder dem Generator als Beispiel gezeigt – werden trainiert, aber nie validiert: Die Kennzahlen kommen nur aus echten Zeilen. „Weglassen“ trainiert ohne die erzeugten Zeilen; ihre Beispiele zählen dann wieder als echt. Ergänzte Zeilen bleiben auch dann im Training, denn ihr Text ist im Kern echt – validiert werden sie trotzdem nie.",
   "train.synthetic.label": "KI-erzeugte Zeilen",
   "train.synthetic.train": "Trainieren, nie validieren (empfohlen)",
   "train.thin.global": "Globale Schwelle (stabiler)",
@@ -469,6 +469,8 @@ const STRINGS_DE = {
   "datasets.uploaded": "Datensatz hochgeladen.",
 
   "datasetDetail.analyze": "Analysieren",
+  "datasetDetail.aiShare": {"one": "{count} von {rows} Zeilen ({percent} %) trägt eine KI-Markierung: {generated} von der KI erzeugt, {enriched} von ihr ergänzt, {example} dem Generator als Beispiel gezeigt.", "other": "{count} von {rows} Zeilen ({percent} %) tragen eine KI-Markierung: {generated} von der KI erzeugt, {enriched} von ihr ergänzt, {example} dem Generator als Beispiel gezeigt."},
+  "datasetDetail.aiShareNote": "Markierte Zeilen fließen ins Training ein (erzeugte lassen sich beim Training weglassen), werden aber nie für die Auswertung genutzt.",
   "datasetDetail.analyzeNote": "Liest jede Zeile, bei einem großen Export dauert das also einen Moment.",
   "datasetDetail.beforeTraining": "Bevor darauf trainiert wird",
   "datasetDetail.costHeading": "Was ein Lauf kosten würde",

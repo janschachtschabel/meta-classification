@@ -120,6 +120,9 @@ def dataset_info(
 ) -> dict:
     """Show column names, row count and the first few sample rows of a dataset.
 
+    When the file carries data-prep's provenance columns, `ai_rows` counts the rows an
+    LLM wrote (`generated`), was shown as examples (`example`) or filled in (`enriched`),
+    and `marked` the rows with any of these marks -- rows that train but never validate.
     `separator` is the CSV delimiter (default `;`). **Auth:** readonly.
     """
     if problem := separator_problem(separator):
@@ -127,9 +130,11 @@ def dataset_info(
     path = _dataset_path(dataset_name, settings)
     try:
         shaped = stats_mod.sample_rows(path, separator=separator)
+        marked = stats_mod.ai_rows(path, separator=separator, columns=shaped["columns"])
     except TrainingInputError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped}
+    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped,
+            **({"ai_rows": marked} if marked is not None else {})}
 
 
 @router.post("/datasets/analyze", summary="Analyze label distribution & text quality")

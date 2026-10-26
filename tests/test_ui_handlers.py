@@ -93,7 +93,8 @@ def _run(tmp_path: Path, body: str, modules: tuple[str, ...] = (), helpers: tupl
 @needs_node
 def test_picking_a_dataset_fills_the_training_column_pickers(tmp_path):
     """U01: fired as the browser fires it -- with the event as its only argument."""
-    result = _run(tmp_path, modules=("training.js",), helpers=("app.js:latestOnly",), body="""
+    result = _run(tmp_path, modules=("training.js",),
+                  helpers=("app.js:latestOnly", "dataset-detail.js:aiShareText"), body="""
         el("#train-dataset").value = "tiny.csv";
         latestOnly(loadDatasetColumns)({ type: "change", target: el("#train-dataset") });
         await sleep(400);
@@ -680,7 +681,8 @@ def test_coming_back_to_the_training_tab_keeps_the_choices(tmp_path):
 def test_a_dataset_deleted_meanwhile_clears_its_columns(tmp_path):
     """The case a kept choice cannot cover: the dataset is gone. The list falls back to "pick
     one", and the pickers must not go on offering its columns."""
-    result = _run(tmp_path, modules=("training.js",), body=_FAKE_SELECT + """
+    result = _run(tmp_path, modules=("training.js",), helpers=("dataset-detail.js:aiShareText",),
+                  body=_FAKE_SELECT + """
         await loadTrainingTab();
         el("#train-dataset").value = "b.csv";
         datasets = [{ name: "a.csv" }];

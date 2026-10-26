@@ -112,6 +112,23 @@ async function runAnalysis(frame, name) {
   }
 }
 
+/* How much of a dataset an LLM wrote or touched (`ai_rows` of GET /datasets/{name}), as one
+   sentence; "" when the file carries no marks. Shown here and in the training form, where
+   what to do with those rows is chosen (training.js). */
+function aiShareText(info) {
+  const ai = info && info.ai_rows;
+  if (!ai || !info.rows) return "";
+  return t("datasetDetail.aiShare", {
+    count: ai.marked, rows: info.rows, percent: fmtFixed((100 * ai.marked) / info.rows, 1),
+    generated: ai.generated, enriched: ai.enriched, example: ai.example,
+  });
+}
+
+function aiShareSection(info) {
+  const share = aiShareText(info);
+  return share ? `<p>${share} <span class="muted">${t("datasetDetail.aiShareNote")}</span></p>` : "";
+}
+
 async function showDatasetDetail(name) {
   const dialog = $("#dataset-detail");
   dialog.innerHTML = `<div class="detail" tabindex="-1">
@@ -148,6 +165,7 @@ async function showDatasetDetail(name) {
     </div>
     <p class="muted">${t("datasetDetail.subtitle", {
       columns: columns.length, rows: sample.length })}</p>
+    ${aiShareSection(info)}
     <div class="table-wrap" tabindex="0"><table>
       <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
       <tbody>${sample.map((row) => `<tr>${columns.map(

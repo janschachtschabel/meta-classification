@@ -16,6 +16,7 @@ import numpy as np
 from .data import auto_min_samples, read_csv, split_labels
 from .dataset_load import load_dataset
 from .profile_costs import estimated_minutes
+from .provenance import ENRICHED, EXAMPLE, GENERATED, MARK_COLUMNS, block_marks
 
 if TYPE_CHECKING:
     # Annotation only: `analyze_dataset` is handed a plan and calls two methods on
@@ -34,6 +35,28 @@ def sample_rows(path: str | Path, *, separator: str = ";", n: int = 5) -> dict:
     """
     sample = read_csv(path, sep=separator, dtype=str, nrows=n)
     return {"columns": list(sample.columns), "sample": sample.fillna("").to_dict(orient="records")}
+
+
+def ai_rows(path: str | Path, *, separator: str, columns: list[str]) -> dict | None:
+    """How many rows of a CSV data-prep marked as written or touched by an LLM, per kind,
+    and how many carry any mark (a row can carry two); ``None`` without mark columns.
+
+    ``columns`` is the header already read; only the mark columns are parsed, as written
+    (``"NA"`` names a label, and is a mark), with the reader a training run uses -- so
+    the training form's count and the run's agree. ``train`` mode: the count describes
+    the file, not one choice of what to do with it.
+    """
+    present = [c for c in MARK_COLUMNS if c in columns]
+    if not present:
+        return None
+    frame = read_csv(path, sep=separator, usecols=present, dtype=str, keep_default_na=False)
+    marks = block_marks(frame, mode="train")
+    return {
+        "generated": int(np.count_nonzero(marks & GENERATED)),
+        "example": int(np.count_nonzero(marks & EXAMPLE)),
+        "enriched": int(np.count_nonzero(marks & ENRICHED)),
+        "marked": int(np.count_nonzero(marks)),
+    }
 
 
 def analyze_dataset(
