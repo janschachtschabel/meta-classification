@@ -290,12 +290,20 @@ button.chip {
    the execCommand clipboard fallback needs (see copyText in app.js). */
 .offscreen { position: fixed; left: -9999px; top: 0; opacity: 0; }
 
-/* The model checkbox group (was a <select multiple>). */
+/* The model checkbox group (was a <select multiple>). Its row stretches it to the height of
+   the options beside it, so the list fills that height and scrolls only past it: a fixed
+   9rem list scrolled in the top corner of a box three times as tall. Its own width, so a
+   model name is readable rather than as narrow as the shortest one allows; a basis of 0
+   keeps the list from growing the row when a deployment has many models. */
 .models-pick { border: 1px solid var(--border-ui); border-radius: var(--radius);
-  padding: var(--s-2) var(--s-3); margin: 0; }
+  padding: var(--s-2) var(--s-3); margin: 0;
+  flex: 0 1 16rem; min-width: 12rem; display: flex; flex-direction: column; }
 .models-pick legend { padding: 0 var(--s-1); font-size: 0.85em; color: var(--muted); }
 #query-models { display: flex; flex-direction: column; gap: var(--s-1);
-  max-height: 9rem; overflow-y: auto; }
+  flex: 1 1 0; min-height: 9rem; overflow-y: auto; }
+#query-models label { overflow-wrap: anywhere; }
+/* A number of at most four digits needs no full-width field. */
+.opts input[type="number"] { max-width: 12rem; }
 
 @media (prefers-reduced-motion: reduce) {
   .progress span { transition: none; }
