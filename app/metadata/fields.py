@@ -101,13 +101,16 @@ def _stem_counts(doc: Document) -> Counter[str]:
 
 def _definition_subject(doc: Document) -> str | None:
     """The subject of the first description sentence, if it is definitional and the text comes
-    back to it: one of its nouns recurs. "Die Lehrkraft erklärt heute etwas." is no title."""
+    back to it: one of its nouns recurs. "Die Lehrkraft erklärt heute etwas." is no title, and
+    neither is "Die Schülerinnen und Schüler lernen ...": a generic noun (the list the keywords
+    leave out) recurs precisely because it is generic, so only a specific one counts."""
     sentences = description_candidates(doc)
     match = _DEFINITION_SUBJECT_RE.match(sentences[0]) if sentences else None
     if not match:
         return None
     subject = match.group(1)
-    nouns = [token for token in tokenize(subject)[1:] if not opens_in_lower_case(token)]
+    nouns = [token for token in tokenize(subject)[1:]
+             if not opens_in_lower_case(token) and token.lower() not in GENERIC_TERMS]
     counts = _stem_counts(doc)
     return subject if any(counts[stem(noun)] >= 2 for noun in nouns) else None
 

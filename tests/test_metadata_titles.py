@@ -7,7 +7,10 @@ does not know made the title or the description start in lower case. The measure
 the replacement are in docs/plans/2026-10-26-metadata-titles.md.
 """
 
+import time
+
 from app.metadata import generate, prepare
+from app.metadata.fields import _DEFINITION_SUBJECT_RE
 
 # --------------------------------------------------------------------------------- titles ---
 
@@ -40,6 +43,27 @@ def test_a_subject_the_text_never_returns_to_is_no_title():
     assert "Lehrkraft" not in title, title
     assert title == "Chlorophyll"
 
+
+
+def test_a_generic_subject_is_no_title():
+    # How material descriptions typically open. The subject recurs -- that is what makes these
+    # generic -- so the recurrence check alone let "Die Schülerinnen" through.
+    openings = {
+        "Die Schülerinnen": (
+            "Die Schülerinnen und Schüler lernen in dieser Einheit die Fotosynthese kennen. Sie "
+            "untersuchen, wie Pflanzen Licht nutzen. Die Schülerinnen und Schüler führen dazu ein "
+            "Experiment durch. Am Ende erklären die Schülerinnen und Schüler die Fotosynthese."),
+        "Das Arbeitsblatt": (
+            "Das Arbeitsblatt enthält Aufgaben zur Bruchrechnung für die sechste Klasse. Die "
+            "Aufgaben steigen im Schwierigkeitsgrad an. Lösungen zum Arbeitsblatt stehen auf der "
+            "zweiten Seite. Brüche werden erweitert, gekürzt und addiert."),
+        "Das Material": (
+            "Das Material bietet eine Einführung in die Französische Revolution. Es erklärt die "
+            "Ständegesellschaft und den Sturm auf die Bastille. Das Material eignet sich für den "
+            "Geschichtsunterricht der achten Klasse."),
+    }
+    for generic, text in openings.items():
+        assert generate(text).title != generic, generic
 
 def test_without_a_subject_the_title_is_the_most_frequent_keyword_never_a_template():
     # The reported shape: a name, a colon, two more words.
@@ -116,3 +140,25 @@ def test_a_word_that_opens_with_a_capital_inside_is_left_as_written():
                       "ist. Der pH-Wert wird mit Indikatoren bestimmt.")
 
     assert result.title == "pH-Wert messen im Unterricht"
+
+
+def test_a_text_written_all_in_lower_case_keeps_its_sentences():
+    # The repair joins a segment pysbd cut after an abbreviation. Joining EVERY lowercase
+    # segment made a text without capitals one sentence, and its title several sentences long.
+    text = ("ich habe heute mit der klasse über vulkane gesprochen. die kinder fanden das "
+            "spannend. wir haben ein modell gebaut. morgen geht es weiter mit erdbeben.")
+
+    assert len(prepare(text).sentences) == 4
+    assert ". " not in generate(text).title
+
+
+def test_the_definitional_subject_pattern_takes_linear_time():
+    # This project's recurring trap is a quadratic regex (a 52 s and a 9.2 s incident): the
+    # lazy run of lowercase words must not rescan once per word on a line without a capital.
+    hostile = ["Die " + "aaaa " * 25_000 + "x", "Die " + "abcdefghij" * 12_000,
+               "Der " + "a-" * 50_000 + "X", "Das " + "aaaa " * 25_000 + "Xyz des " + "bbbb " * 25_000]
+    for case in hostile:
+        started = time.perf_counter()
+        _DEFINITION_SUBJECT_RE.match(case)
+        generate(case)
+        assert time.perf_counter() - started < 2.0, f"slow on {case[:12]!r}"

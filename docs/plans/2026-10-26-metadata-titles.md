@@ -36,12 +36,16 @@ reported. The definitional subject is taken from `textmeta` (`_DEFINITION_SUBJEC
 lowercase adjectives, a noun, an optional genitive attribute, then a lowercase verb --
 "Der Satz des Pythagoras ist ..." -> "Der Satz des Pythagoras", "Die binäre Suche ist ..." ->
 "Die binäre Suche". Accepted only when one of its nouns recurs in the text ("Die Lehrkraft
-erklärt heute etwas." does not).
+erklärt heute etwas." does not) and that noun is not generic -- "Die Schülerinnen und Schüler
+lernen ...", "Das Arbeitsblatt enthält ..." recur precisely because they are generic (review
+finding, the keywords' `GENERIC_TERMS` list decides).
 
 Lowercase starts: a heading must not open with an all-lowercase word; a description sentence must
 not either (a fragment); a pysbd segment that opens in lower case continues the sentence before it
-on the same line (no German sentence starts in lower case -- the comma repair beside it already
-does this for "," and ";"); and as the last guard, a title or description whose first word is
+on the same line when that one ends in an abbreviation -- a word of at most four letters or a
+number before the period (the comma repair beside it does the same for "," and ";"; joining after
+ANY period made a text written all in lower case one sentence, review finding); and as the last
+guard, a title or description whose first word is
 lowercase is capitalised (every word still occurs in the input -- the grounding tests compare
 case-insensitively, as the keywords are already capitalised).
 
