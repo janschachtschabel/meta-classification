@@ -74,6 +74,23 @@ def _bounded(line: str) -> list[str]:
     return pieces
 
 
+_FIRST_WORD_RE = re.compile(r"[\W_]*(\w+)")
+# What a segment pysbd ended too early ends in: a short word or a number before the period --
+# "Jh.", "kg.", "bzw.", "19." -- not the last word of a sentence.
+_ABBREVIATION_END_RE = re.compile(r"(?:^|\s)(?:[^\W\d_]{1,4}|\d{1,4})\.$")
+
+
+def opens_in_lower_case(s: str) -> bool:
+    """True when ``s`` opens with a word written all in lower case: a fragment ("und dann
+    kam ..."), a byline ("von Anna Schmidt"), or a heading typed in lower case. A word with a
+    capital inside ("pH-Wert", "eBook") and a number ("2022 war ...") do not count."""
+    match = _FIRST_WORD_RE.match(s)
+    if not match:
+        return False
+    word = match.group(1)
+    return word[0].isalpha() and word == word.lower()
+
+
 def split_sentences(text: str) -> list[str]:
     """Split into sentences; every line break is a hard boundary (headings, list items)."""
     sentences: list[str] = []
@@ -85,9 +102,14 @@ def split_sentences(text: str) -> list[str]:
                 if not segment:
                     continue
                 # pysbd also ends a sentence at "Ludwig XVI., der …"; no sentence starts with
-                # "," or ";".
+                # "," or ";". Nor, in German, in lower case after an abbreviation pysbd does not
+                # know ("im 19. Jh. und prägte ..."): the description began "und prägte". Only
+                # after an abbreviation -- a text written all in lower case keeps its sentences.
                 if len(sentences) > start and segment[0] in ",;":
                     sentences[-1] += segment
+                elif (len(sentences) > start and opens_in_lower_case(segment)
+                      and _ABBREVIATION_END_RE.search(sentences[-1])):
+                    sentences[-1] += " " + segment
                 else:
                     sentences.append(segment)
     return sentences

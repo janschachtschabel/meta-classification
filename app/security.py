@@ -168,6 +168,17 @@ def safe_name(name: str, kind: str = "name") -> str:
     return name
 
 
+def name_problem(name: str, kind: str = "name") -> str | None:
+    """Why ``name`` cannot name a model or dataset, or ``None`` -- :func:`safe_name`'s rule
+    without its HTTP answer, for code that checks names in bulk (a corrections import) and
+    counts a bad one instead of failing the whole request on it."""
+    try:
+        safe_name(name, kind)
+    except HTTPException as exc:
+        return str(exc.detail)
+    return None
+
+
 async def spool_upload_capped(upload: UploadFile, max_bytes: int, target: Path) -> int:
     """Stream an upload straight to ``target``, aborting if it exceeds ``max_bytes``.
 

@@ -31,6 +31,7 @@ from fastapi import (
 )
 
 from .. import data as data_mod
+from .. import model_names
 from ..dataset_load import require_columns
 from ..errors import TrainingInputError
 from ..evaluate import run_evaluation
@@ -44,6 +45,7 @@ from ..settings import Settings, get_settings
 from ..sharing import get_share_store
 from ._bundles import staged_zip_response
 from ._jobs import start_or_queue
+from ._names import refuse_a_taken_name
 from ._paging import Limit, Offset, page
 
 router = APIRouter(tags=["Models"])
@@ -148,6 +150,9 @@ async def set_model_info(
     derives it from the class URIs. **Auth:** admin · rate limit active.
     """
     safe_name(model_name, "model name")
+    # People pick models by either: a display name no other model uses as its name or
+    # display name, in any letter case (_names).
+    await refuse_a_taken_name(get_registry(), body.display_name, other_than=model_name)
     try:
         stored = await asyncio.to_thread(
             get_registry().update_info, model_name, body.model_dump(exclude_none=True)
@@ -229,6 +234,11 @@ async def import_model(
     The archive is validated (no path-traversal names, required files present) and
     loaded safely via skops — files with unknown/unsafe types are rejected.
     `new_name` overrides the model name. Size limit active. **Auth:** admin.
+
+    No two models answer to one name: a name another model has as its name or display name,
+    in any letter case, is refused (409). A display name the archive brings that another
+    model already answers to is dropped -- the model is still imported -- and reported as
+    `display_name_dropped` (`display_name`, `taken_by`).
     """
     # In any letter case, like a dataset's suffix: `FAECHER.ZIP` is a ZIP too.
     if not file.filename or not file.filename.lower().endswith(".zip"):
@@ -239,6 +249,7 @@ async def import_model(
         raise HTTPException(400, f"A model name must not end in '{BACKUP_SUFFIX}': that marks the "
                                  "backups the label repair keeps, which no route serves.")
     registry = get_registry()
+    await refuse_a_taken_name(registry, name, other_than=name)
     with contextlib.ExitStack() as held:
         # Held from before the upload until the bundle is installed, so a training (or a
         # second import) of this name is refused now, not after minutes of work (R01).
@@ -279,7 +290,12 @@ async def import_model(
             # The install copies what it keeps into the bundle dir, so the staged archive is
             # never needed again — on success or on any failure.
             archive_path.unlink(missing_ok=True)
-    return {"status": "imported", **info}
+        # Still holding the name. The archive's display name is foreign: kept unless another
+        # model already answers to it (model_names), then dropped, and the answer says so.
+        dropped = await asyncio.to_thread(model_names.release_taken_display_name, registry, name)
+        if dropped:
+            info = await asyncio.to_thread(registry.info, name)
+    return {"status": "imported", **info, **({"display_name_dropped": dropped} if dropped else {})}
 
 
 @router.post("/models/{model_name}/evaluate", status_code=202,

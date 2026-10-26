@@ -233,6 +233,20 @@ def test_a_field_the_text_gave_nothing_for_says_so(tmp_path):
 
 
 @needs_node
+def test_the_metadata_card_says_how_the_proposals_come_about(tmp_path):
+    """Users read a title like "Die Katzen" as the work of a language model unless told: one
+    folded note says it is drawn from the text itself, how each field is chosen, and where the
+    method is weak -- without pushing the proposal down the card."""
+    result = _render('metadataCard({ title: "T", description: "D.", keywords: ["K"] })', tmp_path)
+
+    assert result["ok"], result.get("error")
+    html = result["html"]
+    assert '<details class="help">' in html
+    assert "query.metadata.how" in html and "query.metadata.howBody" in html
+    assert html.index("query.metadata.how") > html.index("query.metadata.keywords"), "after the fields"
+
+
+@needs_node
 def test_the_bulk_csv_carries_the_metadata_columns_when_asked(tmp_path):
     """The bulk answer is used by downloading it, so the metadata has to be IN the file.
 

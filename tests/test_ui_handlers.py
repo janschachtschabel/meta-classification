@@ -93,7 +93,8 @@ def _run(tmp_path: Path, body: str, modules: tuple[str, ...] = (), helpers: tupl
 @needs_node
 def test_picking_a_dataset_fills_the_training_column_pickers(tmp_path):
     """U01: fired as the browser fires it -- with the event as its only argument."""
-    result = _run(tmp_path, modules=("training.js",), helpers=("app.js:latestOnly",), body="""
+    result = _run(tmp_path, modules=("training.js",),
+                  helpers=("app.js:latestOnly", "dataset-detail.js:aiShareText"), body="""
         el("#train-dataset").value = "tiny.csv";
         latestOnly(loadDatasetColumns)({ type: "change", target: el("#train-dataset") });
         await sleep(400);
@@ -105,6 +106,40 @@ def test_picking_a_dataset_fills_the_training_column_pickers(tmp_path):
     assert result["options"] == [["title", "label"], ["title", "label"]], (
         "the text and label pickers did not receive the dataset's columns"
     )
+
+
+@needs_node
+def test_loading_a_datasets_columns_says_so_until_they_arrive(tmp_path):
+    """Picking a large dataset left the column pickers blank for seconds with no sign of work
+    -- the info call counts every row -- and read as a failure. A status line says the
+    columns are loading, the previous dataset's columns are not offered meanwhile, and the
+    line goes once they arrive, or once the request failed."""
+    result = _run(tmp_path, modules=("training.js",), helpers=("dataset-detail.js:aiShareText",), body="""
+        let release;
+        Api.get = (url) => {
+          apiCalls.push(url);
+          return new Promise((resolve) => { release = () => resolve({ columns: ["title", "label"] }); });
+        };
+        pickers.forEach((p) => p.setOptions(["old"]));
+        el("#train-dataset").value = "big.csv";
+        const loading = loadDatasetColumns();
+        await sleep(20);
+        const status = el("#train-dataset-status");
+        const during = { hidden: status.hidden, text: status.textContent,
+                         options: pickers.map((p) => p.options) };
+        release();
+        await loading;
+        const after = { hidden: status.hidden, options: pickers.map((p) => p.options) };
+
+        Api.get = async () => { throw new Error("boom"); };
+        globalThis.showError = () => {};
+        await loadDatasetColumns();
+        report({ during, after, afterError: status.hidden, errors });
+    """)
+
+    assert result["during"] == {"hidden": False, "text": "train.dataset.loading", "options": [[], []]}
+    assert result["after"] == {"hidden": True, "options": [["title", "label"], ["title", "label"]]}
+    assert result["afterError"] is True
 
 
 @needs_node
@@ -646,7 +681,8 @@ def test_coming_back_to_the_training_tab_keeps_the_choices(tmp_path):
 def test_a_dataset_deleted_meanwhile_clears_its_columns(tmp_path):
     """The case a kept choice cannot cover: the dataset is gone. The list falls back to "pick
     one", and the pickers must not go on offering its columns."""
-    result = _run(tmp_path, modules=("training.js",), body=_FAKE_SELECT + """
+    result = _run(tmp_path, modules=("training.js",), helpers=("dataset-detail.js:aiShareText",),
+                  body=_FAKE_SELECT + """
         await loadTrainingTab();
         el("#train-dataset").value = "b.csv";
         datasets = [{ name: "a.csv" }];
@@ -663,7 +699,7 @@ def test_coming_back_to_the_query_tab_keeps_the_models_picked(tmp_path):
     """U08: the model list was rebuilt on every visit with the first model checked, so a user
     who had picked another one classified with the first after looking at the Models tab. An
     empty choice is a choice too -- metadata alone needs no model."""
-    result = _run(tmp_path, modules=("query.js",), body="""
+    result = _run(tmp_path, modules=("models.js", "query.js"), body="""
         Api.get = async () => ["m1", "m2", "m3"];
         const box = el("#query-models");
         let boxes = [];
@@ -972,11 +1008,15 @@ def test_a_choice_made_while_the_tab_reloads_is_kept(tmp_path):
 @needs_node
 def test_a_model_ticked_while_the_list_reloads_stays_ticked(tmp_path):
     """The same on the Query tab: a model ticked during `GET /models` was unticked again."""
-    result = _run(tmp_path, modules=("query.js",), body="""
+    result = _run(tmp_path, modules=("models.js", "query.js"), body="""
         let release;
         const slow = new Promise((resolve) => { release = resolve; });
         let calls = 0;
-        Api.get = async () => { calls += 1; if (calls > 1) await slow; return ["m1", "m2"]; };
+        // The second GET /models is the slow one; the per-model reads (display names) are not.
+        Api.get = async (url) => {
+          if (url !== "/models") return {};
+          calls += 1; if (calls > 1) await slow; return ["m1", "m2"];
+        };
         const box = el("#query-models");
         let boxes = [];
         const read = () => {

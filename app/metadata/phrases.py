@@ -23,12 +23,21 @@ from functools import lru_cache
 
 from wordfreq import zipf_frequency
 
-from .textprep import GENERIC_TERMS, MAX_TOKEN_CHARS, is_stopword, is_task_verb, stem, tokenize
+from .textprep import (
+    GENERIC_TERMS,
+    MAX_TOKEN_CHARS,
+    capitalised,
+    is_stopword,
+    is_task_verb,
+    stem,
+    tokenize,
+)
 from .types import Document
 
 # Attributive adjectives carry a derivational suffix plus an inflection ending ("chemische").
+# "-är" too: "binäre Suche", "elementare" is "-ar" already.
 _ADJECTIVE_RE = re.compile(
-    r"(?:isch|lich|ig|al|iv|ar|bar|los|voll|haft|sam|ell|ös|end)(?:e|en|er|es|em)$", re.IGNORECASE
+    r"(?:isch|lich|ig|al|iv|ar|är|bar|los|voll|haft|sam|ell|ös|end)(?:e|en|er|es|em)$", re.IGNORECASE
 )
 _STOP, _CAP, _ADJ, _LOW = "stop", "cap", "adj", "low"
 # Punctuation between two words ends a phrase: "Mathematik, Physik, Chemie" holds three
@@ -56,6 +65,9 @@ def _tag(token: str, index: int, lowercase_forms: set[str]) -> str:
         # A capitalised sentence opener that also occurs in lower case is no noun ("Besonders").
         if (index == 0 and token.lower() in lowercase_forms) or is_task_verb(token):
             return _LOW
+        return _CAP
+    # A capital inside is a noun too: "pH-Wert", six times in its text, was never a candidate.
+    if any(ch.isupper() for ch in token[1:]):
         return _CAP
     return _ADJ if _ADJECTIVE_RE.search(token) else _LOW
 
@@ -191,19 +203,25 @@ def keyword_key(keyword: str) -> frozenset[str]:
     return frozenset(stem(w) for w in words if not is_stopword(w)) or frozenset(map(stem, words))
 
 
-def finalize_keywords(items: list[str], n: int) -> list[str]:
-    """Keep ranked keywords unless their stems repeat an earlier one; capitalise; cut to n."""
-    chosen: list[str] = []
+def finalize_counted(items: list[tuple[str, int]], n: int) -> list[tuple[str, int]]:
+    """Keep ranked (keyword, count) pairs unless their stems repeat an earlier one;
+    capitalise a lowercase opener ("pH-Wert" stays as written); cut to n."""
+    chosen: list[tuple[str, int]] = []
     chosen_keys: list[frozenset[str]] = []
-    for item in items:
+    for item, count in items:
         surface = " ".join(item.split()).strip(_EDGE_PUNCTUATION)
         key = keyword_key(surface)
         if not key:
             continue
         if any(key <= other for other in chosen_keys):
             continue
-        chosen.append(surface[0].upper() + surface[1:])
+        chosen.append((capitalised(surface), count))
         chosen_keys.append(key)
         if len(chosen) == n:
             break
     return chosen
+
+
+def finalize_keywords(items: list[str], n: int) -> list[str]:
+    """Keep ranked keywords unless their stems repeat an earlier one; capitalise; cut to n."""
+    return [surface for surface, _ in finalize_counted([(item, 0) for item in items], n)]

@@ -73,6 +73,16 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**. Für die beschreibenden Me
   allein setzen, ohne ein Modell anzuhaken; dann kommt nur die Metadaten-Karte. Mit
   angehakten Modellen kommt beides in einem Durchgang. Alle Wörter stammen aus dem Text —
   erfunden wird nichts, geprüft werden sollten die Vorschläge trotzdem.
+  - **Titel:** eine Überschrift am Textanfang; sonst das Thema eines erklärenden ersten
+    Satzes („Die binäre Suche ist …“ ergibt „Die binäre Suche“); sonst das häufigste
+    aussagekräftige Schlagwort. Allgemeine Wörter wie „Arbeitsblatt“ oder „Schülerinnen“
+    werden dafür nicht genommen.
+  - **Beschreibung:** die ersten vollständigen Sätze, bis 500 Zeichen.
+  - **Keywords:** Nomen und Wortgruppen, gewichtet nach Häufigkeit im Text und Seltenheit
+    im Deutschen.
+  - Kein Sprachmodell, kein Netzzugriff, wenige Millisekunden. Am besten bei deutschen
+    Sachtexten; bei Erzählungen, sehr kurzen oder fremdsprachigen Texten schwächer. Die
+    Karte erklärt das unter **„Wie entstehen diese Vorschläge?“**.
 
 - **Konfidenz (Balken + Zahl 0–1):** Wie sicher das Modell ist, dass das Label
   passt. Die Werte der Labels sind unabhängig voneinander — sie müssen sich
@@ -123,11 +133,25 @@ sollen: die Liste zeigt alle Labels des Modells, Mehrfachauswahl per Strg-Klick.
   eine Korrektur, die für den neuen Text gemeint ist, neben der Vorhersage für den alten.
 - Korrekturen werden **nie verworfen**. Anders als die Lauf-Historie (gedeckelt bei 200)
   sind sie kein Protokoll, sondern die Daten, aus denen der nächste Lauf lernt.
-- Der Export unter `GET /feedback/export` ist eine CSV mit den Spalten `text` und
-  `labels`, die sich direkt als Datensatz hochladen und trainieren lässt.
+- Was mit den Korrekturen geschieht, steht im Reiter **„Korrekturen“** (nächster Abschnitt).
 
 Korrigieren darf jeder mit Lese-Schlüssel — genau die Redaktion, die die Fehler sieht.
-Der Export bleibt Admin-Sache.
+Ansehen und Weiterverwenden bleibt Admin-Sache.
+
+## Korrekturen ansehen und weiterverwenden (Reiter „Korrekturen“)
+
+- **Liste:** alle Korrekturen, neueste zuerst — wann, welches Modell, der Text (lange
+  Texte gekürzt), was vorgeschlagen wurde und was richtig ist. Über „Modell“ lässt sich
+  die Liste auf ein Modell einschränken; „Weitere laden“ holt die nächsten 50.
+- **Trainings-CSV herunterladen:** die Spalten `text` und `labels`, direkt trainierbar.
+  Korrekturen ohne passendes Label („keines passt“) fehlen darin.
+- **Als Datensatz speichern:** legt dieselbe CSV als neuen Datensatz an, der sofort im
+  Reiter „Training“ zur Auswahl steht. Ein vorhandener Datensatz wird nie überschrieben.
+  Wer die Korrekturen mit den ursprünglichen Trainingsdaten zusammenführen will, lädt
+  beide herunter und kombiniert sie (z. B. in data-prep).
+- **Sicherung herunterladen / zurückspielen:** eine JSONL-Datei mit allen Angaben. Sie
+  lässt sich in diese oder eine andere Instanz zurückspielen; bereits vorhandene
+  Korrekturen werden übersprungen, zweimal zurückspielen verdoppelt also nichts.
 
 ## „Warum?“ — die Erklärung zu einer Antwort
 
@@ -282,13 +306,19 @@ Antwort im Browser zu sammeln.
 data-prep kann seltene Labels mit KI-erzeugten Zeilen auffüllen und fehlende Felder
 ergänzen. Solche Zeilen tragen eine **Markierung** (`generated_for`, `example_for`,
 `enriched_fields`). Hat ein Datensatz diese Spalten, zeigt das Trainingsformular die
-Auswahl **KI-erzeugte Zeilen**:
+Auswahl **KI-erzeugte Zeilen**. Direkt darunter steht, wie groß der KI-Anteil ist, z. B.
+„13 von 36 Zeilen (36,1 %) tragen eine KI-Markierung: 9 von der KI erzeugt, 4 von ihr
+ergänzt, 1 dem Generator als Beispiel gezeigt“. Eine Zeile kann zwei Markierungen tragen,
+deshalb ist die Gesamtzahl manchmal kleiner als die Summe. Dieselbe Angabe zeigt die
+Detailansicht des Datensatzes (Reiter „Datensätze“).
 
 - **Trainieren, nie validieren (empfohlen):** Das Modell lernt auch aus den KI-Zeilen,
   gemessen wird aber nur auf echten Zeilen — bei der Kreuzvalidierung genauso wie beim
   Test-Split. So misst niemand KI-Text mit KI. Auch Zeilen, die der KI als Beispiel
   gezeigt oder von ihr ergänzt wurden, zählen nicht in die Kennzahlen.
-- **Weglassen:** Die erzeugten Zeilen bleiben beim Einlesen draußen. Ein Vergleich
+- **Weglassen:** Die erzeugten Zeilen bleiben beim Einlesen draußen. Von der KI
+  *ergänzte* Zeilen bleiben im Training, denn ihr Text ist im Kern echt; gemessen wird auf
+  ihnen trotzdem nie. Ein Vergleich
   „mit“ gegen „ohne“ auf demselben Datensatz zeigt, was das Auffüllen gebracht hat.
   Weil dann auch Labels unter die Mindestzahl fallen können, kann das Modell weniger
   Labels haben.
@@ -350,12 +380,42 @@ In der **Detailansicht** eines solchen Modells steht:
     aufgezeichnet wurde. **„argmax“** in der Schwellen-Spalte heißt: das Modell
     nimmt sein bestes Label und liest gar keine Schwelle.
 
+## Modelle benennen und dokumentieren (Reiter „Modelle“)
+
+- **Info** öffnet die Dokumentation eines Modells: **Anzeigename**, Autor,
+  Beschreibung, Datenquelle, Lizenz. Hier lässt sich auch nach einem Import
+  ergänzen, was das Bundle nicht mitbrachte. Leere Felder gelten als „nicht
+  angegeben“. Die Detailansicht (Klick auf den Modellnamen) zeigt die Dokumentation
+  unter **Dokumentation**.
+- Der **Anzeigename** ist der Name für Menschen, z. B. „Fächer (Schule)“. Die
+  Tabelle und die Modellauswahl im Reiter „Abfrage“ zeigen ihn, mit dem
+  technischen Namen grau daneben. Die API spricht das Modell weiter über den
+  technischen Namen an.
+- **Umbenennen** korrigiert den technischen Namen, etwa einen Tippfehler. Das
+  Modell selbst bleibt unverändert. Verlauf und Korrekturen behalten den Namen,
+  unter dem sie entstanden sind.
+- **Achtung, Freigabelinks:** Beim Umbenennen werden alle Freigabelinks des Modells
+  ungültig. Ein Link zeigt auf einen Namen, und unter dem alten Namen könnte
+  später ein anderes Modell liegen. Das Formular sagt vorher, wie viele Links
+  betroffen sind, damit die Entscheidung bewusst fällt. Wer einen Link noch
+  braucht, bekommt danach einen neuen.
+- **Keine Doppelungen:** Kein Name und kein Anzeigename darf bei einem anderen Modell
+  schon als Name oder Anzeigename vorkommen, auch nicht in anderer Groß- und
+  Kleinschreibung. Ein Konflikt wird mit einer Meldung abgelehnt. Nur die
+  Schreibweise des eigenen Namens zu ändern (z. B. `faecher` → `Faecher`) ist erlaubt.
+- Solange ein Training oder Import unter dem alten oder neuen Namen läuft, ist
+  Umbenennen gesperrt.
+
 ## Teilen & Verschieben
 
 - **Freigabelink** (bei Modellen und Datensätzen): erzeugt einen Download-Link, der
   **ohne Schlüssel** funktioniert und nach 24 Stunden erlischt — gut, um jemandem
   etwas zu geben, der keinen Zugang hat. Der Link ist wie ein Schlüssel zu
   behandeln: wer ihn hat, kann herunterladen.
+- **Aktive Freigabelinks:** Gibt es welche, stehen sie in den Reitern „Modelle“ und
+  „Datensätze“ über der Tabelle (nur mit Admin-Schlüssel sichtbar). Dort lässt sich
+  jeder Link kopieren oder vorzeitig **widerrufen**. Danach funktioniert er sofort
+  nicht mehr.
 - **Herunterladen / Importieren:** Ein Modell wandert als ZIP-Datei zwischen
   Servern: auf Server A herunterladen (oder Freigabelink), auf Server B über
   *Modell importieren* hochladen. Ein direkter „Import per Link“ ist **absichtlich** nicht möglich

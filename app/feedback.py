@@ -90,27 +90,37 @@ def append(record: dict) -> int:
     Raises :class:`~app.errors.FeedbackWriteError` if the correction could not be
     written. It does not come back as a count that is only true in memory.
     """
+    return append_many([{**record, "recorded_at": datetime.now(UTC).isoformat()}])
+
+
+def append_many(entries: list[dict]) -> int:
+    """Record corrections that already carry their ``recorded_at`` -- a restored backup --
+    all of them or none; returns how many have been collected in total.
+
+    One write for the batch, and the cap checked for the batch as a whole: an import that
+    does not fit is refused with the file exactly as it was, never half-applied.
+    """
     global _count
     path = _feedback_path()
-    entry = {**record, "recorded_at": datetime.now(UTC).isoformat()}
+    what = "The correction was" if len(entries) == 1 else "The corrections were"
     with _lock:
         if _count is None:
             # First write of this process: establish the count from what a READER sees,
             # so a line that never finished being written is not counted as a correction.
             # Line by line: the file is uncapped, and as a list 240 MB of it took 769 MB
             # (audit 2026-09-30, R02).
-            _count = sum(1 for _ in _iter_entries())
+            _count = sum(1 for _ in iter_entries())
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Ending a torn line first costs that line, which was lost already -- and keeps
             # this correction a line of its own.
             torn = "\n" if _ends_mid_line(path) else ""
-            line = torn + json.dumps(entry, ensure_ascii=False) + "\n"
+            line = torn + "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries)
             size = path.stat().st_size if path.exists() else 0
             if size + len(line.encode("utf-8")) > _max_bytes():
                 # Checked before the write, so the file is left exactly as it was (R02).
                 raise FeedbackWriteError(
-                    "The correction was NOT recorded: the corrections file has reached its cap "
+                    f"{what} NOT recorded: the corrections file has reached its cap "
                     f"(APIV3_MAX_FEEDBACK_MB, {get_settings().max_feedback_mb} MB). Everything "
                     "collected so far is kept: export it (GET /feedback/export), then raise the "
                     "cap, or move the file aside and restart the server."
@@ -126,47 +136,28 @@ def append(record: dict) -> int:
             # server's paths left in the log where they belong.
             logger.error("Could not write a correction to %s: %s", path, exc)
             raise FeedbackWriteError(
-                "The correction was NOT recorded: its storage file could not be written. "
+                f"{what} NOT recorded: its storage file could not be written. "
                 "Check APIV3_FEEDBACK_FILE — it must point at a writable volume (under a "
                 "read-only root filesystem the default path next to the code is not one). "
                 "Nothing was lost yet; send the correction again once it is writable."
             ) from exc
         # Only now: a count raised past what is on disk would report collected work that
         # no export will ever contain.
-        _count += 1
+        _count += len(entries)
         return _count
 
 
 def read_all() -> list[dict]:
-    """Every readable correction, oldest first.
+    """Every readable correction, oldest first, as a list -- :func:`iter_entries` collected.
 
-    The file is appended to by a running server and sits on a mounted volume, so a line
-    that did not finish being written must cost that line — never the export that reads
-    it.
+    It used to split the file itself with ``str.splitlines``, which also breaks a line at
+    U+2028, U+2029 and U+0085 -- characters a correction's text may hold, written unescaped
+    -- and dropped such a correction as two unparseable halves.
     """
-    path = _feedback_path()
-    if not path.exists():
-        return []
-    entries: list[dict] = []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        logger.warning("Feedback file at %s is unreadable; reporting none.", path)
-        return []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            logger.warning("Dropping an unparseable line from the feedback at %s.", path)
-            continue
-        if isinstance(entry, dict):
-            entries.append(entry)
-    return entries
+    return list(iter_entries())
 
 
-def _iter_entries():
+def iter_entries():
     """Every readable correction, oldest first, one at a time.
 
     The line-by-line twin of :func:`read_all`, for the export: the file is uncapped by
@@ -227,7 +218,7 @@ def iter_csv(limit: int | None = None, offset: int = 0):
     yield drain()
 
     seen = written = 0
-    for entry in _iter_entries():
+    for entry in iter_entries():
         if limit is not None and written >= limit:
             return
         labels = [label for label in entry.get("corrected") or [] if isinstance(label, str)]

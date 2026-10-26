@@ -1,6 +1,6 @@
 # German stopwords.
 # Source: stopwords-iso/stopwords-de (MIT License), https://github.com/stopwords-iso/stopwords-de
-# Removed content nouns that are legitimate keywords: ende, gott, jahr, jahre, jahren, mann, mensch, menschen, recht, sache, tag, tage, tagen, teil, zeit
+# Removed content nouns that are legitimate keywords: ende, gott, jahr, jahre, jahren, mann, mensch, menschen, recht, sache, suche, tag, tage, tagen, teil, zeit
 a
 ab
 aber
@@ -479,7 +479,6 @@ später
 startseite
 statt
 steht
-suche
 t
 tat
 tel

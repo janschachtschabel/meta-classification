@@ -197,7 +197,7 @@ def test_a_model_link_whose_stored_name_leaves_the_models_directory_is_a_404(mon
 def test_the_import_staging_name_is_unique_per_request():
     """`<name>.part` is deterministic, so two concurrent imports of one name wrote the same
     staging file and interleaved their bytes into whichever one won the rename."""
-    source = (Path(__file__).resolve().parents[1] / "app" / "routes" / "datasets.py").read_text(
+    source = (Path(__file__).resolve().parents[1] / "app" / "dataset_files.py").read_text(
         encoding="utf-8")
 
     assert 'target.name + ".part"' not in source, "the staging name is still deterministic"
@@ -207,7 +207,7 @@ def test_the_import_staging_name_is_unique_per_request():
 def test_publishing_an_import_cannot_overwrite_an_existing_dataset(tmp_path):
     """The 409 check ran before the upload and `os.replace` overwrites silently, so a name
     created during the upload was replaced by it regardless."""
-    from app.routes.datasets import _publish_new_dataset
+    from app.dataset_files import publish_new
 
     staging = tmp_path / ".import-abc.part"
     staging.write_text("new", encoding="utf-8")
@@ -215,20 +215,20 @@ def test_publishing_an_import_cannot_overwrite_an_existing_dataset(tmp_path):
     target.write_text("original", encoding="utf-8")
 
     with pytest.raises(FileExistsError):
-        _publish_new_dataset(staging, target)
+        publish_new(staging, target)
 
     assert target.read_text(encoding="utf-8") == "original", "the existing dataset was replaced"
     assert not staging.exists(), "the staging file was left behind"
 
 
 def test_publishing_an_import_to_a_free_name_works(tmp_path):
-    from app.routes.datasets import _publish_new_dataset
+    from app.dataset_files import publish_new
 
     staging = tmp_path / ".import-abc.part"
     staging.write_text("payload", encoding="utf-8")
     target = tmp_path / "fresh.csv"
 
-    _publish_new_dataset(staging, target)
+    publish_new(staging, target)
 
     assert target.read_text(encoding="utf-8") == "payload"
     assert not staging.exists()
@@ -239,9 +239,9 @@ def test_publishing_an_import_to_a_free_name_works(tmp_path):
 def test_the_staging_file_is_invisible_to_every_route_that_names_a_dataset(tmp_path):
     """Whatever the unique name is, it must still be unnameable: the listing globs the CSV
     suffixes, and `safe_name` rejects a leading dot."""
-    from app.routes.datasets import _staging_path
+    from app.dataset_files import staging_path
 
-    path = _staging_path(tmp_path, "data.csv")
+    path = staging_path(tmp_path, "data.csv")
     try:
         assert path.name.startswith("."), path.name
         assert path.name.endswith(".part"), path.name

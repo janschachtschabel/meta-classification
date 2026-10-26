@@ -25,6 +25,7 @@ from .routes import (
     feedback,
     label_names,
     metadata,
+    model_rename,
     models,
     predict,
     predict_bulk,
@@ -197,6 +198,7 @@ def create_app() -> FastAPI:
     app.include_router(predict_bulk.router)
     app.include_router(metadata.router)
     app.include_router(models.router)
+    app.include_router(model_rename.router)
     app.include_router(share.router)
     app.include_router(datasets.router)
     app.include_router(label_names.router)

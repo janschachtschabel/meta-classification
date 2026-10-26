@@ -8,14 +8,19 @@ the dependency is one-directional (stats -> data), never the reverse.
 
 from __future__ import annotations
 
+import csv
+import gzip
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 
+from .csv_encoding import is_gzipped
 from .data import auto_min_samples, read_csv, split_labels
 from .dataset_load import load_dataset
 from .profile_costs import estimated_minutes
+from .provenance import ENRICHED, EXAMPLE, GENERATED, MARK_COLUMNS, block_marks
 
 if TYPE_CHECKING:
     # Annotation only: `analyze_dataset` is handed a plan and calls two methods on
@@ -34,6 +39,67 @@ def sample_rows(path: str | Path, *, separator: str = ";", n: int = 5) -> dict:
     """
     sample = read_csv(path, sep=separator, dtype=str, nrows=n)
     return {"columns": list(sample.columns), "sample": sample.fillna("").to_dict(orient="records")}
+
+
+# The AI-row counts per file version, like `data.count_rows`: (mtime_ns, size, counts).
+_AI_ROWS_CACHE: dict[str, tuple[int, int, dict]] = {}
+# Mark cells handed to `block_marks` at a time: a frame per block, never one of the whole file.
+_MARK_BLOCK_ROWS = 50_000
+
+
+def ai_rows(path: str | Path, *, separator: str, columns: list[str]) -> dict | None:
+    """How many rows of a CSV data-prep marked as written or touched by an LLM, per kind,
+    and how many carry any mark (a row can carry two); ``None`` without mark columns.
+
+    ``columns`` is the header already read. The cells are judged by the rule a training run
+    applies (``provenance.block_marks``), as written, so the training form's count and the
+    run's agree; ``train`` mode, because the count describes the file, not one choice of
+    what to do with it.
+
+    Read like ``data.count_rows`` -- a ``csv.reader`` pass, cached per file version -- and
+    not through ``read_csv``: on a 533 MB export that took 22.5 s on every call, 16.5 s of
+    it deciding the encoding. A mark needs no encoding, only whether its cell is blank, and
+    UTF-8 with replacement answers that for any bytes: one UTF-8 cannot decode still leaves
+    a character.
+    """
+    present = [c for c in MARK_COLUMNS if c in columns]
+    if not present:
+        return None
+    path = Path(path)
+    stat = path.stat()
+    key = f"{path}|{separator}"
+    hit = _AI_ROWS_CACHE.get(key)
+    if hit is not None and hit[0] == stat.st_mtime_ns and hit[1] == stat.st_size:
+        return dict(hit[2])
+    counts = {"generated": 0, "example": 0, "enriched": 0, "marked": 0}
+    opener = gzip.open if is_gzipped(path) else open
+    with opener(path, "rt", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        reader = csv.reader(handle, delimiter=separator)
+        header = next(reader, [])
+        where = {c: header.index(c) for c in present if c in header}
+        block: dict[str, list[str]] = {c: [] for c in where}
+
+        def count_block() -> None:
+            if not where or not block[next(iter(where))]:
+                return
+            marks = block_marks(pd.DataFrame(block), mode="train")
+            counts["generated"] += int(np.count_nonzero(marks & GENERATED))
+            counts["example"] += int(np.count_nonzero(marks & EXAMPLE))
+            counts["enriched"] += int(np.count_nonzero(marks & ENRICHED))
+            counts["marked"] += int(np.count_nonzero(marks))
+            for cells in block.values():
+                cells.clear()
+
+        for row in reader:
+            for column, at in where.items():
+                block[column].append(row[at] if at < len(row) else "")
+            if where and len(block[next(iter(where))]) >= _MARK_BLOCK_ROWS:
+                count_block()
+        count_block()
+    if len(_AI_ROWS_CACHE) > 256:
+        _AI_ROWS_CACHE.clear()
+    _AI_ROWS_CACHE[key] = (stat.st_mtime_ns, stat.st_size, counts)
+    return dict(counts)
 
 
 def analyze_dataset(

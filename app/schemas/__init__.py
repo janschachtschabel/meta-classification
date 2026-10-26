@@ -10,7 +10,13 @@ for the wording and the validator they share. Importers keep saying
 
 from .datasets import AnalyzeRequest, EvaluateRequest, ExportRequest, ValidateRequest
 from .metadata import MetadataRequest
-from .serving import ExplainRequest, FeedbackRequest, MultiPredictRequest, PredictRequest
+from .serving import (
+    ExplainRequest,
+    FeedbackRequest,
+    ImportedCorrection,
+    MultiPredictRequest,
+    PredictRequest,
+)
 from .training import ModelInfo, TrainRequest
 
 __all__ = [
@@ -19,6 +25,7 @@ __all__ = [
     "ExplainRequest",
     "ExportRequest",
     "FeedbackRequest",
+    "ImportedCorrection",
     "MetadataRequest",
     "ModelInfo",
     "MultiPredictRequest",

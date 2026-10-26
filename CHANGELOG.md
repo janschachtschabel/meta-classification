@@ -4,6 +4,49 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Changed
+
+- **A text without a heading gets a title that reads as one.** The template "K1: K2 und K3"
+  joined the three rarest keywords ("Valerie: Katzen und Micki", "Komplexitätsklasse: Element,
+  Standardbibliothek"); the title is now the subject of a definitional opening ("Die binäre
+  Suche ist …" → "Die binäre Suche") if the text comes back to it, else its most frequent strong
+  keyword. Token F1 against editors' titles on 13 texts: 0.18 → 0.38 on running text, 0.57 →
+  0.68 with headings (`docs/plans/2026-10-26-metadata-titles.md`). Same speed (±1 ms).
+- **No title or description starts in lower case.** A lowercase first line or a byline is no
+  heading, a fragment is no description sentence, a sentence pysbd ends after an unknown
+  abbreviation ("im 19. Jh. und prägte …") is joined again, and the last guard capitalises.
+- **Keywords**: a noun with a capital inside ("pH-Wert") and an adjective in "-är" ("binäre
+  Suche") are recognised; "Suche" is no stopword.
+- The admin UI's metadata card explains, folded, how the three proposals come about.
+
+### Added
+
+- **The corrections can be seen, backed up, restored and trained on** -- before, the API
+  recorded them and handed out a training CSV, and the admin UI could only record one.
+  `GET /feedback` lists them newest first, per model and paged (a text shows its first 500
+  characters); `GET /feedback/export?format=jsonl` is a backup with every field that
+  `POST /feedback/import` takes back, skipping and counting exact repeats and invalid lines,
+  all or nothing against the cap; `POST /feedback/dataset` saves the training CSV as a new
+  dataset. All admin, and all in the admin UI's new **Corrections** tab (`corrections.js`):
+  the list with a model filter and "load more", both downloads, "save as dataset" and
+  "restore a backup".
+- **A model can be renamed, and given a display name.** `POST /models/{name}/rename` moves
+  the bundle and revokes the old name's share links (a link resolves by name), reporting how
+  many; the documentation gains `display_name`. No two models share a name or display name,
+  in any letter case, across both (`app/model_names.py`) -- checked by a rename, a
+  documentation save, a training (its name and `info.display_name`) and an import, which
+  keeps the model but drops a display name already in use and says so
+  (`display_name_dropped`); a change of case alone is a rename.
+  In the admin UI: a **Rename** action (Models table and detail view) whose form says how
+  many share links the rename will revoke before anyone confirms; the display name beside
+  the technical name in the Models table and the Query tab's model picker; and the
+  documentation shown in the model detail view.
+- **The AI share of a dataset is shown before a run.** `GET /datasets/{name}` counts the
+  rows data-prep marked (`ai_rows`: generated, example, enriched, and `marked` for any mark),
+  read with the same `provenance.block_marks` a training run uses. The training form states
+  the share beside the train/leave-out choice, and the dataset detail view states it with
+  the note that marked rows never count towards the metrics.
+
 ### Fixed
 
 - **Dependabot proposes the next base-image digest, not the next Python.** The docker entry

@@ -22,6 +22,7 @@ from ..settings import Settings, get_settings
 from ..train_worker import run_in_child
 from ..training import run_training
 from ._jobs import start_or_queue
+from ._names import refuse_a_taken_name
 
 router = APIRouter(tags=["Training"])
 
@@ -178,6 +179,10 @@ async def train(
                                  "backups the label repair keeps, which no route serves.")
     if get_registry().exists(body.model_name):
         raise HTTPException(409, f"Model '{body.model_name}' already exists. Delete it or pick another name.")
+    # Nor a name another model answers to, nor a display name one already has (_names).
+    await refuse_a_taken_name(get_registry(), body.model_name, other_than=body.model_name)
+    await refuse_a_taken_name(get_registry(), body.info.display_name if body.info else None,
+                              other_than=body.model_name)
     # An import uploading under this name would publish first or last -- and the run, after
     # minutes of work, would fail at the very end if the import won (audit 2026-09-30, R01).
     if get_registry().is_importing(body.model_name):

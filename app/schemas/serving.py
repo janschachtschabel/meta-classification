@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, Field, model_validator
@@ -183,3 +184,13 @@ class FeedbackRequest(BaseModel):
         "ui", max_length=50,
         description="Where the correction came from (`ui`, a script, an integration), so it can be weighed by origin.",
     )
+
+
+class ImportedCorrection(FeedbackRequest):
+    """One line of a corrections backup (`GET /feedback/export?format=jsonl`) on its way back in.
+
+    The bounds of a correction posted live, plus the moment it was made: an import restores a
+    record, and the server stamping it anew would date every restored correction to the import.
+    """
+
+    recorded_at: datetime

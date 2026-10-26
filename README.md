@@ -9,7 +9,7 @@ It covers all features of the previous version: **training** on your own CSV met
 - **Modern & lean:** TF-IDF (word + character n-grams, sparse) + scikit-learn LogisticRegression. **Torch-free, no model download, no GPU.** (Embeddings were tested extensively but did not beat TF-IDF on this metadata — see below.)
 - **Automatic & self-applying:** the `auto` profile selects `C` on the validation split and tunes thresholds (global + per-label). These are **stored in the model bundle and applied automatically at `/predict`** — by default the tuned thresholds decide which labels are returned (an explicit `top_k` switches to a ranking of the N most probable labels, each flagged `above_threshold`). Task type (binary/multiclass/multilabel) is auto-detected; `min_samples_per_label` is declared — 20, or what `config.yaml` sets — and can be set per request, or sent as `null` to scale with the dataset size.
 - **Data preparation:** HTML tags, Markdown markup and HTML entities are stripped, whitespace is normalized (`clean_text`).
-- **Honest metrics:** train/val/**test** split by default — tuning on validation, reported metrics on the untouched test split. Or use **k-fold cross-validation** (`split.cv_folds` in `config.yaml`, or per request via the `cv_folds` body field, e.g. 5): every row is used for both training and validation (out-of-fold metrics) and the deployed model is fit on **100 %** of the data. *Caveat:* with CV, `C` and the thresholds are selected on the same out-of-fold predictions the metrics report — a mild optimism (no row is ever scored by a model that saw it, but the two tuning choices are in-sample). The classic split keeps strict separation. **Rows an LLM wrote or touched** — data-prep marks them `generated_for`, `example_for` or `enriched_fields` — train but never validate, in both modes: folds, validation and test split are drawn from the real rows, a label without a real row is trained but not scored, and `synthetic_rows: "exclude"` leaves the generated rows out entirely. A *thin* label — one that reaches `min_samples_per_label` only through marked rows — keeps its own tuned threshold by default, which then rests on its few real rows; `thin_label_threshold: "global"` gives it the global threshold instead: steadier, but not fitted to the label. Your call — the model detail names the thin labels either way. A dataset without these columns trains exactly as before; the bundle's `synthetic_data` block records what was done.
+- **Honest metrics:** train/val/**test** split by default — tuning on validation, reported metrics on the untouched test split. Or use **k-fold cross-validation** (`split.cv_folds` in `config.yaml`, or per request via the `cv_folds` body field, e.g. 5): every row is used for both training and validation (out-of-fold metrics) and the deployed model is fit on **100 %** of the data. *Caveat:* with CV, `C` and the thresholds are selected on the same out-of-fold predictions the metrics report — a mild optimism (no row is ever scored by a model that saw it, but the two tuning choices are in-sample). The classic split keeps strict separation. **Rows an LLM wrote or touched** — data-prep marks them `generated_for`, `example_for` or `enriched_fields` — train but never validate, in both modes: folds, validation and test split are drawn from the real rows, a label without a real row is trained but not scored, and `synthetic_rows: "exclude"` leaves the generated rows out entirely. A *thin* label — one that reaches `min_samples_per_label` only through marked rows — keeps its own tuned threshold by default, which then rests on its few real rows; `thin_label_threshold: "global"` gives it the global threshold instead: steadier, but not fitted to the label. Your call — the model detail names the thin labels either way. A dataset without these columns trains exactly as before; the bundle's `synthetic_data` block records what was done. How many rows carry a mark is known before a run: `GET /datasets/{name}` counts them as `ai_rows` (`generated`, `example`, `enriched`, and `marked` for rows with any mark), and the admin UI shows the share beside the choice.
 - **Secure:** pickle-free models (**skops**), import via file upload only (no server-side URL fetch → no SSRF), API-key auth (constant-time), CORS allowlist, upload limit.
 - **Low RAM & scalable:** sparse features + a linear head; **LRU model cache**; resources tunable via `APIV3_N_JOBS` (cores) and `APIV3_TFIDF_MAX_*_FEATURES` (RAM).
 
@@ -160,8 +160,8 @@ says so.
 A first run, in the order the tabs are arranged:
 
 1. **Datensätze / Datasets** — upload a CSV (or drop it into `data/`), then open it to see
-   how many rows carry a label and how the labels are distributed. Worth doing before
-   training, not after.
+   how many rows carry a label and how the labels are distributed, and how many an LLM wrote
+   or completed (data-prep's marks). Worth doing before training, not after.
 2. **Training** — pick the dataset, the text columns, the label column and a profile
    (`fast` for a first look, `auto` for a model you deploy, `best` when accuracy matters
    more than the wait). **Vor dem Training prüfen** reads the whole dataset and reports how
@@ -171,8 +171,12 @@ A first run, in the order the tabs are arranged:
    model actually decides; set it to rank a fixed number regardless of thresholds.
    *Baseline-Diff* shows how much of the answer comes from the text rather than the label's
    base rate; *Label-F1* shows how reliable that label was in evaluation.
-4. **Modelle / Models** — metrics per model, export as a ZIP (verifiable via its
-   `manifest.json` checksums), share links, delete.
+4. **Modelle / Models** — metrics per model, documentation (display name, author,
+   license …), rename, export as a ZIP (verifiable via its `manifest.json` checksums), share
+   links (listed, revocable), delete.
+5. **Korrekturen / Corrections** — what editors corrected in the Query tab: listed per
+   model, downloaded as a training CSV or a complete backup, restored from a backup, or saved
+   as a dataset to train on.
 
 The page is a self-contained static file: vanilla JS, no build step, no external assets,
 nothing loaded from a CDN. It speaks **German and English**, switchable in the top bar
@@ -380,6 +384,7 @@ it knows, and that is exactly what a recipient of a shared model needs:
 
 | Field | For |
 |---|---|
+| `display_name` | how people see it beside its technical name; no other model may use it as name or display name, in any letter case (409). Leading and trailing spaces are dropped. A training or an import must not take a name another model answers to either (409); a display name an imported archive brings that another model already answers to is dropped, and the import's answer says so (`display_name_dropped`) |
 | `author` | who trained it, and how to reach them |
 | `description` | what it is for — and what it is **not** for |
 | `data_source` | where the data came from (`dataset` is only a file name, meaningless elsewhere) |
@@ -389,6 +394,13 @@ All optional and length-bounded, stored inside `metrics.json` so they travel in 
 exported ZIP, and settable either at training time (`info` in the `/train` body) or
 afterwards — documentation is presentation-only, so fixing a typo costs no retrain.
 The admin UI has an **Info** button per model.
+
+**Renaming** (`POST /models/{name}/rename`, admin): corrects a typo, or names an import after
+what it is. The bundle moves to the new name; the run history and the corrections keep the
+name they were recorded under. The old name's share links are revoked -- a link resolves by
+name and would otherwise serve whatever model is later given it -- and the answer says how
+many (`revoked_links`). The new name must be free as name and display name of every other
+model, in any letter case; a run or an import holding either name blocks it (409).
 
 **The label vocabulary is not among them**, on purpose: it is derived from the class
 URIs and reported as `label_vocabulary` by `GET /models/{name}`. A typed-in value can
@@ -493,7 +505,12 @@ Add your own profiles in `config.yaml` (fields: `description`, `C_grid`, `cv_fol
   who spot the mistakes are the ones without an admin key; the export is admin. Appended
   and never dropped: this is training data, not a log. An empty `corrected` means "none
   of these apply" — recorded, and left out of the export, because a row without labels
-  is not something a run can learn from (`APIV3_FEEDBACK_FILE`).
+  is not something a run can learn from (`APIV3_FEEDBACK_FILE`). Admin only, and in the
+  admin UI's Corrections tab: `GET /feedback` lists them newest first (per model, paged);
+  `GET /feedback/export?format=jsonl` is a backup with every field, which
+  `POST /feedback/import` takes back -- exact repeats and invalid lines are counted and
+  skipped, so a backup imported twice adds nothing; `POST /feedback/dataset` writes the
+  training CSV into the data directory as a new dataset (never over an existing one).
 - **Evaluate a model on a dataset:** `POST /models/{name}/evaluate` — the only honest
   way to say "model B beats model A" is the same rows. Rows data-prep marks as written
   or touched by an LLM are skipped and counted (`ai_marked_rows_skipped`). The text is
@@ -581,9 +598,12 @@ curl -X POST http://localhost:8000/metadata -H "X-API-Key: $KEY" \
 
 | Field | How it is derived |
 |---|---|
-| `title` | A real heading if the text opens with one; otherwise the template `Keyword1: Keyword2 und Keyword3` from its three strongest keywords — running text has no heading, and heading extraction alone drops to the level of the first sentence on it. |
-| `description` | The first usable sentences up to `desc_max`, whole sentences only. Headings, list items, task instructions ("Beschreibe …") and page chrome are skipped, so it starts at the first real sentence rather than at the top of the file. |
-| `keywords` | Noun phrases weighted by how often they occur in this text against how rare they are in German (`wordfreq`), best first. |
+| `title` | A real heading if the text opens with one (not a line opening in lower case, such as a byline); otherwise the subject of a definitional first sentence when the text comes back to it ("Die binäre Suche ist …" → "Die binäre Suche"); otherwise the most frequent of its strongest keywords. Measured against the former template `Keyword1: Keyword2 und Keyword3` in `docs/plans/2026-10-26-metadata-titles.md`. |
+| `description` | The first usable sentences up to `desc_max`, whole sentences only. Headings, list items, task instructions ("Beschreibe …"), sentence fragments and page chrome are skipped, so it starts at the first real sentence rather than at the top of the file. |
+| `keywords` | Noun phrases weighted by how often they occur in this text against how rare they are in German (`wordfreq`), best first. A word with a capital inside ("pH-Wert") counts as a noun. |
+
+A title or a description never starts in lower case: one that would is capitalised (every word
+still occurs in the input).
 
 - **Proposals, not finished metadata.** All three are **extractive — every word occurs in
   the input** — so nothing is invented, and an editor checks them. That is the point: the
@@ -621,7 +641,7 @@ written. The one deliberate difference, and the dependencies the generators need
 recorded in
 [`docs/plans/2026-09-26-descriptive-metadata.md`](docs/plans/2026-09-26-descriptive-metadata.md).
 
-- **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
+- **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `POST /models/{name}/rename`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
 - **Share links:** `GET /share/{id}` (public bearer download), `GET /share` and `DELETE /share/{id}` (admin: review what is outstanding, withdraw it early)
 - **Datasets:** `GET /datasets`, `GET /datasets/{name}`, `POST /datasets/analyze`, `POST /datasets/{name}/validate`, import/export/delete
 - **System:** `GET /health` (liveness — answers as long as the process runs), `GET /ready` (readiness — 503 when the data or models directory is missing or read-only, so a pod with a broken volume is taken out of the load balancer instead of serving errors), `GET /config`, `GET /metrics` (Prometheus text format, public — operational gauges only: uptime, model counts, training status)

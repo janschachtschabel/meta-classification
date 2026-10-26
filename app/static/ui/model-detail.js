@@ -174,6 +174,22 @@ const QUALITY_ROWS = [
   }],
 ];
 
+/* What only the person who trained or imported the model knows (the documentation block):
+   shown here, where the model is looked at, not only in the form that edits it. */
+function documentationSection(model) {
+  const info = (model.metadata && model.metadata.info) || {};
+  const rows = [
+    ["modelDetail.row.displayName", () => info.display_name],
+    ["modelDetail.row.description", () => info.description],
+    ["modelDetail.row.author", () => info.author],
+    ["modelDetail.row.dataSource", () => info.data_source],
+    ["modelDetail.row.license", () => info.license],
+  ];
+  return rows.some(([, read]) => read())
+    ? `<div class="train-status">${definitionList(model, rows)}</div>`
+    : `<p class="muted">${t("modelDetail.noDocumentation")}</p>`;
+}
+
 function definitionList(model, rows) {
   const cells = rows
     .map(([labelKey, read]) => [t(labelKey), read(model)])
@@ -292,6 +308,9 @@ async function showModelDetail(name) {
     ${isServable(model) ? "" : `<p class="error">${t("modelDetail.staleBundle", {
       version: esc(String(model.format_version ?? 1)) })}</p>`}
 
+    <h3>${t("modelDetail.documentation")}</h3>
+    ${documentationSection(model)}
+
     <h3>${t("modelDetail.howTrained")}</h3>
     <div class="train-status">${definitionList(model, TRAINING_ROWS)}</div>
 
@@ -314,6 +333,7 @@ async function showModelDetail(name) {
       <button type="button" class="small" data-act="evaluate">${t("modelDetail.action.evaluate")}</button>
       <button type="button" class="small" data-act="share">${t("common.shareLink")}</button>
       <button type="button" class="small" data-act="info">${t("modelDetail.action.documentation")}</button>
+      <button type="button" class="small" data-act="rename">${t("models.action.rename")}</button>
       <button type="button" class="small danger" data-act="delete">${t("common.delete")}</button>
     </div>`;
 
@@ -331,6 +351,7 @@ async function showModelDetail(name) {
     evaluate: () => openEvaluateForm(name, frame),
     share: () => { dialog.close(); shareResource("models", name, "#models-share"); },
     info: () => { dialog.close(); editModelInfo(name); },
+    rename: () => { dialog.close(); renameModel(name); },
     delete: async () => {
       if (!confirm(t("models.deleteConfirm", { name }))) return;
       try {

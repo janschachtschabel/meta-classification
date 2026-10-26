@@ -95,28 +95,45 @@ const labelPicker = createPillPicker({
    ReferenceError that aborts the whole file — the same trap escape.js explains. */
 async function loadDatasetColumns(isCurrent = () => true) {
   const name = $("#train-dataset").value;
+  const status = $("#train-dataset-status");
+  // Everything that described the previous dataset goes at once -- the AI share too, which
+  // otherwise stood beside a dataset it does not describe when that one could not be read.
+  textColPicker.setOptions([]); labelPicker.setOptions([]); syncSyntheticChoice([]);
   if (!name) {
-    textColPicker.setOptions([]); labelPicker.setOptions([]); syncSyntheticChoice([]);
+    status.hidden = true;
     return;
   }
+  // The info call counts every row, so a large dataset takes seconds -- blank pickers with
+  // no sign of work read as a failure. The previous dataset's columns go at once.
+  status.textContent = t("train.dataset.loading");
+  status.hidden = false;
   try {
     const info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
     if (!isCurrent()) return;
     textColPicker.setOptions(info.columns);
     labelPicker.setOptions(info.columns);
-    syncSyntheticChoice(info.columns);
-  } catch (err) { if (isCurrent()) showError($("#train-error"), err); }
+    syncSyntheticChoice(info.columns, info);
+  } catch (err) {
+    if (isCurrent()) showError($("#train-error"), err);
+  } finally {
+    // A newer pick owns the line while it loads.
+    if (isCurrent()) status.hidden = true;
+  }
 }
 
 /* data-prep marks the rows an LLM wrote or touched. Only a dataset carrying such a
    column gets the choice — one without trains exactly as before, so the control stays
    out of the way. "Leave out" needs generated rows to leave out; without the
-   generated_for column it is disabled rather than offered as a silent no-op. */
+   generated_for column it is disabled rather than offered as a silent no-op. How many
+   rows carry a mark stands beside the choice, so it is not made blind. */
 // The same names as app/provenance.py MARK_COLUMNS -- data-prep's contract.
 const MARK_COLUMNS = ["generated_for", "example_for", "enriched_fields"];
 
-function syncSyntheticChoice(columns) {
+function syncSyntheticChoice(columns, info = {}) {
   const select = $("#train-synthetic-rows");
+  const share = $("#train-synthetic-share");
+  share.textContent = aiShareText(info);
+  share.hidden = !share.textContent;
   const exclude = select.querySelector('option[value="exclude"]');
   $("#train-synthetic").hidden = !MARK_COLUMNS.some((c) => columns.includes(c));
   exclude.disabled = !columns.includes("generated_for");

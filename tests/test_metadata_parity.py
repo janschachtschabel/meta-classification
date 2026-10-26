@@ -39,10 +39,10 @@ def test_the_fixture_describes_the_settings_this_port_defaults_to():
 
 @pytest.mark.parametrize("entry", CASES)
 def test_the_title_matches_the_source_pipeline(entry):
-    """`title.heading_or_keywords`: a real heading at the top of the text, else the template
-    from the three best keywords. Both branches are represented in the fixture — four
-    documents open with a heading, and the keyword template is exercised by
-    `test_a_text_without_a_heading_falls_back_to_the_keyword_template` below."""
+    """`title.heading_or_keywords`: a real heading at the top of the text. Every document in
+    the fixture opens with one (the first one's heading wins over its text), so this branch is
+    still the source app's. The branch for running text is not -- see
+    `test_running_text_is_titled_by_its_subject_not_a_keyword_template` below."""
     assert generate(entry["text"]).title == entry["title"]
 
 
@@ -100,13 +100,14 @@ def test_the_one_documented_stemmer_difference_is_still_only_an_ordering():
         )
 
 
-def test_a_text_without_a_heading_falls_back_to_the_keyword_template():
-    """The second branch of `title.heading_or_keywords`, which is the one that carries running
-    text: with no heading to take, the title is built as "K1: K2 und K3" from the three best
-    keywords. This is why the method was chosen over plain heading extraction, which drops to
-    the level of the first sentence on prose (sem 0,82 -> 0,58)."""
-    # The fixture's documents all open with a heading, so the fallback needs prose: one
-    # paragraph, no line that could pass as a title.
+def test_running_text_is_titled_by_its_subject_not_a_keyword_template():
+    """The one deliberate departure from the source app's title method. With no heading to
+    take, it built "K1: K2 und K3" from the three best keywords -- ranked by rarity, so three
+    details joined by a colon ("Valerie: Katzen und Micki", "Komplexitätsklasse: Element,
+    Standardbibliothek"). The title is now the subject of a definitional opening, else the most
+    frequent strong keyword; measured in docs/plans/2026-10-26-metadata-titles.md (running
+    text 0,18 -> 0,38 token F1 on the gold set)."""
+    # One paragraph, no line that could pass as a title.
     prose = (
         "Die Fotosynthese ist der Vorgang, mit dem Pflanzen aus Licht, Wasser und "
         "Kohlenstoffdioxid Traubenzucker aufbauen. Dabei entsteht Sauerstoff, den Menschen "
@@ -114,8 +115,5 @@ def test_a_text_without_a_heading_falls_back_to_the_keyword_template():
         "und treibt die Reaktion an. Ohne Fotosynthese gäbe es auf der Erde keine "
         "Nahrungsketten, denn alle Tiere leben davon, dass Pflanzen Energie speichern."
     )
-    title = generate(prose).title
 
-    assert ":" in title and " und " in title, f"not the keyword template: {title!r}"
-    # It names the subject rather than a passing detail, and uses only words from the text.
-    assert "Fotosynthese" in title
+    assert generate(prose).title == "Die Fotosynthese"

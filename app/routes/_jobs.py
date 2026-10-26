@@ -13,6 +13,17 @@ from fastapi import HTTPException
 from ..jobs import job_runner
 
 
+def refuse_while_a_run_holds(name: str) -> None:
+    """409 if a training or evaluation of ``name`` is running or queued.
+
+    Two signals for the running one, as the import has: the job STATUS, and THREAD liveness
+    -- after a hard stop the status reads idle while the abandoned thread still saves.
+    """
+    status_busy = job_runner.is_running() and job_runner.snapshot().get("model_name") == name
+    if status_busy or job_runner.active_model_name() == name or name in job_runner.queued_names():
+        raise HTTPException(409, f"A run for model '{name}' is running or queued; retry after it finishes.")
+
+
 def start_or_queue(
     target: Callable[..., Any], *args: object, model_name: str, request: dict, profile: str,
     kind: str = "training",

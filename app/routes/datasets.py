@@ -7,8 +7,6 @@ what several route modules share already lives in ``routes/_*.py`` (audit 2026-0
 from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -30,6 +28,7 @@ from fastapi import (
 from fastapi.responses import FileResponse
 
 from .. import data as data_mod
+from .. import dataset_files
 from .. import dataset_stats as stats_mod
 from ..capacity import CapacityPlan
 from ..errors import TrainingInputError
@@ -121,6 +120,9 @@ def dataset_info(
 ) -> dict:
     """Show column names, row count and the first few sample rows of a dataset.
 
+    When the file carries data-prep's provenance columns, `ai_rows` counts the rows an
+    LLM wrote (`generated`), was shown as examples (`example`) or filled in (`enriched`),
+    and `marked` the rows with any of these marks -- rows that train but never validate.
     `separator` is the CSV delimiter (default `;`). **Auth:** readonly.
     """
     if problem := separator_problem(separator):
@@ -128,9 +130,11 @@ def dataset_info(
     path = _dataset_path(dataset_name, settings)
     try:
         shaped = stats_mod.sample_rows(path, separator=separator)
+        marked = stats_mod.ai_rows(path, separator=separator, columns=shaped["columns"])
     except TrainingInputError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped}
+    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped,
+            **({"ai_rows": marked} if marked is not None else {})}
 
 
 @router.post("/datasets/analyze", summary="Analyze label distribution & text quality")
@@ -222,65 +226,16 @@ async def import_dataset(
     if target.exists():
         raise HTTPException(409, f"Dataset '{name}' already exists.")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    staging = _staging_path(settings.data_dir, name)
+    staging = dataset_files.staging_path(settings.data_dir, name)
     size = await spool_upload_capped(file, settings.max_upload_mb * 1024 * 1024, staging)
     try:
-        await asyncio.to_thread(_publish_new_dataset, staging, target)
+        await asyncio.to_thread(dataset_files.publish_new, staging, target)
     except FileExistsError as exc:
         # Won the upload race and lost the name: the 409 above ran before the upload, so
         # this is the same answer, decided at the moment it can actually be decided.
         raise HTTPException(409, f"Dataset '{name}' already exists.") from exc
     return {"status": "imported", "dataset_name": name, "size_bytes": size}
 
-
-def _staging_path(data_dir: Path, name: str) -> Path:
-    """A staging file for one upload, beside the target and nameable by no route.
-
-    Spool-then-rename is what makes the rename the moment a dataset exists, so a failure
-    part-way leaves something no route can ask for rather than a truncated CSV that lists,
-    inspects and trains as if it were complete. Two properties carry that:
-
-    * a **leading dot**, which ``safe_name`` rejects, and a ``.part`` suffix, which the
-      listing's CSV glob does not match and the startup sweep does clean;
-    * a **unique** name. It used to be ``<name>.part``, i.e. the same file for every request
-      importing one name — so two concurrent imports interleaved their bytes into whichever
-      one reached the rename (audit SEC-12).
-    """
-    handle, staged = tempfile.mkstemp(prefix=".import-", suffix=".part", dir=data_dir)
-    os.close(handle)
-    return Path(staged)
-
-
-def _publish_new_dataset(staging: Path, target: Path) -> None:
-    """Move the staged upload into place, or refuse because the name was taken.
-
-    ``os.replace`` is atomic but silently OVERWRITES, and the 409 check runs before the
-    upload — so a name created during a long upload was replaced by it anyway. ``os.link``
-    fails with ``FileExistsError`` instead, atomically, which is the answer this route
-    already gives for a name that exists (audit SEC-12).
-
-    :raises FileExistsError: the target appeared while the upload was running.
-    """
-    try:
-        os.link(staging, target)
-    except FileExistsError:
-        staging.unlink(missing_ok=True)
-        raise
-    except OSError:
-        # No hard links here (a filesystem or platform that refuses them). Fall back to the
-        # atomic-but-overwriting rename after one more check: the race window shrinks from
-        # the whole upload to these two statements, which is the best this can do without
-        # links.
-        if target.exists():
-            staging.unlink(missing_ok=True)
-            raise FileExistsError(target) from None
-        try:
-            os.replace(staging, target)
-        except BaseException:
-            staging.unlink(missing_ok=True)
-            raise
-        return
-    staging.unlink(missing_ok=True)
 
 
 @router.post("/datasets/{dataset_name}/export", summary="Export a dataset (download or share link)",

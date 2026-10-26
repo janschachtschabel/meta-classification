@@ -377,6 +377,34 @@ def test_export_import_roundtrip_via_api(trained_model):
     assert "api_copy" in client.get("/models", headers=RO).json()
 
 
+def test_an_import_keeps_names_and_display_names_exclusive(trained_model):
+    """No two models answer to one name (app/model_names.py): the import was the way round it.
+    A name another model shows as its display name is refused; a display name the archive
+    brings that another model already answers to is dropped, and the answer says so -- the
+    model itself is still wanted."""
+    before = client.get("/models/api_model", headers=RO).json()["metadata"].get("info") or {}
+    client.put("/models/api_model/info", headers=ADMIN,
+               json={**before, "display_name": "Doppelter Name"}).raise_for_status()
+    try:
+        bundle = client.post("/models/api_model/export", headers=ADMIN).content
+        files = {"file": ("bundle.zip", bundle, "application/zip")}
+
+        by_display_name = client.post("/models/import", headers=ADMIN, files=files,
+                                      data={"new_name": "doppelter name"})
+        copy = client.post("/models/import", headers=ADMIN, files=files, data={"new_name": "dn_copy"})
+
+        assert by_display_name.status_code == 409, by_display_name.text
+        assert copy.status_code == 200, copy.text
+        assert copy.json()["display_name_dropped"] == {"display_name": "Doppelter Name",
+                                                       "taken_by": "api_model"}
+        stored = client.get("/models/dn_copy", headers=RO).json()["metadata"].get("info") or {}
+        assert "display_name" not in stored
+        assert {k: v for k, v in stored.items()} == before, "the rest of the documentation stays"
+    finally:
+        client.delete("/models/dn_copy", headers=ADMIN)
+        client.put("/models/api_model/info", headers=ADMIN, json=before).raise_for_status()
+
+
 def test_a_model_name_outside_latin_1_can_be_exported_and_shared(trained_model):
     """S03 (audit 2026-09-30): the download header was built by hand, and a header is
     Latin-1 -- a model called "Fächer–2026" (en dash) made its export and its public share
@@ -1547,7 +1575,7 @@ def test_a_dataset_upload_that_dies_before_the_rename_leaves_nothing_behind(monk
     target atomically, audit SEC-12) and `os.replace` is the fallback for a filesystem
     without hard links, so failing only the latter stopped injecting anything at all.
     """
-    import app.routes.datasets as datasets_mod
+    import app.dataset_files as datasets_mod
 
     def _die(*_args):
         raise OSError("no space left on device")
