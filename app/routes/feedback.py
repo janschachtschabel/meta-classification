@@ -7,6 +7,8 @@ reading the collection back (view, backup, import, dataset) in ``app.feedback_re
 from __future__ import annotations
 
 import asyncio
+import io
+from collections.abc import Iterator
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -18,7 +20,7 @@ from ..errors import FeedbackWriteError
 from ..limiter import default_limit, export_limit, limiter
 from ..schemas import FeedbackRequest
 from ..schemas.datasets import CorrectionsDatasetRequest
-from ..security import read_upload_capped, require_role, safe_name
+from ..security import require_role, safe_name
 from ..settings import Settings, get_settings
 
 router = APIRouter(tags=["Feedback"])
@@ -133,6 +135,23 @@ async def list_feedback(
     return await asyncio.to_thread(feedback_review.page, model, limit, offset)
 
 
+def _backup_lines(upload: UploadFile) -> Iterator[str]:
+    """The upload's lines, read from its spool file one at a time.
+
+    Split at ``\n`` only. ``str.splitlines`` also splits at U+2028, U+2029 and U+0085, which
+    the backup writes unescaped inside a text (``ensure_ascii=False``) -- such a correction
+    came back as two invalid halves, lost on restore. One line at a time, too: the bytes, the
+    decoded text and the list of lines no longer sit in memory side by side. The size is
+    bounded before this runs, by the body guard (``max_upload_mb``).
+    """
+    upload.file.seek(0)
+    reader = io.TextIOWrapper(upload.file, encoding="utf-8-sig", newline="\n")
+    try:
+        yield from reader
+    finally:
+        reader.detach()  # the upload owns its file and closes it
+
+
 @router.post("/feedback/import", summary="Restore corrections from a backup")
 @limiter.limit(export_limit)
 async def import_feedback(
@@ -152,13 +171,11 @@ async def import_feedback(
     pass the cap (`APIV3_MAX_FEEDBACK_MB`) or cannot be written -- nothing is added then.
     **Auth:** admin.
     """
-    raw = await read_upload_capped(file, settings.max_upload_mb * 1024 * 1024)
     try:
-        text = raw.decode("utf-8-sig")
+        return await asyncio.to_thread(feedback_review.import_lines, _backup_lines(file))
     except UnicodeDecodeError as exc:
+        # Met while reading, before anything is written: the import is all or nothing.
         raise HTTPException(400, "The backup is not UTF-8 text (one JSON object per line).") from exc
-    try:
-        return await asyncio.to_thread(feedback_review.import_lines, text.splitlines())
     except FeedbackWriteError as exc:
         raise HTTPException(503, str(exc)) from exc
 

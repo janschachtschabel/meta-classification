@@ -148,32 +148,13 @@ def append_many(entries: list[dict]) -> int:
 
 
 def read_all() -> list[dict]:
-    """Every readable correction, oldest first.
+    """Every readable correction, oldest first, as a list -- :func:`iter_entries` collected.
 
-    The file is appended to by a running server and sits on a mounted volume, so a line
-    that did not finish being written must cost that line — never the export that reads
-    it.
+    It used to split the file itself with ``str.splitlines``, which also breaks a line at
+    U+2028, U+2029 and U+0085 -- characters a correction's text may hold, written unescaped
+    -- and dropped such a correction as two unparseable halves.
     """
-    path = _feedback_path()
-    if not path.exists():
-        return []
-    entries: list[dict] = []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        logger.warning("Feedback file at %s is unreadable; reporting none.", path)
-        return []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            logger.warning("Dropping an unparseable line from the feedback at %s.", path)
-            continue
-        if isinstance(entry, dict):
-            entries.append(entry)
-    return entries
+    return list(iter_entries())
 
 
 def iter_entries():

@@ -110,7 +110,9 @@ def import_lines(lines: Iterable[str]) -> dict:
         except (ValueError, ValidationError):
             invalid += 1
             continue
-        if name_problem(checked.model_name, "model name"):
+        # Text as the backup writes it: a number parses as a Unix time, and kept as one the
+        # collection would hold two formats of stamp.
+        if name_problem(checked.model_name, "model name") or not isinstance(raw["recorded_at"], str):
             invalid += 1
             continue
         # The stamp as it was written, not as the parser normalised it: a restored record is

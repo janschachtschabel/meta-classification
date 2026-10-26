@@ -122,6 +122,14 @@ def test_an_import_past_the_cap_writes_nothing(store, monkeypatch):
     assert store.read_bytes() == before, "all or nothing"
 
 
+def test_an_import_takes_a_stamp_only_as_written_text(store):
+    # A number parses as a Unix time; stored as one, the collection would hold two formats and
+    # the view would date the correction wrongly. The backup always writes a string.
+    line = json.dumps({**_correction("Zahl als Zeit", ["uri:hist"]), "recorded_at": 1700000000})
+
+    assert feedback_review.import_lines([line]) == {"imported": 0, "duplicates": 0, "invalid": 1}
+
+
 # --------------------------------------------------------------------------- over HTTP ---
 
 
@@ -177,6 +185,36 @@ def test_the_backup_round_trips_over_http(client):
 
     assert again.status_code == 200, again.text
     assert again.json() == {"imported": 0, "duplicates": 1, "invalid": 0}
+
+
+def test_a_backup_restores_texts_with_unicode_line_separators(client, tmp_path, monkeypatch):
+    # The backup writes these unescaped (ensure_ascii=False), and str.splitlines() breaks a line
+    # at each of them: the correction came back as two invalid halves -- lost on restore.
+    texts = ["Absatz\u2028Zeile", "Absatz\u2029Absatz", "Nächste\x85Zeile"]
+    for text in texts:
+        feedback.append(_correction(text, ["uri:hist"]))
+    backup = client.get("/feedback/export?format=jsonl", headers=ADMIN).content
+
+    monkeypatch.setattr(feedback, "_feedback_path", lambda: tmp_path / "fresh.jsonl")
+    monkeypatch.setattr(feedback, "_count", None)
+    restored = client.post("/feedback/import", headers=ADMIN,
+                           files={"file": ("feedback.jsonl", backup, "application/x-ndjson")})
+
+    assert restored.status_code == 200, restored.text
+    assert restored.json() == {"imported": 3, "duplicates": 0, "invalid": 0}
+    assert [entry["text"] for entry in feedback.read_all()] == texts
+
+
+def test_an_import_that_is_not_utf8_is_refused_and_adds_nothing(client, store):
+    good = json.dumps({**_correction("gut", ["uri:hist"]), "recorded_at": "2026-10-01T08:00:00+00:00"})
+    # The bad byte only after a valid line: read line by line, it is met mid-way.
+    payload = (good + "\n").encode("utf-8") + b"\xff\xfe kaputt\n"
+
+    answer = client.post("/feedback/import", headers=ADMIN,
+                         files={"file": ("f.jsonl", payload, "application/x-ndjson")})
+
+    assert answer.status_code == 400
+    assert not store.exists() or feedback.read_all() == []
 
 
 def test_the_training_csv_is_still_the_default_export(client):
