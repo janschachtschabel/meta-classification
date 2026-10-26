@@ -165,3 +165,20 @@ def test_a_broken_bundle_does_not_block_renaming_or_documenting_the_others(setup
 
     assert documented.status_code == 200, documented.text
     assert renamed.status_code == 200, renamed.text
+
+
+def test_a_display_name_is_trimmed_and_a_blank_one_is_none(setup):
+    # The display name stands in for the model's name in the UI: "   " left a model whose
+    # link read as nothing, and " Bildungsstufe " passed as different from "Bildungsstufe".
+    client, models = setup
+
+    blank = client.put("/models/fach_tpyo/info", headers=ADMIN,
+                       json={"display_name": "   ", "author": "Redaktion"})
+    padded_twin = client.put("/models/fach_tpyo/info", headers=ADMIN,
+                             json={"display_name": " bildungsstufe "})
+    padded = client.put("/models/fach_tpyo/info", headers=ADMIN, json={"display_name": "  Fächer "})
+
+    assert blank.status_code == 200, blank.text
+    assert "display_name" not in blank.json()["info"]
+    assert padded_twin.status_code == 409, "the same display name, only padded"
+    assert padded.json()["info"]["display_name"] == "Fächer"

@@ -167,3 +167,14 @@ def test_the_query_tab_labels_a_model_by_its_display_name(tmp_path):
     assert 'value="fach"' in html and "Fächer &lt;Schule&gt;" in html
     assert 'value="stufe"' in html
     assert result["errors"] == []
+
+
+@needs_node
+def test_a_blank_or_padded_display_name_from_a_bundle_is_trimmed(tmp_path):
+    # Bundle data is foreign: an imported archive can carry a display name the API would refuse.
+    result = _run(tmp_path, prelude=_PRELUDE_HERE, helpers=("models.js:modelDisplayName",), body="""
+        const named = (value) => modelDisplayName({ metadata: { info: { display_name: value } } });
+        report({ blank: named("   "), padded: named("  Fächer "), number: named(7) });
+    """)
+
+    assert result == {"blank": "", "padded": "Fächer", "number": ""}

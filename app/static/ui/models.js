@@ -22,7 +22,7 @@ const isServable = (m) => (m.format_version ?? 1) >= CURRENT_BUNDLE_FORMAT;
    counts. Shown beside the technical name wherever a model is picked (here and in query.js). */
 function modelDisplayName(model) {
   const info = (model && model.metadata && model.metadata.info) || {};
-  return typeof info.display_name === "string" && info.display_name ? info.display_name : "";
+  return typeof info.display_name === "string" ? info.display_name.trim() : "";
 }
 
 /* Documentation a model carries when it is handed to someone else. Rendered from
