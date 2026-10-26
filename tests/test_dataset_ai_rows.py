@@ -55,6 +55,59 @@ def test_only_the_mark_columns_present_are_read(tmp_path):
     assert counts == {"generated": 0, "example": 0, "enriched": 1, "marked": 1}
 
 
+def test_quoted_fields_span_lines_and_hold_the_separator(tmp_path):
+    path = tmp_path / "quoted.csv"
+    path.write_text('title;labels;generated_for\n"Zeile eins\nZeile zwei; mit Semikolon";a;a\n'
+                    '"ohne";b;\n', encoding="utf-8")
+
+    counts = dataset_stats.ai_rows(path, separator=";", columns=["title", "labels", "generated_for"])
+
+    assert counts == {"generated": 1, "example": 0, "enriched": 0, "marked": 1}
+
+
+def test_a_gzipped_dataset_is_counted_decompressed(tmp_path):
+    import gzip
+
+    path = tmp_path / "marked.csv.gz"
+    path.write_bytes(gzip.compress(MARKED.encode("utf-8")))
+
+    counts = dataset_stats.ai_rows(path, separator=";", columns=["generated_for", "example_for",
+                                                                   "enriched_fields"])
+
+    assert counts == {"generated": 3, "example": 1, "enriched": 2, "marked": 5}
+
+
+def test_a_cp1252_mark_is_a_mark(tmp_path):
+    # Read as UTF-8 with replacement, not detected: detecting the encoding of a 533 MB export
+    # took 16.5 s. A byte UTF-8 cannot decode still makes a cell non-empty, which is all a
+    # mark is.
+    path = tmp_path / "ansi.csv"
+    path.write_bytes(b"title;labels;generated_for\nA;a;\xe4\nB;b;\n")
+
+    counts = dataset_stats.ai_rows(path, separator=";", columns=["title", "labels", "generated_for"])
+
+    assert counts["generated"] == 1
+
+
+def test_the_count_is_kept_until_the_file_changes(tmp_path, monkeypatch):
+    # Every pick of a dataset in the training form asks for it: a 533 MB export took 22 s a
+    # time, read afresh on every pick.
+    path = tmp_path / "marked.csv"
+    path.write_text(MARKED, encoding="utf-8")
+    columns = ["title", "labels", "generated_for", "example_for", "enriched_fields"]
+    assert dataset_stats.ai_rows(path, separator=";", columns=columns)["marked"] == 5
+
+    def boom(*args, **kwargs):
+        raise AssertionError("file re-read although it is unchanged")
+
+    monkeypatch.setattr("builtins.open", boom)
+    assert dataset_stats.ai_rows(path, separator=";", columns=columns)["marked"] == 5
+    monkeypatch.undo()
+
+    path.write_text(MARKED + "Neu erzeugt;a;a;;\n", encoding="utf-8")
+    assert dataset_stats.ai_rows(path, separator=";", columns=columns)["marked"] == 6
+
+
 # Clearing the settings cache re-points it at whatever APIV3_* the last-collected module set:
 # a module sorting before tests/test_api.py (which relies on the cache it bound at import)
 # must not do it. Hence this file's name, not test_ai_rows.py.
