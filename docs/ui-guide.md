@@ -123,11 +123,25 @@ sollen: die Liste zeigt alle Labels des Modells, Mehrfachauswahl per Strg-Klick.
   eine Korrektur, die für den neuen Text gemeint ist, neben der Vorhersage für den alten.
 - Korrekturen werden **nie verworfen**. Anders als die Lauf-Historie (gedeckelt bei 200)
   sind sie kein Protokoll, sondern die Daten, aus denen der nächste Lauf lernt.
-- Der Export unter `GET /feedback/export` ist eine CSV mit den Spalten `text` und
-  `labels`, die sich direkt als Datensatz hochladen und trainieren lässt.
+- Was mit den Korrekturen geschieht, steht im Reiter **„Korrekturen“** (nächster Abschnitt).
 
 Korrigieren darf jeder mit Lese-Schlüssel — genau die Redaktion, die die Fehler sieht.
-Der Export bleibt Admin-Sache.
+Ansehen und Weiterverwenden bleibt Admin-Sache.
+
+## Korrekturen ansehen und weiterverwenden (Reiter „Korrekturen“)
+
+- **Liste:** alle Korrekturen, neueste zuerst — wann, welches Modell, der Text (lange
+  Texte gekürzt), was vorgeschlagen wurde und was richtig ist. Über „Modell“ lässt sich
+  die Liste auf ein Modell einschränken; „Weitere laden“ holt die nächsten 50.
+- **Trainings-CSV herunterladen:** die Spalten `text` und `labels`, direkt trainierbar.
+  Korrekturen ohne passendes Label („keines passt“) fehlen darin.
+- **Als Datensatz speichern:** legt dieselbe CSV als neuen Datensatz an, der sofort im
+  Reiter „Training“ zur Auswahl steht. Ein vorhandener Datensatz wird nie überschrieben.
+  Wer die Korrekturen mit den ursprünglichen Trainingsdaten zusammenführen will, lädt
+  beide herunter und kombiniert sie (z. B. in data-prep).
+- **Sicherung herunterladen / zurückspielen:** eine JSONL-Datei mit allen Angaben. Sie
+  lässt sich in diese oder eine andere Instanz zurückspielen; bereits vorhandene
+  Korrekturen werden übersprungen, zweimal zurückspielen verdoppelt also nichts.
 
 ## „Warum?“ — die Erklärung zu einer Antwort
 

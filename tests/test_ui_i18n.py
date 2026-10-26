@@ -37,7 +37,7 @@ _KEY_IN_HTML_RE = re.compile(r"data-i18n(?:-[a-z-]+)?=\"([^\"]+)\"")
 # and is why no key in this UI may be assembled from a template.
 NAMESPACES = ("common", "errors", "shell", "login", "query", "explain", "feedback",
               "share", "train", "trainStatus", "trainHistory", "models", "modelDetail", "evaluate",
-              "datasets", "datasetDetail")
+              "datasets", "datasetDetail", "corrections")
 _KEY_IN_JS_RE = re.compile(
     r"[\"'](" + "|".join(NAMESPACES) + r")((?:\.[A-Za-z0-9]+)+)[\"']")
 

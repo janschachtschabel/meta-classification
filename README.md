@@ -493,8 +493,8 @@ Add your own profiles in `config.yaml` (fields: `description`, `C_grid`, `cv_fol
   who spot the mistakes are the ones without an admin key; the export is admin. Appended
   and never dropped: this is training data, not a log. An empty `corrected` means "none
   of these apply" — recorded, and left out of the export, because a row without labels
-  is not something a run can learn from (`APIV3_FEEDBACK_FILE`). Admin only:
-  `GET /feedback` lists them newest first (per model, paged);
+  is not something a run can learn from (`APIV3_FEEDBACK_FILE`). Admin only, and in the
+  admin UI's Corrections tab: `GET /feedback` lists them newest first (per model, paged);
   `GET /feedback/export?format=jsonl` is a backup with every field, which
   `POST /feedback/import` takes back -- exact repeats and invalid lines are counted and
   skipped, so a backup imported twice adds nothing; `POST /feedback/dataset` writes the

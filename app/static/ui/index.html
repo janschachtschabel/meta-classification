@@ -54,6 +54,7 @@
         <button class="tab" data-tab="training" id="tab-btn-training" role="tab" aria-controls="tab-training" aria-selected="false" tabindex="-1" data-i18n="shell.tab.training"></button>
         <button class="tab" data-tab="models"   id="tab-btn-models"   role="tab" aria-controls="tab-models"   aria-selected="false" tabindex="-1" data-i18n="shell.tab.models"></button>
         <button class="tab" data-tab="datasets" id="tab-btn-datasets" role="tab" aria-controls="tab-datasets" aria-selected="false" tabindex="-1" data-i18n="shell.tab.datasets"></button>
+        <button class="tab" data-tab="corrections" id="tab-btn-corrections" role="tab" aria-controls="tab-corrections" aria-selected="false" tabindex="-1" data-i18n="shell.tab.corrections"></button>
       </nav>
       <button id="train-chip" class="chip" hidden data-i18n-title="shell.trainChip"></button>
       <!-- The chip's spoken counterpart: a run's transitions, heard from every tab. Inside the
@@ -325,6 +326,44 @@
         <div id="datasets-links"></div>
         <div id="datasets-list"><p class="muted" data-i18n="common.loading"></p></div>
       </section>
+
+      <section id="tab-corrections" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-corrections" tabindex="0" hidden>
+        <h2 data-i18n="corrections.heading"></h2>
+        <details class="help" data-i18n-html="corrections.help"></details>
+        <div class="card">
+          <h3 data-i18n="corrections.list.heading"></h3>
+          <label for="corrections-model" data-i18n="corrections.filter.label"></label>
+          <select id="corrections-model"><option value="" data-i18n="corrections.filter.all"></option></select>
+          <p id="corrections-summary" class="muted" role="status"></p>
+          <div id="corrections-list"><p class="muted" data-i18n="common.loading"></p></div>
+          <button type="button" id="corrections-more" hidden data-i18n="corrections.more"></button>
+        </div>
+        <div class="card">
+          <h3 data-i18n="corrections.use.heading"></h3>
+          <p class="muted" data-i18n="corrections.use.hint"></p>
+          <div class="row">
+            <button type="button" id="corrections-export-csv" data-i18n="corrections.export.csv"></button>
+            <button type="button" id="corrections-export-backup" data-i18n="corrections.export.backup"></button>
+          </div>
+          <form id="corrections-dataset-form" novalidate>
+            <label for="corrections-dataset-name" data-i18n="corrections.dataset.label"></label>
+            <input id="corrections-dataset-name" required aria-describedby="corrections-dataset-hint"
+                   data-i18n-placeholder="corrections.dataset.placeholder">
+            <p id="corrections-dataset-hint" class="muted" data-i18n="corrections.dataset.hint"></p>
+            <p id="corrections-dataset-error" class="error" role="alert" hidden></p>
+            <button type="submit" id="corrections-dataset-btn" data-i18n="corrections.dataset.submit"></button>
+          </form>
+        </div>
+        <form id="corrections-import-form" class="card" novalidate>
+          <h3 data-i18n="corrections.import.heading"></h3>
+          <label for="corrections-import-file" data-i18n="corrections.import.file"></label>
+          <input id="corrections-import-file" type="file" accept=".jsonl,.ndjson,application/x-ndjson" required
+                 aria-describedby="corrections-import-hint">
+          <p id="corrections-import-hint" class="muted" data-i18n="corrections.import.hint"></p>
+          <p id="corrections-import-error" class="error" role="alert" hidden></p>
+          <button type="submit" id="corrections-import-btn" data-i18n="corrections.import.submit"></button>
+        </form>
+      </section>
     </main>
   </div>
 
@@ -353,6 +392,7 @@
 <script src="model-detail.js"></script>
 <script src="model-evaluate.js"></script>
 <script src="datasets.js"></script>
+<script src="corrections.js"></script>
 <script src="dataset-detail.js"></script>
 <script src="train-status.js"></script>
 <script src="train-history.js"></script>

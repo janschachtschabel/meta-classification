@@ -136,6 +136,7 @@ async function boot() {
   $("#train-preflight").addEventListener("click", runPreflight);
   $("#train-name").addEventListener("input", renderNamePreview);
   $("#upload-form").addEventListener("submit", onUpload);
+  bindCorrections();
   $("#import-form").addEventListener("submit", onImportModel);
 
   if (Api.getKey()) {
@@ -208,6 +209,7 @@ const loaders = {
   training: () => { loadTrainingTab(); loadTrainHistory(); },
   models: loadModels,
   datasets: loadDatasets,
+  corrections: () => loadCorrections(),
 };
 
 function switchTab(name) {

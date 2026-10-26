@@ -12,7 +12,9 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   characters); `GET /feedback/export?format=jsonl` is a backup with every field that
   `POST /feedback/import` takes back, skipping and counting exact repeats and invalid lines,
   all or nothing against the cap; `POST /feedback/dataset` saves the training CSV as a new
-  dataset. All admin.
+  dataset. All admin, and all in the admin UI's new **Corrections** tab (`corrections.js`):
+  the list with a model filter and "load more", both downloads, "save as dataset" and
+  "restore a backup".
 
 ### Fixed
 
