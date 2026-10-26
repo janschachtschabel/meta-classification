@@ -2,7 +2,7 @@
 # Digest-pinned (supply chain): the tag alone is mutable. Dependabot proposes a new digest
 # when the tag moves (.github/dependabot.yml); to look by hand:
 #   docker buildx imagetools inspect python:3.11-slim-trixie   (take the index digest)
-FROM python:3.11-slim-trixie@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
+FROM python:3.11-slim-trixie@sha256:b7a9e5f6a93d6d4a31f129bbd4bdee69efccb6ded0fb230d78aafaf37af98377
 
 WORKDIR /app
 
