@@ -114,7 +114,7 @@ def test_loading_a_datasets_columns_says_so_until_they_arrive(tmp_path):
     -- the info call counts every row -- and read as a failure. A status line says the
     columns are loading, the previous dataset's columns are not offered meanwhile, and the
     line goes once they arrive, or once the request failed."""
-    result = _run(tmp_path, modules=("training.js",), body="""
+    result = _run(tmp_path, modules=("training.js",), helpers=("dataset-detail.js:aiShareText",), body="""
         let release;
         Api.get = (url) => {
           apiCalls.push(url);

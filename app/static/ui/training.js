@@ -96,10 +96,11 @@ const labelPicker = createPillPicker({
 async function loadDatasetColumns(isCurrent = () => true) {
   const name = $("#train-dataset").value;
   const status = $("#train-dataset-status");
-  textColPicker.setOptions([]); labelPicker.setOptions([]);
+  // Everything that described the previous dataset goes at once -- the AI share too, which
+  // otherwise stood beside a dataset it does not describe when that one could not be read.
+  textColPicker.setOptions([]); labelPicker.setOptions([]); syncSyntheticChoice([]);
   if (!name) {
     status.hidden = true;
-    syncSyntheticChoice([]);
     return;
   }
   // The info call counts every row, so a large dataset takes seconds -- blank pickers with

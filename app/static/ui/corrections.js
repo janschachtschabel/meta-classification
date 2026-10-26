@@ -9,6 +9,9 @@
 
 const CORRECTIONS_PAGE = 50;
 let correctionsShown = 0;
+// Which request the list belongs to: "more", then a new filter, could answer in the other
+// order, and the older page landed under the newer filter's table.
+let correctionsAsked = 0;
 
 function correctionLabels(labels) {
   return labels.length ? labels.map(esc).join("<br>") : `<span class="muted">${t("corrections.noneApply")}</span>`;
@@ -51,16 +54,19 @@ async function loadCorrections(more = false) {
   const model = $("#corrections-model").value;
   const offset = more ? correctionsShown : 0;
   const filter = model ? `&model=${encodeURIComponent(model)}` : "";
+  const asked = ++correctionsAsked;
   let answer;
   try {
     answer = await Api.get(`/feedback?limit=${CORRECTIONS_PAGE}&offset=${offset}${filter}`);
   } catch (err) {
+    if (asked !== correctionsAsked) return;
     moreBtn.hidden = true;
     // A readonly key may record a correction but not read the collection: say that, not 403.
     const message = err.status === 403 ? t("corrections.adminOnly") : esc(err.message);
     list.innerHTML = `<p class="error" role="alert">${message}</p>`;
     return;
   }
+  if (asked !== correctionsAsked) return;
   fillCorrectionModels(answer.models);
   correctionsShown = offset + answer.items.length;
   $("#corrections-summary").textContent = answer.total

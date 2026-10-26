@@ -59,6 +59,28 @@ def test_the_training_form_shows_the_share_beside_the_choice(tmp_path):
 
 
 @needs_node
+def test_a_failed_pick_does_not_keep_the_previous_datasets_share(tmp_path):
+    # The pickers emptied at once on a new pick; the AI share of the previous dataset stayed,
+    # and stayed for good when the new dataset could not be read.
+    result = _run(tmp_path, prelude=_PRELUDE_HERE, modules=("escape.js", "training.js"),
+                  helpers=("dataset-detail.js:aiShareText",), body=_STUBS + f"""
+        el("#train-dataset").value = "mix.csv";
+        Api.get = async () => ({MARKED_INFO});
+        await loadDatasetColumns();
+        const before = el("#train-synthetic-share").hidden;
+        el("#train-dataset").value = "kaputt.csv";
+        Api.get = async () => {{ throw new Error("The CSV is empty or malformed"); }};
+        await loadDatasetColumns();
+        report({{ before, share: el("#train-synthetic-share").hidden,
+                  section: el("#train-synthetic").hidden }});
+    """)
+
+    assert result["before"] is False
+    assert result["share"] is True, "no share stands beside a dataset it does not describe"
+    assert result["section"] is True
+
+
+@needs_node
 def test_the_dataset_detail_shows_the_share_and_that_it_never_validates(tmp_path):
     result = _run(tmp_path, prelude=_PRELUDE_HERE, modules=("escape.js",),
                   helpers=("dataset-detail.js:aiShareText", "dataset-detail.js:aiShareSection"),

@@ -63,6 +63,37 @@ def test_the_tab_lists_the_corrections_and_offers_more(tmp_path):
 
 
 @needs_node
+def test_an_answer_overtaken_by_a_newer_list_is_dropped(tmp_path):
+    # "More" asked for the next page, then the filter changed: the older answer arrived last and
+    # was appended under the new filter's table -- another model's corrections, a wrong count.
+    result = _run(tmp_path, modules=_MODULES, prelude=_PRELUDE_HERE, body=_STUBS + """
+        answerPages([{ total: 3, models: { fach: 3 }, items: [item(3), item(2)] }]);
+        await loadCorrections();
+        let release;
+        const slow = new Promise((resolve) => { release = resolve; });
+        Api.get = async (url) => {
+          apiCalls.push(url);
+          if (url.includes("offset=2")) { await slow; return { total: 3, models: { fach: 3 }, items: [item(1)] }; }
+          return { total: 1, models: { fach: 3, stufe: 1 }, items: [item(9, { model_name: "stufe" })] };
+        };
+        const appended = [];
+        el("#corrections-list tbody").insertAdjacentHTML = (where, html) => appended.push(html);
+        const more = loadCorrections(true);
+        el("#corrections-model").value = "stufe";
+        await loadCorrections();
+        release();
+        await more;
+        report({ appended, html: el("#corrections-list").innerHTML,
+                 summary: el("#corrections-summary").textContent, errors });
+    """)
+
+    assert result["appended"] == [], "the overtaken page is not added"
+    assert "Text 9" in result["html"] and "Text 1" not in result["html"]
+    assert 'corrections.summary {"shown":1,"total":1}' in result["summary"]
+    assert result["errors"] == []
+
+
+@needs_node
 def test_filtering_by_model_starts_over(tmp_path):
     result = _run(tmp_path, modules=_MODULES, prelude=_PRELUDE_HERE, body=_STUBS + """
         answerPages([{ total: 1, models: { fach: 1 }, items: [item(1)] }]);
