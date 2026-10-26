@@ -31,6 +31,7 @@ from fastapi import (
 )
 
 from .. import data as data_mod
+from .. import model_names
 from ..dataset_load import require_columns
 from ..errors import TrainingInputError
 from ..evaluate import run_evaluation
@@ -148,6 +149,14 @@ async def set_model_info(
     derives it from the class URIs. **Auth:** admin · rate limit active.
     """
     safe_name(model_name, "model name")
+    if body.display_name:
+        # People pick models by either: a display name no other model uses as its name or
+        # display name, in any letter case (model_names).
+        owner = await asyncio.to_thread(
+            model_names.taken_by, get_registry(), body.display_name, other_than=model_name)
+        if owner:
+            raise HTTPException(
+                409, f"'{body.display_name}' is already the name or display name of model '{owner}'.")
     try:
         stored = await asyncio.to_thread(
             get_registry().update_info, model_name, body.model_dump(exclude_none=True)

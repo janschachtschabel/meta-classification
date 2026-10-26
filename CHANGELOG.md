@@ -15,6 +15,10 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   dataset. All admin, and all in the admin UI's new **Corrections** tab (`corrections.js`):
   the list with a model filter and "load more", both downloads, "save as dataset" and
   "restore a backup".
+- **A model can be renamed, and given a display name.** `POST /models/{name}/rename` moves
+  the bundle and revokes the old name's share links (a link resolves by name), reporting how
+  many; the documentation gains `display_name`. No two models share a name or display name,
+  in any letter case, across both (`app/model_names.py`); a change of case alone is a rename.
 
 ### Fixed
 

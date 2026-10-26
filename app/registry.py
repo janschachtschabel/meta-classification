@@ -483,6 +483,32 @@ class Registry:
                     del self._cache[cached]
                     self._stamps.pop(cached, None)
 
+    def rename(self, old: str, new: str) -> None:
+        """Give the bundle ``old`` the name ``new`` -- a corrected name, nothing else changes.
+
+        One directory rename under the disk lock, made durable, then every cached spelling of
+        ``old`` dropped (the delete's reasoning). ``new`` must be free in any letter case; a
+        change of case alone is a rename like any other. The caller owns what else hangs on a
+        name -- share links, running jobs, the uniqueness of display names (``model_names``).
+
+        :raises FileNotFoundError: there is no model ``old``.
+        :raises FileExistsError: ``new`` is taken -- by a model, or by anything in its place.
+        """
+        with self._disk_lock:
+            if not self.exists(old):
+                raise FileNotFoundError(old)
+            same_entry = old.casefold() == new.casefold()
+            if not same_entry and (self._path(new).exists()
+                                   or any(n.casefold() == new.casefold() for n in self.list())):
+                raise FileExistsError(new)
+            os.rename(self._path(old), self._path(new))
+            durability.sync_dir(self.dir)
+            with self._lock:
+                key = old.casefold()
+                for cached in [k for k in self._cache if k.casefold() == key]:
+                    del self._cache[cached]
+                    self._stamps.pop(cached, None)
+
     def stage_export(self, name: str) -> tuple[Path, Callable[[], None]]:
         """The bundle's archive in a staging file beside the bundles, and its release.
 

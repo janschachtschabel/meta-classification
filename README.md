@@ -380,6 +380,7 @@ it knows, and that is exactly what a recipient of a shared model needs:
 
 | Field | For |
 |---|---|
+| `display_name` | how people see it beside its technical name; no other model may use it as name or display name, in any letter case (409) |
 | `author` | who trained it, and how to reach them |
 | `description` | what it is for — and what it is **not** for |
 | `data_source` | where the data came from (`dataset` is only a file name, meaningless elsewhere) |
@@ -389,6 +390,13 @@ All optional and length-bounded, stored inside `metrics.json` so they travel in 
 exported ZIP, and settable either at training time (`info` in the `/train` body) or
 afterwards — documentation is presentation-only, so fixing a typo costs no retrain.
 The admin UI has an **Info** button per model.
+
+**Renaming** (`POST /models/{name}/rename`, admin): corrects a typo, or names an import after
+what it is. The bundle moves to the new name; the run history and the corrections keep the
+name they were recorded under. The old name's share links are revoked -- a link resolves by
+name and would otherwise serve whatever model is later given it -- and the answer says how
+many (`revoked_links`). The new name must be free as name and display name of every other
+model, in any letter case; a run or an import holding either name blocks it (409).
 
 **The label vocabulary is not among them**, on purpose: it is derived from the class
 URIs and reported as `label_vocabulary` by `GET /models/{name}`. A typed-in value can
@@ -626,7 +634,7 @@ written. The one deliberate difference, and the dependencies the generators need
 recorded in
 [`docs/plans/2026-09-26-descriptive-metadata.md`](docs/plans/2026-09-26-descriptive-metadata.md).
 
-- **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
+- **Models:** `GET /models`, `GET /models/{name}`, `GET /models/{name}/labels` (per-label F1, support and threshold, weakest first), `PUT /models/{name}/info`, `POST /models/{name}/rename`, `DELETE /models/{name}`, `POST /models/{name}/export`, `POST /models/import`
 - **Share links:** `GET /share/{id}` (public bearer download), `GET /share` and `DELETE /share/{id}` (admin: review what is outstanding, withdraw it early)
 - **Datasets:** `GET /datasets`, `GET /datasets/{name}`, `POST /datasets/analyze`, `POST /datasets/{name}/validate`, import/export/delete
 - **System:** `GET /health` (liveness — answers as long as the process runs), `GET /ready` (readiness — 503 when the data or models directory is missing or read-only, so a pod with a broken volume is taken out of the load balancer instead of serving errors), `GET /config`, `GET /metrics` (Prometheus text format, public — operational gauges only: uptime, model counts, training status)

@@ -35,6 +35,13 @@ class ModelInfo(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # an unknown key is a typo worth a 422
 
+    display_name: str | None = Field(
+        None, min_length=1, max_length=100, examples=["Fächer (Schule)"],
+        description=(
+            "How people should see the model, beside its technical name. Unique: no other model "
+            "may have it as its name or display name, in any letter case (409)."
+        ),
+    )
     author: str | None = Field(
         None, max_length=200, examples=["Redaktion WLO <redaktion@example.org>"],
         description="Who trained the model, and how to reach them.",
@@ -54,6 +61,13 @@ class ModelInfo(BaseModel):
     license: str | None = Field(
         None, max_length=200, examples=["CC BY-SA 4.0"],
         description="Terms the model may be used under, for models that leave the house.",
+    )
+
+
+class RenameRequest(BaseModel):
+    new_name: str = Field(
+        ..., min_length=1, max_length=200,
+        description="The model's new name: unused by any other model as name or display name, in any letter case.",
     )
 
 
