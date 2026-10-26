@@ -2,7 +2,14 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased]
+## [4.2.0] — 2026-10-26
+
+The editors' feedback round of 2026-10-26: the corrections become usable from the admin UI, a
+model's name can be corrected and a display name set, a dataset's AI share is shown before a
+run, and the descriptive metadata gets titles that read as titles. A minor release: nothing a
+client sends has to change. Two answers do: a training or an import under a name another model
+already answers to -- as its name or display name, in any letter case -- is now refused (409),
+and `POST /metadata` titles running text differently (below).
 
 ### Changed
 
@@ -18,6 +25,8 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 - **Keywords**: a noun with a capital inside ("pH-Wert") and an adjective in "-är" ("binäre
   Suche") are recognised; "Suche" is no stopword.
 - The admin UI's metadata card explains, folded, how the three proposals come about.
+- **Build:** the base image `python:3.11-slim-trixie` at its current digest; CI on
+  `actions/setup-python` 7.1.0 and `docker/login-action` 4.7.0 (Dependabot #9-#11).
 
 ### Added
 
