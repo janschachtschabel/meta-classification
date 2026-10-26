@@ -1547,7 +1547,7 @@ def test_a_dataset_upload_that_dies_before_the_rename_leaves_nothing_behind(monk
     target atomically, audit SEC-12) and `os.replace` is the fallback for a filesystem
     without hard links, so failing only the latter stopped injecting anything at all.
     """
-    import app.routes.datasets as datasets_mod
+    import app.dataset_files as datasets_mod
 
     def _die(*_args):
         raise OSError("no space left on device")
