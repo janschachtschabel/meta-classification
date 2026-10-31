@@ -525,6 +525,37 @@ def test_label_diagnostics_report_a_threshold_only_where_serving_uses_one(traine
     assert all(isinstance(entry["threshold"], float) for entry in entries)
 
 
+def test_at_least_one_answers_where_no_label_passes_its_threshold(trained_model):
+    """`at_least_one` on all three prediction paths: a cut no label reaches (0.999) leaves the
+    answer empty, and with the option it holds the best label, marked below its threshold.
+    Its own multilabel model -- the option changes nothing for argmax, which always answers."""
+    multi = {**TRAIN_BODY, "model_name": "atleastone_model", "task_type": "multilabel"}
+    assert client.post("/train", json=multi, headers=ADMIN).status_code == 202
+    assert _wait_for_training()["status"] == "completed"
+    body = {"model_name": "atleastone_model", "texts": ["Bruchrechnung mit Nennern"], "threshold": 0.999}
+
+    plain = client.post("/predict", json=body, headers=RO).json()
+    forced = client.post("/predict", json={**body, "at_least_one": True}, headers=RO).json()
+    several = client.post("/predict/multi", headers=RO, json={
+        "model_names": ["atleastone_model"], "texts": body["texts"], "threshold": 0.999,
+        "at_least_one": True}).json()
+    csv_answer = client.post("/predict/csv", headers=RO, files={"file": (
+        "in.csv", "properties.cclom:title;properties.cclom:general_keyword\nBruchrechnung;Nenner\n",
+        "text/csv")}, data={"model_name": "atleastone_model", "threshold": "0.999",
+                            "at_least_one": "true"})
+
+    assert plain["results"][0]["predictions"] == []
+    [label] = forced["results"][0]["predictions"]
+    assert label["above_threshold"] is False
+    assert forced["applied_settings"]["at_least_one"] is True
+    assert plain["applied_settings"]["at_least_one"] is False
+    [same] = several["results"][0]["predictions_by_model"]["atleastone_model"]
+    assert same["uri"] == label["uri"] and same["above_threshold"] is False
+    assert csv_answer.status_code == 200, csv_answer.text
+    lines = csv_answer.text.strip().splitlines()
+    assert len(lines) == 2 and lines[1].endswith(",false"), csv_answer.text
+
+
 def test_model_info_can_be_set_after_training_and_travels_with_the_bundle(trained_model):
     """The point of the info block is the moment a model is handed to someone else:
     the bundle records what was measured, but not who made it, what for, or where the

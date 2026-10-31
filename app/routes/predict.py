@@ -70,6 +70,7 @@ def _applied_settings(model: ClassifierModel, body: PredictRequest | MultiPredic
         "top_k": model.applied_top_k(body.top_k),
         "classification_type": model.task_type,
         "auto_mode": body.top_k is None and body.threshold is None,
+        "at_least_one": body.at_least_one,
     }
 
 
@@ -78,7 +79,7 @@ def _build_response(model: ClassifierModel, body: PredictRequest, top_k: int | N
     predictions = model.predict(
         texts, top_k=top_k, threshold=body.threshold, label_filter=body.label_filter,
         include_baseline_diff=body.include_baseline_diff,
-        include_label_f1=body.include_label_f1,
+        include_label_f1=body.include_label_f1, at_least_one=body.at_least_one,
     )
     results = [
         {"text": _truncate(text), "predictions": [_pred_dict(p) for p in row]}
@@ -104,7 +105,7 @@ def _build_multi_response(models: dict[str, ClassifierModel], body: MultiPredict
         name: model.predict(
             texts[name], top_k=body.top_k, threshold=body.threshold, label_filter=body.label_filter,
             include_baseline_diff=body.include_baseline_diff,
-            include_label_f1=body.include_label_f1,
+            include_label_f1=body.include_label_f1, at_least_one=body.at_least_one,
         )
         for name, model in models.items()
     }

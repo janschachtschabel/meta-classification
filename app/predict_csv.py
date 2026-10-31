@@ -86,8 +86,8 @@ def _row_cells(index: int, predictions: list) -> Iterator[list]:
             prediction.uri,
             prediction.label,
             f"{prediction.confidence:.2f}",
-            # Only ranking mode (explicit top_k) sets it; blank means "not applicable",
-            # which is not the same statement as "did not pass".
+            # Ranking mode (explicit top_k) and an `at_least_one` stand-in set it; blank means
+            # "not applicable", which is not the same statement as "did not pass".
             "" if prediction.above_threshold is None else str(prediction.above_threshold).lower(),
         ]
 
@@ -101,6 +101,7 @@ def classify_csv(
     separator: str = ";",
     threshold: float | None = None,
     top_k: int | None = None,
+    at_least_one: bool = False,
     chunk_rows: int = CHUNK_ROWS,
     encoding: CsvEncoding | None = None,
 ) -> Iterator[str]:
@@ -134,7 +135,7 @@ def classify_csv(
         # The raw assembly goes to the model, which cleans its own input — the same
         # single cleaning step training applied to the same combined string.
         texts = combine_text_columns(chunk, text_columns, weights).tolist()
-        predictions = model.predict(texts, top_k=top_k, threshold=threshold)
+        predictions = model.predict(texts, top_k=top_k, threshold=threshold, at_least_one=at_least_one)
         for index, row in enumerate(predictions):
             writer.writerows(_row_cells(offset + index, row))
         offset += len(texts)

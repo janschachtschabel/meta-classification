@@ -73,6 +73,17 @@ async def predict_csv(
             "(0 = the training set's typical label count). Omitted = the model decides."
         ),
     ),
+    at_least_one: bool = Form(
+        False,
+        description=(
+            "Multilabel only, when the model decides (no `top_k`): if no label passes its "
+            "threshold, return the best one anyway, marked `above_threshold: false`. An answer "
+            "that has labels keeps all of them -- unlike `top_k=1`, which would cut a real second "
+            "label. For a text known to belong somewhere in the label set: it trades a little "
+            "precision for an answer. Default false: an empty answer is the honest result of the "
+            "tuned thresholds."
+        ),
+    ),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
@@ -142,6 +153,7 @@ async def predict_csv(
             yield from predict_csv_mod.classify_csv(
                 path, model, text_columns=columns, weights=weights,
                 separator=separator, threshold=threshold, top_k=top_k, encoding=checked.encoding,
+                at_least_one=at_least_one,
             )
         finally:
             slots.release()

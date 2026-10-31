@@ -67,6 +67,17 @@ class _PredictOptions(BaseModel):
             "`above_threshold`."
         ),
     )
+    at_least_one: bool = Field(
+        False,
+        description=(
+            "Multilabel only, when the model decides (no `top_k`): if no label passes its "
+            "threshold, return the best one anyway, marked `above_threshold: false`. An answer "
+            "that has labels keeps all of them -- unlike `top_k=1`, which would cut a real second "
+            "label. For a text known to belong somewhere in the label set: it trades a little "
+            "precision for an answer. Default false: an empty answer is the honest result of the "
+            "tuned thresholds."
+        ),
+    )
     label_filter: OptionalFilter = Field(
         None,
         description=(

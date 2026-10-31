@@ -176,6 +176,7 @@ class ClassifierModel:
         label_filter: str | None = None,
         include_baseline_diff: bool = False,
         include_label_f1: bool = False,
+        at_least_one: bool = False,
     ) -> list[list[Prediction]]:
         """Classify texts, returning sorted predictions per text.
 
@@ -191,6 +192,11 @@ class ClassifierModel:
         ``include_baseline_diff`` attaches confidence minus the empty-text
         baseline per prediction; ``include_label_f1`` attaches the label's
         training F1 (both diagnostic, both opt-in; see ``Prediction``).
+
+        ``at_least_one`` (multilabel decision only): when no label passes its
+        threshold, the best one is returned anyway with ``above_threshold=False``
+        -- for a caller who knows the text belongs somewhere in the label set.
+        An answer that has labels keeps all of them, which ``top_k=1`` would cut.
         """
         proba = self.predict_proba(texts)
         baseline = self.baseline_proba() if include_baseline_diff else None
@@ -219,5 +225,9 @@ class ClassifierModel:
                 chosen = scored[:1]
             else:
                 chosen = [p for p in scored if p.confidence >= self._threshold_for(p.uri, threshold)]
+                if not chosen and at_least_one and scored:
+                    # The nearest label, marked as what it is: below its threshold.
+                    scored[0].above_threshold = False
+                    chosen = scored[:1]
             results.append(chosen)
         return results
