@@ -183,6 +183,16 @@
               <p id="train-dataset-status" class="muted" role="status" hidden></p>
             </div>
             <div>
+              <label for="train-separator" data-i18n="train.separator.label"></label>
+              <select id="train-separator" aria-describedby="train-separator-hint">
+                <option value=";" data-i18n="common.separator.semicolon"></option>
+                <option value="," data-i18n="common.separator.comma"></option>
+                <option value="&#9;" data-i18n="common.separator.tab"></option>
+                <option value="|" data-i18n="common.separator.pipe"></option>
+              </select>
+              <p id="train-separator-hint" class="muted" data-i18n="train.separator.hint"></p>
+            </div>
+            <div>
               <label for="train-name" data-i18n="train.name.label"></label>
               <!-- No client-side pattern: the char class safe_name enforces is not
                    expressible as a v-flag-valid pattern; the server's crafted 400

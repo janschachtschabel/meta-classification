@@ -132,7 +132,10 @@ async function boot() {
   $("#train-form").addEventListener("submit", onTrainStart);
   // Debounced and latest-wins: see loadDatasetColumns in training.js for why, and
   // latestOnly below for what it guarantees. Wrapped here, where every module has loaded.
-  $("#train-dataset").addEventListener("change", latestOnly(loadDatasetColumns));
+  // One wrapper for both: a dataset and a separator picked in quick succession are one read.
+  const loadColumns = latestOnly(loadDatasetColumns);
+  $("#train-dataset").addEventListener("change", loadColumns);
+  $("#train-separator").addEventListener("change", loadColumns);
   $("#train-preflight").addEventListener("click", runPreflight);
   $("#train-name").addEventListener("input", renderNamePreview);
   $("#upload-form").addEventListener("submit", onUpload);

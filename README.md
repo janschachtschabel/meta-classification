@@ -304,6 +304,15 @@ reading of it is right. (Until 4.0.1 one such byte anywhere made the whole file 
 `ä` became `Ã¤`, and the metrics could not show it: training and test saw the same text.) A
 bundle records what its dataset was read as, under `csv_encoding`.
 
+### Which separator a CSV is read with
+
+Every request that reads a dataset takes `csv_separator` (one character, `;` by default).
+`GET /datasets/{name}` without a `separator` detects it from the header line -- whichever of
+`;`, `,`, tab and `|` occurs most often outside quotes, `;` on a tie -- and answers with the
+one it used (`"separator"`); send that on. The admin UI does: its training form shows the
+detected separator in a field you can change (the columns are then read again), and the
+pre-flight, the run, the dataset panel's analysis and an evaluation all read with it.
+
 ### Weighting text fields (`text_column_weights`)
 
 Title and keywords carry far more signal per word than a long description, but a

@@ -34,7 +34,11 @@ richtigen Labels (z. B. Schulfächern), es lernt den Zusammenhang — danach kan
 1. **Datensätze** → CSV-Datei hochladen. Eine Zeile pro Material; Textspalten
    (Titel, Beschreibung, …) und mindestens eine Spalte mit den richtigen Labels
    (mehrere Labels in einer Zelle durch Komma getrennt).
-2. **Training** → Dataset auswählen → bei *Textspalten* die Spalten antippen,
+2. **Training** → Dataset auswählen. Das **Trennzeichen** (Semikolon, Komma, Tabulator
+   oder senkrechter Strich) erkennt die Seite aus der Kopfzeile der Datei und zeigt es im
+   Feld daneben. Ändern musst du es nur, wenn die Spalten falsch aussehen, etwa eine
+   einzige Spalte mit allen Namen darin; dann werden sie mit dem gewählten Zeichen neu
+   gelesen. → bei *Textspalten* die Spalten antippen,
    die das System **lesen** soll (Titel + Beschreibung + Schlagwörter ist meist
    die beste Wahl) → bei *Label-Felder* die Spalte mit den **richtigen
    Antworten** wählen.

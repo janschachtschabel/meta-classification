@@ -71,11 +71,14 @@ async function openEvaluateForm(name, frame) {
   </div>`);
   const box = frame.querySelector(".evaluate-form");
   const message = box.querySelector("#ev-message");
+  // The separator the server detected for the chosen dataset; the evaluation reads with it.
+  let separator = ";";
   const applyColumns = async (isCurrent = () => true) => {
     const chosen = box.querySelector("#ev-dataset").value;
     try {
       const info = await Api.get(`/datasets/${encodeURIComponent(chosen)}`);
       if (!isCurrent()) return;   // a newer dataset was picked while this read was running
+      separator = info.separator || ";";
       const options = (info.columns || []).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
       box.querySelector("#ev-text-cols").innerHTML = options;
       box.querySelector("#ev-label-col").innerHTML = options;
@@ -92,10 +95,10 @@ async function openEvaluateForm(name, frame) {
   // Same reason as training.js: one full-CSV read per settled choice, newest answer wins.
   box.querySelector("#ev-dataset").addEventListener("change", latestOnly(applyColumns));
   await applyColumns();
-  box.querySelector("#ev-start").addEventListener("click", () => startEvaluation(name, box));
+  box.querySelector("#ev-start").addEventListener("click", () => startEvaluation(name, box, separator));
 }
 
-async function startEvaluation(name, box) {
+async function startEvaluation(name, box, separator = ";") {
   const textColumns = [...box.querySelectorAll("#ev-text-cols option")]
     .filter((o) => o.selected).map((o) => o.value);
   const message = box.querySelector("#ev-message");
@@ -111,6 +114,7 @@ async function startEvaluation(name, box) {
       dataset_name: box.querySelector("#ev-dataset").value,
       text_columns: textColumns,
       label_column: box.querySelector("#ev-label-col").value,
+      csv_separator: separator,
     });
     message.className = "ok";
     message.textContent = answer.status === "queued"

@@ -93,8 +93,13 @@ const labelPicker = createPillPicker({
    Declared as a function rather than `const … = latestOnly(…)` for a load-order reason:
    this module runs before app.js, so calling one of its helpers out here is a
    ReferenceError that aborts the whole file — the same trap escape.js explains. */
+// The dataset the separator field was last set for: a newly picked one is read with the
+// separator the server detects, the same one again with whatever the field says now.
+let separatorSetFor = null;
+
 async function loadDatasetColumns(isCurrent = () => true) {
   const name = $("#train-dataset").value;
+  const separator = $("#train-separator");
   const status = $("#train-dataset-status");
   // Everything that described the previous dataset goes at once -- the AI share too, which
   // otherwise stood beside a dataset it does not describe when that one could not be read.
@@ -108,8 +113,11 @@ async function loadDatasetColumns(isCurrent = () => true) {
   status.textContent = t("train.dataset.loading");
   status.hidden = false;
   try {
-    const info = await Api.get(`/datasets/${encodeURIComponent(name)}`);
+    const named = separatorSetFor === name ? `?separator=${encodeURIComponent(separator.value)}` : "";
+    const info = await Api.get(`/datasets/${encodeURIComponent(name)}${named}`);
     if (!isCurrent()) return;
+    if (info.separator) separator.value = info.separator;
+    separatorSetFor = name;
     textColPicker.setOptions(info.columns);
     labelPicker.setOptions(info.columns);
     syncSyntheticChoice(info.columns, info);
@@ -215,6 +223,8 @@ async function onTrainStart(ev) {
   if (!plan.length) { showError(errEl, { message: t("train.error.noPlan") }); return; }
   const shared = {
     dataset_name: $("#train-dataset").value,
+    // The separator the columns above were read with; the API's default is `;`.
+    csv_separator: $("#train-separator").value,
     text_columns: textCols,
     optimize_parameters: $("#train-profile").value,
     label_filter: $("#train-filter").value.trim() || null,

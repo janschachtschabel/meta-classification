@@ -23,9 +23,9 @@ async function runPreflight() {
   try {
     const body = await Api.post("/datasets/analyze", {
       dataset_name: dataset, text_columns: textColumns, label_column: labelFields[0],
-      // The training form offers no separator field, so a run uses the request
-      // default; the pre-flight has to read the file the same way or its numbers
-      // describe a different parse than the one that will happen.
+      // The run reads the file with this separator; the pre-flight has to read it the same
+      // way, or its numbers describe a different parse than the one that will happen.
+      csv_separator: $("#train-separator").value,
       label_filter: $("#train-filter").value.trim() || null,
     });
     box.innerHTML = preflightSummary(body, labelFields) + analysisHtml(body);

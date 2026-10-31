@@ -85,7 +85,15 @@ function analysisHtml(body) {
   </div>`;
 }
 
-async function runAnalysis(frame, name) {
+/* The separator by name: a tab is invisible, and ";" alone is easy to misread. */
+function separatorName(separator) {
+  return {
+    ";": t("common.separator.semicolon"), ",": t("common.separator.comma"),
+    "\t": t("common.separator.tab"), "|": t("common.separator.pipe"),
+  }[separator] ?? separator;
+}
+
+async function runAnalysis(frame, name, separator = ";") {
   const textColumns = [...frame.querySelectorAll("#ds-text-cols option")]
     .filter((o) => o.selected).map((o) => o.value);
   const labelColumn = frame.querySelector("#ds-label-col").value;
@@ -101,6 +109,7 @@ async function runAnalysis(frame, name) {
   try {
     const body = await Api.post("/datasets/analyze", {
       dataset_name: name, text_columns: textColumns, label_column: labelColumn,
+      csv_separator: separator,   // the one the panel's columns were read with
     });
     frame.insertAdjacentHTML("beforeend", analysisHtml(body));
   } catch (err) {
@@ -164,7 +173,8 @@ async function showDatasetDetail(name) {
               aria-label="${esc(t("common.closeDetails"))}">${t("common.close")}</button>
     </div>
     <p class="muted">${t("datasetDetail.subtitle", {
-      columns: columns.length, rows: sample.length })}</p>
+      columns: columns.length, rows: sample.length })} · ${t("datasetDetail.separator", {
+      separator: esc(separatorName(info.separator || ";")) })}</p>
     ${aiShareSection(info)}
     <div class="table-wrap" tabindex="0"><table>
       <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
@@ -175,7 +185,8 @@ async function showDatasetDetail(name) {
     <h3>${t("datasetDetail.beforeTraining")}</h3>
     ${columnPickers(columns)}`;
   frame.querySelector("[data-close]").addEventListener("click", () => dialog.close());
-  frame.querySelector("#ds-analyze").addEventListener("click", () => runAnalysis(frame, name));
+  frame.querySelector("#ds-analyze").addEventListener("click", () =>
+    runAnalysis(frame, name, info.separator || ";"));
   frame.focus();
 }
 

@@ -2,6 +2,19 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
+## [Unreleased]
+
+### Added
+
+- **The separator of a dataset is detected, and the admin UI reads with it.** Every request
+  defaults to `;` and the UI never sent another, so a comma- or tab-separated upload showed
+  one column holding the whole header and could not be trained from the UI.
+  `GET /datasets/{name}` without `separator` now detects it from the header (`;`, `,`, tab or
+  `|`, outside quotes, `;` on a tie) and reports it as `separator`; an explicit one is used as
+  given, and every request model keeps its `;` default. The training form shows the detected
+  separator in a field that re-reads the columns when changed, and the pre-flight, the run,
+  the dataset panel (which names it) and an evaluation send it as `csv_separator`.
+
 ## [4.3.0] — 2026-10-31
 
 An option for the answers the thresholds leave empty, a security update of a transitive
