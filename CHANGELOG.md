@@ -19,6 +19,12 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ### Fixed
 
+- **msgpack 1.2.4** (from 1.2.2) for CVE-2026-114613 / GHSA-j586-36cw-2gc2: an unbounded
+  memory leak in the C extension when `strict_map_key` validation fails. msgpack only comes
+  in through `wordfreq`, which reads its own bundled frequency table with it -- no client
+  input reaches it -- but `pip-audit` rightly blocked the image. Only msgpack moved in
+  `requirements-hashes.lock` (`uv pip compile ... --upgrade-package msgpack`).
+
 - **An update in a server's Docker panel updates.** `docker-compose.yml` built the image
   (`build:` + `image: classification-api:local`); the Hostinger Docker Manager's update pulled
   that name, which no registry has, rebuilt nothing (its project folder holds no source) and
