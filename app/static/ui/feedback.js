@@ -94,8 +94,6 @@ async function sendCorrection(modelName, predicted, box, text) {
   }
 }
 
-/* Wire the "Correct" buttons of a freshly rendered single-text result; `text` is the one
-   that was classified. */
 /* What the model asserted. An `at_least_one` stand-in or a ranked entry below its threshold
    is shown, but is not the model's verdict: recorded as `predicted`, the corrections would
    count it as a wrong one. */
@@ -103,6 +101,8 @@ function assertedPredictions(preds) {
   return preds.filter((p) => p.above_threshold !== false);
 }
 
+/* Wire the "Correct" buttons of a freshly rendered single-text result; `text` is the one
+   that was classified. */
 function bindCorrectionButtons(root, byModel, text) {
   root.querySelectorAll("[data-correct]").forEach((button) => {
     const name = button.dataset.correct;

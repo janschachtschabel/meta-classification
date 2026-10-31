@@ -62,7 +62,7 @@ const STRINGS_EN = {
 
   "query.belowThreshold": "below threshold",
   "query.atLeastOne.label": "At least one label <span class=\"muted\">(even below the threshold)</span>",
-  "query.atLeastOne.hint": "Only for models with several labels per text: if no label reaches its threshold, the best one is shown anyway – greyed and marked “below threshold”. Answers with hits stay as they are. Measured, such a label is right about every second time.",
+  "query.atLeastOne.hint": "Only for models with several labels per text: if no label reaches its threshold, the best one is shown anyway – greyed and marked “below threshold”. Answers with hits stay as they are. Measured, such a label is right about half the time.",
   "query.bulk.descriptionInDownload": "The description is in the download only — a table cell would make it unreadable.",
   "query.bulk.done": "Done: {texts}, {refused}.",
   "query.bulk.doneDescribed": "Done: {texts} described.",

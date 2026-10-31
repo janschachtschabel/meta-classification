@@ -190,6 +190,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
    4.5:1 SC 1.4.3 asks. Quietening by TOKEN keeps the row recessive and every string in it
    readable; tests/test_ui_contrast.py recomputes this. */
 tr.stale td { color: var(--muted); }
+/* A label below its threshold (a ranking, an at_least_one stand-in): the row reads quieter, as
+   `.pred.below-t` does in the single view; the cell's text says why. */
+tr.below-t td { color: var(--muted); }
 .badge-stale {
   display: inline-block; margin-left: var(--s-2); padding: 1px var(--s-2);
   border: 1px solid var(--warn); border-radius: 999px;

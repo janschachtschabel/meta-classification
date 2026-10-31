@@ -70,7 +70,7 @@ def _applied_settings(model: ClassifierModel, body: PredictRequest | MultiPredic
         "top_k": model.applied_top_k(body.top_k),
         "classification_type": model.task_type,
         "auto_mode": body.top_k is None and body.threshold is None,
-        "at_least_one": body.at_least_one,
+        "at_least_one": body.at_least_one and model.applies_at_least_one(body.top_k),
     }
 
 

@@ -167,6 +167,13 @@ class ClassifierModel:
             return 1
         return resolved
 
+    def applies_at_least_one(self, top_k: int | None) -> bool:
+        """Whether ``at_least_one`` can act on a request with this ``top_k``: only where a
+        multilabel model decides by its thresholds. Argmax always answers, and a ranking
+        returns N labels -- reporting it as applied there would describe nothing that happened.
+        """
+        return top_k is None and not self._is_single_label
+
     def predict(
         self,
         texts: list[str],
@@ -226,7 +233,10 @@ class ClassifierModel:
             else:
                 chosen = [p for p in scored if p.confidence >= self._threshold_for(p.uri, threshold)]
                 if not chosen and at_least_one and scored:
-                    # The nearest label, marked as what it is: below its threshold.
+                    # The most confident label, marked as what it is: below its threshold.
+                    # Raw confidence, as a ranking orders; confidence over each label's own
+                    # threshold was measured too and picked a different label in 24 of 206
+                    # held-out cases, 3 more of them right -- noise (docs/plans/2026-10-31).
                     scored[0].above_threshold = False
                     chosen = scored[:1]
             results.append(chosen)

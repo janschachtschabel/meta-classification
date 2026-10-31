@@ -345,7 +345,8 @@ function renderBulkTable(rows, texts, out, classified = true) {
         ? `<th>${t("query.table.label")}</th>
         <th class="num">${t("query.table.confidence")}</th>` : ""}${described
           ? `<th>${t("query.table.title")}</th><th>${t("query.table.keywords")}</th>` : ""}</tr></thead>
-      <tbody>${shown.map((r) => `<tr${classified && !r.uri ? ' class="stale"' : ""}>
+      <tbody>${shown.map((r) => `<tr${classified && !r.uri ? ' class="stale"'
+        : r.above_threshold === false ? ' class="below-t"' : ""}>
         <td class="num">${r.row}</td><td>${esc(r.text)}</td>${classified
           ? `<td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}${
             r.above_threshold === false ? ` <span class="muted">· ${t("query.belowThreshold")}</span>` : ""}</td>

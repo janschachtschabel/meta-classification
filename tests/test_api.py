@@ -549,6 +549,14 @@ def test_at_least_one_answers_where_no_label_passes_its_threshold(trained_model)
     assert label["above_threshold"] is False
     assert forced["applied_settings"]["at_least_one"] is True
     assert plain["applied_settings"]["at_least_one"] is False
+    # Reported per model as APPLIED: argmax answers anyway, and a ranking returns N labels.
+    mixed = client.post("/predict/multi", headers=RO, json={
+        "model_names": ["atleastone_model", "api_model"], "texts": body["texts"],
+        "at_least_one": True}).json()["applied_settings"]
+    ranked = client.post("/predict", headers=RO, json={**body, "at_least_one": True, "top_k": 2}).json()
+    assert mixed["atleastone_model"]["at_least_one"] is True
+    assert mixed["api_model"]["at_least_one"] is False, "a single-label model always answers"
+    assert ranked["applied_settings"]["at_least_one"] is False, "a ranking has no stand-in"
     [same] = several["results"][0]["predictions_by_model"]["atleastone_model"]
     assert same["uri"] == label["uri"] and same["above_threshold"] is False
     assert csv_answer.status_code == 200, csv_answer.text

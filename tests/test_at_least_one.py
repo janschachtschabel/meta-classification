@@ -83,5 +83,19 @@ def test_ranking_and_single_label_models_are_unaffected():
     assert [(p.uri, p.above_threshold) for p in argmax] == [("u:phys", None)]
 
 
+def test_a_label_filter_that_matches_nothing_stays_empty():
+    assert _model([0.30, 0.45, 0.10]).predict(["text"], at_least_one=True, label_filter="bio") == [[]]
+
+
+def test_the_model_says_where_the_option_can_act():
+    # applied_settings reports what was APPLIED: never for a ranking, never for argmax.
+    multilabel = _model([0.30, 0.45, 0.10])
+    multiclass = _model([0.30, 0.45, 0.25], task_type="multiclass")
+
+    assert multilabel.applies_at_least_one(None) is True
+    assert multilabel.applies_at_least_one(2) is False
+    assert multiclass.applies_at_least_one(None) is False
+
+
 def test_off_by_default():
     assert _model([0.30, 0.45, 0.10]).predict(["a", "b"]) == [[], []]

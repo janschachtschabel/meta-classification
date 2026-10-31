@@ -209,6 +209,7 @@ def test_a_stand_in_label_reads_as_below_its_threshold_in_the_table_and_the_down
                     tmp_path)
 
     assert table["html"].count("query.belowThreshold") == 1, table["html"]
+    assert table["html"].count('<tr class="below-t">') == 1, "the row is greyed, not only its note"
     lines = flagged["html"].split("\n")
     assert lines[0] == "row,text,uri,label,confidence,above_threshold"
     assert lines[1].endswith(",false") and lines[2].endswith(","), lines
@@ -234,6 +235,19 @@ def test_the_summaries_say_how_many_labels_are_below_their_threshold(tmp_path):
     assert "query.bulk.belowThreshold" in table["html"], table["html"]
     assert "query.bulk.belowThreshold" in receipt["html"], receipt["html"]
     assert "query.bulk.belowThreshold" not in plain["html"], "said only when it applies"
+
+@needs_node
+def test_the_single_view_shows_a_stand_in_as_the_answer_but_greyed(tmp_path):
+    """No "no label above the threshold" line when a stand-in came back: it IS the answer,
+    shown as what it is."""
+    preds = ('{ fach: [{ uri: "u:geo", label: "Geografie", confidence: 0.72, '
+             'above_threshold: false }] }')
+    result = _render(f"renderPredictions({preds})", tmp_path)
+
+    assert result["ok"], result.get("error")
+    assert 'class="pred below-t"' in result["html"]
+    assert "query.belowThreshold" in result["html"]
+    assert "query.noLabelAboveThreshold" not in result["html"]
 
 @needs_node
 def test_the_bulk_table_still_shows_labels_when_a_model_ran(tmp_path):
