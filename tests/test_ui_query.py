@@ -192,6 +192,29 @@ def test_the_bulk_table_drops_the_label_columns_when_nothing_was_classified(tmp_
 
 
 @needs_node
+def test_a_stand_in_label_reads_as_below_its_threshold_in_the_table_and_the_download(tmp_path):
+    """An `at_least_one` stand-in is right about half the time (measured): in a list it must
+    not look like an answer the model is sure of -- in the table, and in the file someone
+    filters later. The file's column is appended, and only when a row carries the flag."""
+    rows = ('[{ row: 0, text: "a", uri: "u:p", label: "Physik", confidence: 0.41, '
+            'above_threshold: false }, { row: 1, text: "b", uri: "u:m", label: "Mathe", '
+            'confidence: 0.9 }]')
+    table = _render(
+        f'(() => {{ const out = _outStub();'
+        f' renderBulkTable({rows}, ["a", "b"], out, true); return out.innerHTML; }})()',
+        tmp_path,
+    )
+    flagged = _render(f"bulkCsv({rows}, true)", tmp_path)
+    plain = _render('bulkCsv([{ row: 0, text: "a", uri: "u", label: "Physik", confidence: 0.9 }], true)',
+                    tmp_path)
+
+    assert table["html"].count("query.belowThreshold") == 1, table["html"]
+    lines = flagged["html"].split("\n")
+    assert lines[0] == "row,text,uri,label,confidence,above_threshold"
+    assert lines[1].endswith(",false") and lines[2].endswith(","), lines
+    assert plain["html"].split("\n")[0] == "row,text,uri,label,confidence", "no flag, no column"
+
+@needs_node
 def test_the_bulk_table_still_shows_labels_when_a_model_ran(tmp_path):
     """The other half of the same switch: with a model, nothing about the table changes."""
     rows = '[{ row: 0, text: "a", uri: "u", label: "Physik", confidence: 0.9 }]'

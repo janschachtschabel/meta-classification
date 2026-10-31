@@ -105,11 +105,19 @@ Text eingeben, Modell(e) anhaken, **Klassifizieren**. Für die beschreibenden Me
   treffsicheren Modell liegt dieses Optimum *höher*. Ein auf mehr Daten
   trainiertes Modell kann deshalb **seltener** etwas sagen und trotzdem das
   bessere sein: in einem gemessenen Fall stand „Chemie“ bei 0,302, während die
-  Schwelle dieses Labels bei 0,60 lag. Wer eine Antwort erzwingen will, setzt in der
-  Oberfläche **Top-k** — dann kommt immer eine Rangliste. Einen eigenen
-  Schwellenwert kennt die Oberfläche nicht; über die Schnittstelle geht er als
-  `threshold` in `POST /predict` mit. Am meisten hilft aber der Text selbst:
-  ein paar Fachwörter mehr.
+  Schwelle dieses Labels bei 0,60 lag. Am meisten hilft der Text selbst: ein paar
+  Fachwörter mehr.
+- **„Mindestens ein Label“ (Häkchen unter dem Schwellenwert):** Für Texte, von denen
+  du weißt, dass sie *irgendwo* hingehören. Bleibt die Antwort leer, kommt das beste
+  Label trotzdem — ausgegraut und als „unter dem Schwellenwert“ markiert, auch in der
+  Tabelle und im CSV-Download. Antworten mit Treffern bleiben, wie sie sind; anders als
+  **Top-k = 1** schneidet das Häkchen also kein zweites echtes Label ab. Gemessen auf
+  6 504 Texten, die das Modell nie gesehen hatte: Es füllte die 3 % leeren Antworten,
+  und ein so ergänztes Label stimmte etwa jedes zweite Mal. Deshalb bleibt es markiert
+  und ist standardmäßig aus. Nur bei Modellen mit mehreren Labels je Text; die anderen
+  antworten ohnehin immer.
+- **Top-k** erzwingt dagegen immer eine Rangliste fester Länge, und das Feld
+  **Schwellenwert** setzt einen eigenen Wert für alle Labels dieser Anfrage.
 - **Diff (Baseline-Differenz, Häkchen „Baseline-Diff anzeigen“):** Wie viel der
   Sicherheit aus **deinem Text** kommt — und nicht daher, dass das Label einfach
   häufig ist. Ein hoher Konfidenz-Wert mit *diff nahe 0* heißt: das Modell rät

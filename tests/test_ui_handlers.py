@@ -1125,6 +1125,44 @@ def test_a_csv_run_sends_the_threshold_too(tmp_path):
 
 
 
+@needs_node
+def test_the_query_form_asks_for_at_least_one_label_only_when_ticked(tmp_path):
+    """`at_least_one` is off by default: an empty answer is the honest result of the tuned
+    thresholds, and the request says nothing unless the editor asks."""
+    result = _run(tmp_path, modules=("query.js",), body="""
+        el("#query-topk").value = "";
+        el("#query-threshold").value = "";
+        el("#query-at-least-one").checked = true;
+        const ticked = querySettings();
+        el("#query-at-least-one").checked = false;
+        const plain = querySettings();
+        report({ ticked, plain });
+    """)
+
+    assert result["ticked"]["at_least_one"] is True
+    assert "at_least_one" not in result["plain"]
+
+
+@needs_node
+def test_a_csv_run_asks_for_at_least_one_label_too(tmp_path):
+    result = _run(tmp_path, modules=("query.js",), body="""
+        el("#query-file").files = [Object.assign(new Blob(["title\\nBruch"]), { name: "in.csv" })];
+        el("#query-separator").value = ";";
+        el("#query-topk").value = "";
+        el("#query-threshold").value = "";
+        el("#query-at-least-one").checked = true;
+        let sent = [];
+        Api.downloadForm = async (path, form) => {
+          sent = [...form.entries()].filter(([, v]) => typeof v === "string");
+          return { blob: new Blob(["row,uri,label,confidence,above_threshold\\n"]), headers: new Headers() };
+        };
+        globalThis.fmtFixed = (v, d) => Number(v).toFixed(d);
+        await runCsvFile("m", { innerHTML: "" });
+        report({ sent });
+    """)
+
+    assert ["at_least_one", "true"] in result["sent"], result["sent"]
+
 # --- Improvement 8: what the finished runs left behind, in the Training tab ---------------------
 
 _HISTORY = """

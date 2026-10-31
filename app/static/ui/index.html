@@ -120,6 +120,13 @@
               <input id="query-topk" type="number" min="0" max="1000" inputmode="numeric">
               <label for="query-threshold" data-i18n-html="query.threshold.label"></label>
               <input id="query-threshold" type="number" min="0" max="1" step="0.05" inputmode="decimal">
+              <!-- Off by default: an empty answer is the honest result of the tuned thresholds. -->
+              <div id="query-at-least-one-option">
+                <label class="check"><input id="query-at-least-one" type="checkbox"
+                       aria-describedby="query-at-least-one-hint">
+                  <span data-i18n-html="query.atLeastOne.label"></span></label>
+                <p id="query-at-least-one-hint" class="muted" data-i18n="query.atLeastOne.hint"></p>
+              </div>
               <div id="query-signals">
                 <label class="check"><input id="query-diff" type="checkbox" checked>
                   <span data-i18n-html="query.diff.label"></span></label>

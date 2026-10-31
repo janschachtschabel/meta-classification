@@ -83,6 +83,8 @@ function querySettings() {
   // suggestions, which only the API offered (audit 2026-09-30, improvement 11).
   const threshold = $("#query-threshold").value;
   if (threshold !== "") body.threshold = Number(threshold);
+  // Only when asked: the stand-in label is right about half the time (measured).
+  if ($("#query-at-least-one").checked) body.at_least_one = true;
   return body;
 }
 
@@ -281,6 +283,8 @@ const csvCell = (value) => {
    Keyed on `title` being present at all rather than truthy — the endpoint answers a thin text
    with an empty title, and that is a result to show, not a reason to drop the columns. */
 const rowsAreDescribed = (rows) => rows.some((r) => r.title !== undefined);
+// The same for the `above_threshold` flag (a ranking, or an `at_least_one` stand-in).
+const rowsAreFlagged = (rows) => rows.some((r) => r.above_threshold != null);
 
 /* The metadata columns are APPENDED, and only when they were asked for: a consumer already
    parsing this download by position keeps working either way. Metadata belongs to the input
@@ -288,11 +292,12 @@ const rowsAreDescribed = (rows) => rows.some((r) => r.title !== undefined);
    file be joined back onto the caller's own rows. */
 function bulkCsv(rows, classified = true) {
   const described = rowsAreDescribed(rows);
+  const flagged = classified && rowsAreFlagged(rows);
   // The columns follow the table's. A file that keeps an empty label and a
   // confidence of 0 for a run with no model states a measurement that was never
   // taken — and 0 reads as "the model was unsure" to whatever opens the file next.
   const head = "row,text" + (classified ? ",uri,label,confidence" : "")
-    + (described ? ",title,description,keywords" : "");
+    + (described ? ",title,description,keywords" : "") + (flagged ? ",above_threshold" : "");
   return [head]
     .concat(rows.map((r) => {
       const cells = [r.row, csvCell(r.text)];
@@ -302,6 +307,8 @@ function bulkCsv(rows, classified = true) {
                    // "; " as the API's own label lists are separated, so one cell stays one cell.
                    csvCell((r.keywords ?? []).join("; ")));
       }
+      // Blank where no flag applies, as /predict/csv writes it: "not applicable" is not "no".
+      if (flagged) cells.push(r.above_threshold == null ? "" : String(r.above_threshold));
       return cells.join(",");
     }))
     .join("\n");
@@ -337,7 +344,8 @@ function renderBulkTable(rows, texts, out, classified = true) {
           ? `<th>${t("query.table.title")}</th><th>${t("query.table.keywords")}</th>` : ""}</tr></thead>
       <tbody>${shown.map((r) => `<tr${classified && !r.uri ? ' class="stale"' : ""}>
         <td class="num">${r.row}</td><td>${esc(r.text)}</td>${classified
-          ? `<td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}</td>
+          ? `<td>${r.uri ? esc(r.label) : `<span class="muted">${t("query.table.noLabel")}</span>`}${
+            r.above_threshold === false ? ` <span class="muted">· ${t("query.belowThreshold")}</span>` : ""}</td>
         <td class="num">${r.uri ? fmtFixed(r.confidence, 3) : "–"}</td>` : ""}${described
           ? `<td>${esc(r.title ?? "")}</td><td>${esc((r.keywords ?? []).join(", "))}</td>` : ""
         }</tr>`).join("")}</tbody>
@@ -432,6 +440,7 @@ async function runCsvFile(model, out) {
   if (topk !== "") form.append("top_k", topk);
   const threshold = $("#query-threshold").value;
   if (threshold !== "") form.append("threshold", threshold);
+  if ($("#query-at-least-one").checked) form.append("at_least_one", "true");
 
   const name = input.files[0].name.replace(/\.csv$/i, "") + "-predictions.csv";
   $("#query-status").textContent = t("query.csv.progress");

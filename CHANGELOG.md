@@ -4,6 +4,19 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
 
 ## [Unreleased]
 
+### Added
+
+- **`at_least_one`: an answer where the thresholds give none.** `POST /predict`,
+  `/predict/multi` (JSON field) and `/predict/csv` (form field), off by default: when no label
+  of a multilabel model passes its threshold, the best one comes back marked
+  `above_threshold: false`; answers with labels stay as they are (unlike `top_k=1`). Measured
+  on 6,504 held-out rows of a 45-label subject model: the 3.2 % empty answers filled, precision
+  −0.7 points, recall +1.1, per-text F1 +1.5, an added label right about half the time; a
+  floor (only if close to the threshold) bought no F1 and was not built
+  (`docs/plans/2026-10-31-at-least-one.md`). The admin UI's Query tab has the checkbox; the
+  stand-in shows greyed and marked in the single view, the list table and its download
+  (an `above_threshold` column, appended only when one occurs).
+
 ### Fixed
 
 - **An update in a server's Docker panel updates.** `docker-compose.yml` built the image

@@ -281,6 +281,14 @@ Omitting `top_k` is the normal case: the model then returns every label above it
 tuned threshold. Pass `top_k: N` when you want a ranking of fixed length regardless of
 thresholds — each entry carries `above_threshold` so forced ones stay recognisable.
 
+When a multilabel model passes no label at all, the answer is empty — the honest result of its
+thresholds. `at_least_one: true` returns the best label instead, marked `above_threshold:
+false`, and leaves every answer that has labels as it is (which `top_k: 1` would not: it cuts
+a real second label). For a text known to belong somewhere in the label set. Measured on 6,504
+held-out rows of a 45-label subject model: it filled the 3.2 % empty answers; precision −0.7
+points, recall +1.1, per-text F1 +1.5, and an added label was right about half the time
+(`docs/plans/2026-10-31-at-least-one.md`). Off by default; also a form field of `/predict/csv`.
+
 ### Which encoding a CSV is read in
 
 UTF-8 or Windows-1252, decided once per file from all of its bytes — for training, the
@@ -579,8 +587,9 @@ The answer is `row,uri,label,confidence,above_threshold`, one line per predicted
 where `row` is the 0-based number of the input row — that is how the answers are joined
 back onto the original file. **A row the model asserts nothing for still gets a line**
 with the prediction fields empty, so "which items did it refuse" is readable off the
-result. `above_threshold` is filled only in ranking mode (`top_k`), where it keeps a
-forced ranking distinguishable from an asserted one.
+result. `above_threshold` is filled in ranking mode (`top_k`), where it keeps a forced
+ranking distinguishable from an asserted one, and for an `at_least_one` stand-in (`false`);
+blank otherwise.
 
 Neither side is materialised: the input is read in chunks and the answer leaves as it is
 produced. 🟢 Measured: 50 000 rows against the 59-label `faecher_300k_auto` produced

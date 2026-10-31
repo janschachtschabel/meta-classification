@@ -62,6 +62,8 @@ const STRINGS_DE = {
   "login.signIn": "Anmelden",
 
   "query.belowThreshold": "unter dem Schwellenwert",
+  "query.atLeastOne.label": "Mindestens ein Label <span class=\"muted\">(auch unter der Schwelle)</span>",
+  "query.atLeastOne.hint": "Nur für Modelle mit mehreren Labels je Text: Erreicht kein Label seine Schwelle, kommt das beste trotzdem – grau und als „unter dem Schwellenwert“ markiert. Antworten mit Treffern bleiben, wie sie sind. Gemessen stimmt ein solches Label etwa jedes zweite Mal.",
   "query.bulk.descriptionInDownload": "Der Beschreibungstext steht nur im Download — in einer Tabellenzelle wäre er unlesbar.",
   "query.bulk.done": "Fertig: {texts}, {refused}.",
   "query.bulk.doneDescribed": "Fertig: {texts} beschrieben.",
