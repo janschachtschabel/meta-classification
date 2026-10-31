@@ -2,7 +2,13 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased]
+## [4.4.0] — 2026-10-31
+
+The separator of a dataset is detected from its header, and the admin UI reads every dataset
+with it -- so a comma-, tab- or `|`-separated file can be trained from the UI. A minor
+release: nothing a client sends has to change. `GET /datasets/{name}` without `separator`
+used to read with `;`; it now detects, which returns the same columns for every `;` file and
+the right ones for the others, and reports the separator it used.
 
 ### Added
 
