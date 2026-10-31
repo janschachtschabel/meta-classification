@@ -31,6 +31,7 @@ from .. import data as data_mod
 from .. import dataset_files
 from .. import dataset_stats as stats_mod
 from ..capacity import CapacityPlan
+from ..csv_dialect import detect_separator
 from ..errors import TrainingInputError
 from ..jobs import job_runner
 from ..limiter import default_limit, export_limit, limiter
@@ -113,8 +114,14 @@ def list_datasets(
 def dataset_info(
     request: Request,
     dataset_name: DatasetName,
-    separator: str = Query(
-        ";", description="The CSV's field delimiter: exactly one character, not a line break (else 400)."),
+    separator: str | None = Query(
+        None,
+        description=(
+            "The CSV's field delimiter: exactly one character, not a line break (else 400). "
+            "Omitted = detected from the header line (`;`, `,`, tab or `|`), and reported back "
+            "as `separator`."
+        ),
+    ),
     _: str = Depends(require_role("readonly")),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -123,17 +130,22 @@ def dataset_info(
     When the file carries data-prep's provenance columns, `ai_rows` counts the rows an
     LLM wrote (`generated`), was shown as examples (`example`) or filled in (`enriched`),
     and `marked` the rows with any of these marks -- rows that train but never validate.
-    `separator` is the CSV delimiter (default `;`). **Auth:** readonly.
+    `separator` is the CSV delimiter; omitted, it is detected from the header and the answer
+    says which one was used -- send that on as `csv_separator` to the requests that read the
+    dataset, which default to `;`. **Auth:** readonly.
     """
-    if problem := separator_problem(separator):
+    if separator is not None and (problem := separator_problem(separator)):
         raise HTTPException(400, problem)
     path = _dataset_path(dataset_name, settings)
+    if separator is None:
+        separator = detect_separator(path)
     try:
         shaped = stats_mod.sample_rows(path, separator=separator)
         marked = stats_mod.ai_rows(path, separator=separator, columns=shaped["columns"])
     except TrainingInputError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"name": dataset_name, "rows": data_mod.count_rows(path, separator), **shaped,
+    return {"name": dataset_name, "separator": separator,
+            "rows": data_mod.count_rows(path, separator), **shaped,
             **({"ai_rows": marked} if marked is not None else {})}
 
 

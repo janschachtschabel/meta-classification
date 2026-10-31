@@ -23,6 +23,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
 
 from . import stratify
+from .csv_dialect import separator_from_header
 from .csv_encoding import CsvEncoding, detect, is_gzipped
 from .errors import TrainingInputError
 from .label_names import is_container_label
@@ -137,7 +138,6 @@ _ROW_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
 # description; the training reader (pandas' C engine) has no such cap, so the count may not
 # either. Process-wide, which is fine: this is the only csv.reader the app runs.
 csv.field_size_limit(2**31 - 1)
-_DELIMITERS = (";", ",", "\t")
 logger = logging.getLogger(__name__)
 
 
@@ -153,10 +153,10 @@ def count_rows(path: str | Path, separator: str | None = None) -> int:
     took a quote inside an unquoted field (an inch mark: `24" Diagonale`) for an opening one
     and every following line for the inside of a field: 10 rows came out as 3 (audit
     2026-09-30, T14). A reader takes a quote as one only where a field starts, which needs the
-    delimiter: ``separator``, else whichever of ``;``, ``,`` and tab the header line has most
-    of. Measured at half the old pass's speed (52 MB in 1.0 s against 0.48 s), once per file
-    version: cached by (mtime, size). Gzip is decompressed first; counting newlines in the
-    COMPRESSED bytes is meaningless.
+    delimiter: ``separator``, else the header line's, by ``csv_dialect``'s rule (the one
+    ``GET /datasets/{name}`` detects with). Measured at half the old pass's speed (52 MB in
+    1.0 s against 0.48 s), once per file version: cached by (mtime, size). Gzip is
+    decompressed first; counting newlines in the COMPRESSED bytes is meaningless.
     """
     path = Path(path)
     stat = path.stat()
@@ -167,7 +167,7 @@ def count_rows(path: str | Path, separator: str | None = None) -> int:
     opener = gzip.open if is_gzipped(path) else open
     with opener(path, "rt", encoding="utf-8", errors="ignore", newline="") as handle:
         header = handle.readline()
-        delimiter = separator or max(_DELIMITERS, key=header.count)
+        delimiter = separator or separator_from_header(header)
         try:
             rows = sum(1 for _ in csv.reader(handle, delimiter=delimiter))
         except csv.Error as exc:
