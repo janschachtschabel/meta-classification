@@ -8,7 +8,7 @@
 #   open http://localhost:8000/docs
 #
 # Update:  docker compose pull && docker compose up -d   (a server's "update" button does this)
-# Version: APIV3_IMAGE_TAG in .env -- default 4, the newest 4.x; pin 4.2.0 to hold one release.
+# Version: APIV3_IMAGE_TAG in .env -- default 4, the newest 4.x; pin 4.3.0 to hold one release.
 # Build from source instead (development, arm64):
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #

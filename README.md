@@ -38,7 +38,7 @@ docker compose pull && docker compose up -d   # update to the newest image of th
 `docker-compose.yml` runs the image CI publishes,
 `ghcr.io/janschachtschabel/meta-classification` (public, no `docker login`), with the tag
 `APIV3_IMAGE_TAG` from `.env` -- empty means `4`, the newest 4.x release, so an update takes
-every 4.x and no 5.0 unasked; pin `4.2.0` to hold a release. It binds to `127.0.0.1:8000` on
+every 4.x and no 5.0 unasked; pin `4.3.0` to hold a release. It binds to `127.0.0.1:8000` on
 purpose — put nginx/caddy in front for TLS — and keeps datasets and models in the named
 volume `classification-data`, so `docker compose down` is safe and only `down -v` deletes
 your data.
@@ -78,11 +78,11 @@ spelled out here, the command also works with 4.0.1 and earlier, which would oth
 write inside the container's own filesystem and lose it on the next `docker run`.
 `docker compose` and the Helm chart set them too.
 
-**Tags:** `latest` is the newest release (currently the same image as `4.2.0`, `4.2`
+**Tags:** `latest` is the newest release (currently the same image as `4.3.0`, `4.3`
 and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. Which one a
 server runs is a choice between two goods: a moving tag (`4`, the compose default, or
 `latest`) brings fixes with every update but also changes nobody reviewed; a pinned one
-(`APIV3_IMAGE_TAG=4.2.0`, or a `sha-` tag) changes only when you change it — prefer that
+(`APIV3_IMAGE_TAG=4.3.0`, or a `sha-` tag) changes only when you change it — prefer that
 where updates are read first, and read the CHANGELOG before moving the pin. Because the
 compose file pulls on every `up` (`pull_policy: always`), a start without access to GHCR
 fails; start offline with `docker compose up -d --pull never`. The published

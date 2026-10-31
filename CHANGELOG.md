@@ -2,7 +2,15 @@
 
 Notable changes to MetaClassify (torch-free metadata text-classification API). Dates are UTC.
 
-## [Unreleased]
+## [4.3.0] — 2026-10-31
+
+An option for the answers the thresholds leave empty, a security update of a transitive
+dependency, and a compose file a server's Docker panel can update. A minor release: nothing a
+client sends has to change -- `at_least_one` is off by default. What does change for a user of
+the admin UI: a `top_k` ranking in the Query tab's list view now marks its labels below their
+threshold (greyed, counted in the heading, an `above_threshold` column in the download), and a
+correction records only what the model asserted. Operators: `docker-compose.yml` now runs the
+published GHCR image instead of building one -- see *Fixed*.
 
 ### Added
 
