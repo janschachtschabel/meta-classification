@@ -79,8 +79,13 @@ write inside the container's own filesystem and lose it on the next `docker run`
 `docker compose` and the Helm chart set them too.
 
 **Tags:** `latest` is the newest release (currently the same image as `4.2.0`, `4.2`
-and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. In
-production pin a version or a `sha-` tag rather than a moving one. The published
+and `4`), `main` the newest commit on `main`, `sha-<commit>` one exact build. Which one a
+server runs is a choice between two goods: a moving tag (`4`, the compose default, or
+`latest`) brings fixes with every update but also changes nobody reviewed; a pinned one
+(`APIV3_IMAGE_TAG=4.2.0`, or a `sha-` tag) changes only when you change it — prefer that
+where updates are read first, and read the CHANGELOG before moving the pin. Because the
+compose file pulls on every `up` (`pull_policy: always`), a start without access to GHCR
+fails; start offline with `docker compose up -d --pull never`. The published
 images are built for **linux/amd64** only — on arm64 (Apple Silicon) build locally
 with the `docker-compose.build.yml` override above or run under emulation.
 

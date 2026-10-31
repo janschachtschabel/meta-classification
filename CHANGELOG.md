@@ -15,7 +15,16 @@ Notable changes to MetaClassify (torch-free metadata text-classification API). D
   floor (only if close to the threshold) bought no F1 and was not built
   (`docs/plans/2026-10-31-at-least-one.md`). The admin UI's Query tab has the checkbox; the
   stand-in shows greyed and marked in the single view, the list table and its download
-  (an `above_threshold` column, appended only when one occurs).
+  (an `above_threshold` column, appended only when a row carries the flag); `applied_settings`
+  reports `at_least_one` per model as applied (false for argmax models and for a ranking).
+
+### Changed
+
+- **A ranking's labels below their threshold are marked in the list view too.** With `top_k`
+  set, the Query tab's list table greys such a label's row and says "below threshold", its
+  heading counts them, and its download gains the `above_threshold` column -- as the single
+  view and `/predict/csv` already did. A correction now records as `predicted` only what the
+  model asserted; a ranked entry below its threshold used to be recorded as a verdict.
 
 ### Fixed
 

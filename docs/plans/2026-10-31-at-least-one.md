@@ -31,6 +31,10 @@ A multilabel subject model (`ccm:taxonid`, 45 labels, profile auto) trained on 8
 - A floor (only if the best label reaches a share of its threshold) buys a higher hit rate
   for more empty answers and no F1. **Not built**: one more lever for no measurable gain.
   The editor's own knowledge that the text belongs somewhere is the better filter.
+- Which label stands in: the most confident one (as a ranking orders). Ranking by confidence
+  over each label's own threshold instead (review, 2026-10-31) picked a different label in 24
+  of the 206 cases and was right in 52.4 % against 51.0 % -- 3 rows, noise. Kept the simpler
+  rule.
 
 ## Behaviour
 - Multilabel decision only. Ranking (`top_k`) already returns N labels; binary and multiclass
@@ -40,7 +44,8 @@ A multilabel subject model (`ccm:taxonid`, 45 labels, profile auto) trained on 8
 - Off by default; reported back in `applied_settings.at_least_one`.
 - `/predict`, `/predict/multi` (JSON field), `/predict/csv` (form field) and the admin UI's
   Query tab (a checkbox; the stand-in shows greyed with "below threshold", in the bulk table
-  too, and the table's download gains an `above_threshold` column only when one occurs).
+  too, and the table's download gains an `above_threshold` column when a row carries the
+  flag -- a stand-in, or a ranking's entry; corrections record only asserted labels).
 - Not in `POST /models/{name}/evaluate`: evaluation measures the model's own decisions.
 
 ## Files
