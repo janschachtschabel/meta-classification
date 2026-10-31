@@ -1163,6 +1163,19 @@ def test_a_csv_run_asks_for_at_least_one_label_too(tmp_path):
 
     assert ["at_least_one", "true"] in result["sent"], result["sent"]
 
+@needs_node
+def test_a_correction_records_only_what_the_model_asserted(tmp_path):
+    """An `at_least_one` stand-in (or a ranked entry below its threshold) is not something the
+    model said: recorded as `predicted`, the corrections would count it as a wrong verdict."""
+    result = _run(tmp_path, helpers=("feedback.js:assertedPredictions",), body="""
+        const shown = [{ uri: "u:geo", label: "Geografie", above_threshold: false },
+                       { uri: "u:math", label: "Mathe" },
+                       { uri: "u:phys", label: "Physik", above_threshold: true }];
+        report({ asserted: assertedPredictions(shown).map((p) => p.uri) });
+    """)
+
+    assert result["asserted"] == ["u:math", "u:phys"]
+
 # --- Improvement 8: what the finished runs left behind, in the Training tab ---------------------
 
 _HISTORY = """

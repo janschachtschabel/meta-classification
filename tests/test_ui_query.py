@@ -215,6 +215,27 @@ def test_a_stand_in_label_reads_as_below_its_threshold_in_the_table_and_the_down
     assert plain["html"].split("\n")[0] == "row,text,uri,label,confidence", "no flag, no column"
 
 @needs_node
+def test_the_summaries_say_how_many_labels_are_below_their_threshold(tmp_path):
+    """The heading is read first: "2 labels assigned" for two stand-ins read as two answers
+    the model is sure of, though the table below marked both."""
+    rows = ('[{ row: 0, text: "a", uri: "u:p", label: "Physik", confidence: 0.41, '
+            'above_threshold: false }, { row: 1, text: "b", uri: "u:m", label: "Mathe", '
+            'confidence: 0.9 }]')
+    table = _render(
+        f'(() => {{ const out = _outStub();'
+        f' renderBulkTable({rows}, ["a", "b"], out, true); return out.innerHTML; }})()',
+        tmp_path,
+    )
+    csv_text = "row,uri,label,confidence,above_threshold\\n0,u:p,Physik,0.41,false\\n1,u:m,Mathe,0.90,\\n"
+    receipt = _render(f'csvSummary("{csv_text}", "in-predictions.csv", 2)', tmp_path)
+    plain = _render('csvSummary("row,uri,label,confidence,above_threshold\\n0,u:m,Mathe,0.90,\\n", "x.csv", 1)',
+                    tmp_path)
+
+    assert "query.bulk.belowThreshold" in table["html"], table["html"]
+    assert "query.bulk.belowThreshold" in receipt["html"], receipt["html"]
+    assert "query.bulk.belowThreshold" not in plain["html"], "said only when it applies"
+
+@needs_node
 def test_the_bulk_table_still_shows_labels_when_a_model_ran(tmp_path):
     """The other half of the same switch: with a model, nothing about the table changes."""
     rows = '[{ row: 0, text: "a", uri: "u", label: "Physik", confidence: 0.9 }]'

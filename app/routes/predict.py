@@ -33,7 +33,7 @@ def _pred_dict(p: Prediction) -> dict:
         d["baseline_diff"] = round(p.baseline_diff, 4)
     if p.label_f1 is not None:  # only when requested AND the bundle scored this label
         d["label_f1"] = round(p.label_f1, 4)
-    if p.above_threshold is not None:  # ranking mode: keep forced entries honest
+    if p.above_threshold is not None:  # ranking or at_least_one: keep forced entries honest
         d["above_threshold"] = p.above_threshold
     return d
 
@@ -157,8 +157,10 @@ async def predict(request: Request, body: PredictRequest, _: str = Depends(requi
     substring), `include_baseline_diff` (adds confidence minus the model's empty-text
     prediction per label), `include_label_f1` (adds each label's F1 from the training
     evaluation — how much a high confidence on THIS label is worth; left out for a label
-    the bundle has no F1 for, such as one no real row could validate). The response
-    includes `applied_settings` with the values actually applied. **Auth:** readonly.
+    the bundle has no F1 for, such as one no real row could validate), `at_least_one`
+    (multilabel, no `top_k`: where no label passes its threshold, the best one anyway,
+    flagged `above_threshold: false`). The response includes `applied_settings` with the
+    values actually applied. **Auth:** readonly.
     """
     return await _predict(body)
 

@@ -68,6 +68,7 @@ const STRINGS_EN = {
   "query.bulk.doneDescribed": "Done: {texts} described.",
   "query.bulk.download": "Download as CSV",
   "query.bulk.labelsAssigned": {"one": "{count} label assigned", "other": "{count} labels assigned"},
+  "query.bulk.belowThreshold": {"one": "{count} of them below threshold", "other": "{count} of them below threshold"},
   "query.bulk.note": "A text the model asserts nothing for is listed with an empty label — \"which ones did it refuse\" is part of the answer.",
   "query.bulk.texts": {"one": "{count} text", "other": "{count} texts"},
   "query.bulk.truncated": "Showing the first {shown} of {total} lines; the download has all.",

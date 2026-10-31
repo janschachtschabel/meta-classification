@@ -69,6 +69,7 @@ const STRINGS_DE = {
   "query.bulk.doneDescribed": "Fertig: {texts} beschrieben.",
   "query.bulk.download": "Als CSV herunterladen",
   "query.bulk.labelsAssigned": {"one": "{count} Label zugewiesen", "other": "{count} Labels zugewiesen"},
+  "query.bulk.belowThreshold": {"one": "davon {count} unter dem Schwellenwert", "other": "davon {count} unter dem Schwellenwert"},
   "query.bulk.note": "Ein Text, zu dem das Modell nichts behauptet, steht mit leerem Label in der Liste — „welche hat es verweigert“ gehört zur Antwort.",
   "query.bulk.texts": {"one": "{count} Text", "other": "{count} Texte"},
   "query.bulk.truncated": "Angezeigt werden die ersten {shown} von {total} Zeilen; der Download enthält alle.",

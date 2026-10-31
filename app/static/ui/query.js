@@ -328,6 +328,9 @@ function renderBulkTable(rows, texts, out, classified = true) {
   const counted = [t("query.bulk.texts", { count: texts.length })];
   if (classified) {
     counted.push(t("query.bulk.labelsAssigned", { count: rows.filter((r) => r.uri).length }));
+    // The heading is read first; the table marks each such label, this says how many.
+    const below = rows.filter((r) => r.above_threshold === false).length;
+    if (below) counted.push(t("query.bulk.belowThreshold", { count: below }));
     if (refused) counted.push(`<strong>${t("query.bulk.withoutLabel", { count: refused })}</strong>`);
   }
   out.innerHTML = `<div class="card">
@@ -417,6 +420,9 @@ function csvSummary(text, filename, expected = null) {
   const refused = lines.filter((line) => /^\d+,,,,\r?$/.test(line)).length;
   const counted = [t("query.csv.inputRows", { count: covered }),
                    t("query.bulk.labelsAssigned", { count: lines.length - refused })];
+  // above_threshold is the last field, so a line ending in "false" is a label below it.
+  const below = lines.filter((line) => /,false\r?$/.test(line)).length;
+  if (below) counted.push(t("query.bulk.belowThreshold", { count: below }));
   if (refused) counted.push(`<strong>${t("query.csv.rowsWithoutLabel", { count: refused })}</strong>`);
   const cutShort = expected !== null && covered < expected
     ? `<p class="error" role="alert">${t("query.csv.incomplete", { covered, expected })}</p>` : "";

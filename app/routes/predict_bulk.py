@@ -99,7 +99,9 @@ async def predict_csv(
     label, where `row` is the 0-based number of the input row — that is how the answers
     are joined back onto the original file. **A row the model asserts nothing for still
     gets a line**, with the prediction fields empty, so "which items did it refuse" is
-    readable off the result.
+    readable off the result -- unless `at_least_one` asked for its best label, which then
+    comes flagged `above_threshold=false`. The flag is blank where it does not apply
+    (no `top_k`, no stand-in).
 
     Nothing is materialised on either side: the CSV is read in chunks and the answer
     leaves as it is produced. Before the first byte, the whole file is parsed once — a
